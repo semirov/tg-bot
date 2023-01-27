@@ -247,12 +247,11 @@ export class MemeManagementService {
   } {
     const types = CommonService.getRandomValueFromArray(['admin', 'moderator']);
     switch (types) {
-      // TODO
-      // case 'moderator':
-      //   return {
-      //     userId: CommonService.getRandomValueFromArray(this.moderatorIds),
-      //     type: 'moderator',
-      //   };
+      case 'moderator':
+        return {
+          userId: CommonService.getRandomValueFromArray(this.moderatorIds),
+          type: 'moderator',
+        };
       case 'admin':
       default:
         return {
