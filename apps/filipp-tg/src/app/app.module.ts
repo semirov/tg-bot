@@ -32,9 +32,4 @@ import config from './config/config.const';
     FilippMemesBotModule,
   ],
 })
-export class AppModule {
-  constructor() {
-
-    console.log('environment.production' , environment.production);
-  }
-}
+export class AppModule {}
