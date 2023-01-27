@@ -177,7 +177,7 @@ export class MemeManagementService {
             [
               {
                 text: 'Перейти в канал',
-                url: `https://t.me/filipp_memes`,
+                url: `https://t.me/${this.baseConfigService.memeChatName}`,
               },
             ],
           ],

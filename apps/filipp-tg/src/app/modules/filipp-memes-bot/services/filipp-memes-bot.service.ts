@@ -1,7 +1,6 @@
 import { OnModuleInit, UseFilters } from '@nestjs/common';
 import {
   Action,
-  Command,
   Ctx,
   InjectBot,
   Message,
@@ -14,6 +13,8 @@ import { HELLO_SCENE_ID } from '../scenes/hello.scene';
 import { Context } from '../interfaces/context.interface';
 import { Telegraf } from 'telegraf';
 import { MEME_BOT } from '../filipp-meme-bot.const';
+import { SEND_MEME_SCENE } from '../scenes/send-meme.scene';
+import { REQUEST_ADMIN_SCENE } from '../scenes/request-admin.scene';
 
 @Update()
 @UseFilters(TelegrafExceptionFilter)
@@ -38,9 +39,16 @@ export class FilippMemesBotService implements OnModuleInit {
     await ctx.scene.enter(HELLO_SCENE_ID);
   }
 
-  @Command('test')
-  async test(@Ctx() ctx: Context) {
-    await ctx.scene.enter('test-wizard');
+  @Action('meme_request')
+  async onMemeRequestAnswer(@Ctx() ctx: Context) {
+    await ctx.deleteMessage();
+    await ctx.scene.enter(SEND_MEME_SCENE);
+  }
+
+  @Action('admin_request')
+  async onAdminRequestAnswer(@Ctx() ctx: Context) {
+    await ctx.deleteMessage();
+    await ctx.scene.enter(REQUEST_ADMIN_SCENE);
   }
 
   @Start()

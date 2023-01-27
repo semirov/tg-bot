@@ -21,6 +21,10 @@ export class BaseConfigService {
     return +this.configService.getOrThrow<string>('MEMES_CHANNEL');
   }
 
+  get memeChatName(): string {
+    return this.configService.getOrThrow<string>('MEMES_CHANNEL_NAME');
+  }
+
   get testMemeChannel(): number {
     return +this.configService.getOrThrow<string>('TEST_MEMES_CHANNEL');
   }

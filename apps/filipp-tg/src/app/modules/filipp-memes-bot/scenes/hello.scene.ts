@@ -1,21 +1,19 @@
-import {
-  Scene,
-  SceneEnter,
-  SceneLeave,
-  Command,
-  Ctx,
-  Action,
-} from 'nestjs-telegraf';
+import { Scene, SceneEnter, Ctx, InjectBot } from 'nestjs-telegraf';
 import { Context } from '../interfaces/context.interface';
-import { SEND_MEME_SCENE } from './send-meme.scene';
-import {REQUEST_ADMIN_SCENE} from "./request-admin.scene";
+import { MEME_BOT } from '../filipp-meme-bot.const';
+import { Telegraf } from 'telegraf';
+import {BaseConfigService} from "../../../config/base-config.service";
 
 export const HELLO_SCENE_ID = 'HELLO_SCENE_ID';
 @Scene(HELLO_SCENE_ID)
 export class HelloScene {
+  constructor(
+    private configService: BaseConfigService
+  ) {}
   @SceneEnter()
   async onSceneEnter(@Ctx() context: Context): Promise<void> {
     const text = 'Выбери то, что хочешь сделать';
+
     await context.reply(text, {
       reply_markup: {
         inline_keyboard: [
@@ -29,23 +27,11 @@ export class HelloScene {
           [
             {
               text: 'Перейти в канал',
-              url: 'https://t.me/filipp_memes',
+              url: `https://t.me/${this.configService.memeChatName}`,
             },
           ],
         ],
       },
     });
-  }
-
-  @Action('meme_request')
-  async onMemeRequestAnswer(@Ctx() ctx: Context) {
-    await ctx.deleteMessage();
-    await ctx.scene.enter(SEND_MEME_SCENE);
-  }
-
-  @Action('admin_request')
-  async onAdminRequestAnswer(@Ctx() ctx: Context) {
-    await ctx.deleteMessage();
-    await ctx.scene.enter(REQUEST_ADMIN_SCENE);
   }
 }
