@@ -7,7 +7,7 @@ COPY tsconfig.base.json .
 COPY package-lock.json .
 RUN npm ci --max-old-space-size=4096
 
-COPY apps/filipp-tg /usr/src/app/apps/filipp-tg
+COPY apps/tg-bot /usr/src/app/apps/tg-bot
 
 # Build app
 RUN npm run build
@@ -17,11 +17,11 @@ RUN npm prune --production
 FROM node:18-alpine
 ENV NODE_ENV=production
 
-WORKDIR /usr/filipp-tg
+WORKDIR /usr/tg-bot
 
-COPY --from=builder /usr/src/app/node_modules /usr/filipp-tg/node_modules
-COPY --from=builder /usr/src/app/dist/apps/filipp-tg /usr/filipp-tg/apps/filipp-tg
+COPY --from=builder /usr/src/app/node_modules /usr/tg-bot/node_modules
+COPY --from=builder /usr/src/app/dist/apps/tg-bot /usr/tg-bot/apps/tg-bot
 
 
-CMD ["node", "./apps/filipp-tg/main.js"]
+CMD ["node", "./apps/tg-bot/main.js"]
 EXPOSE 5353

@@ -1,27 +1,38 @@
 {
-  "name": "filipp-tg",
+  "name": "tg-bot",
   "version": "0.0.0",
   "license": "MIT",
   "scripts": {
     "start": "nx serve",
+    "start:tg-bot": "nx serve tg-bot",
     "build": "nx build",
     "test": "nx test",
-    "docker:build": "docker build -t semirovf/memes-tg-bot:0.0.1 .",
-    "docker:push": "docker push semirovf/memes-tg-bot:0.0.1",
+    "docker:build": "docker build -t cr.yandex/crp8g8jm3p8d780a8hk3/telegram-bot:0.0.2 .",
+    "docker:push": "docker push cr.yandex/crp8g8jm3p8d780a8hk3/telegram-bot:0.0.2",
     "docker:publish": "npm run docker:build && npm run docker:push"
   },
   "private": true,
   "dependencies": {
+    "@grammyjs/conversations": "1.1.0",
+    "@grammyjs/menu": "1.1.2",
+    "@grammyjs/runner": "1.0.4",
+    "@grammyjs/storage-typeorm": "2.1.0",
     "@nestjs/common": "^9.0.0",
     "@nestjs/config": "2.2.0",
     "@nestjs/core": "^9.0.0",
     "@nestjs/platform-express": "^9.0.0",
+    "@nestjs/typeorm": "9.0.1",
+    "date-fns": "2.29.3",
+    "grammy": "1.13.1",
     "nestjs-telegraf": "2.6.3",
+    "pg": "8.9.0",
+    "plural-ru": "2.0.2",
     "reflect-metadata": "^0.1.13",
     "rxjs": "^7.0.0",
     "telegraf": "4.11.2",
     "telegram": "2.15.5",
-    "tslib": "^2.3.0"
+    "tslib": "^2.3.0",
+    "typeorm": "0.3.11"
   },
   "devDependencies": {
     "@nestjs/schematics": "^9.0.0",
