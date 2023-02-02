@@ -163,8 +163,7 @@ export class SendMemeConversation implements OnModuleInit {
         const lastPostInfo = await this.userRequestService.lastPublishedPostTimeAgo(ctx);
         return `🗓 ${lastPostInfo}`;
       })
-      .row()
-      .back('Назад'); // TODO remove
+      .row();
 
     const publishSubmenu = new Menu<BotContext>(MemeModerationMenusEnum.PUBLICATION, {
       autoAnswer: false,
@@ -173,13 +172,13 @@ export class SendMemeConversation implements OnModuleInit {
       .text('Сейчас 🔔', async (ctx) =>
         this.onPublishActions(ctx, PublicationModesEnum.NOW_WITH_ALARM)
       )
+      // .row() // TODO
+      // .text('Утром', async (ctx) => this.onPublishActions(ctx, PublicationModesEnum.NEXT_MORNING))
+      // .text('Днем', async (ctx) => this.onPublishActions(ctx, PublicationModesEnum.NEXT_MIDDAY))
+      // .text('Вечером', async (ctx) => this.onPublishActions(ctx, PublicationModesEnum.NEXT_EVENING))
+      // .text('Ночью', async (ctx) => this.onPublishActions(ctx, PublicationModesEnum.NEXT_NIGHT))
       .row()
-      .text('Утром', async (ctx) => this.onPublishActions(ctx, PublicationModesEnum.NEXT_MORNING))
-      .text('Днем', async (ctx) => this.onPublishActions(ctx, PublicationModesEnum.NEXT_MIDDAY))
-      .text('Вечером', async (ctx) => this.onPublishActions(ctx, PublicationModesEnum.NEXT_EVENING))
-      .text('Ночью', async (ctx) => this.onPublishActions(ctx, PublicationModesEnum.NEXT_NIGHT))
-      .row()
-      .back('Назад'); // TODO
+      .text('Назад', (ctx) => ctx.menu.nav(MemeModerationMenusEnum.APPROVAL));
 
     const rejectSubmenu = new Menu<BotContext>(MemeModerationMenusEnum.REJECT, {
       autoAnswer: false,
@@ -216,9 +215,7 @@ export class SendMemeConversation implements OnModuleInit {
           ctx.menu.nav(MemeModerationMenusEnum.BAN);
         }
       })
-      .row()
-      .row()
-      .back('Назад');
+      .row();
 
     const banConfirmation = new Menu<BotContext>(MemeModerationMenusEnum.BAN, {autoAnswer: false})
       .text('Точно в бан?', async (ctx) => {

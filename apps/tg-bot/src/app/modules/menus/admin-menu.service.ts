@@ -9,6 +9,7 @@ import {BaseConfigService} from '../config/base-config.service';
 import {Conversation, createConversation} from '@grammyjs/conversations';
 import {ConversationsEnum} from '../conversations/constants/conversations.enum';
 import {UserEntity} from '../bot/entities/user.entity';
+import {add, getUnixTime} from 'date-fns';
 
 @Injectable()
 export class AdminMenuService implements OnModuleInit {
@@ -190,6 +191,7 @@ export class AdminMenuService implements OnModuleInit {
     const link = await ctx.api.createChatInviteLink(this.baseConfigService.userRequestMemeChannel, {
       member_limit: 1,
       name: `moderator: ${user.username}`,
+      expire_date: getUnixTime(add(new Date(), {weeks: 1})),
     });
 
     await this.userService.repository.update({id: user.id}, {isModerator: true});

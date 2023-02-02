@@ -90,12 +90,10 @@ export class UserRequestService {
       this.repository.countBy({
         user: {id: message.user.id},
         isApproved: false,
-        isPublished: false,
       }),
       this.repository.countBy({
         user: {id: message.user.id},
         isApproved: false,
-        isPublished: false,
         moderatedAt: MoreThan<Date>(sub(new Date(Date.now()), {days: 1})),
       }),
     ]);
