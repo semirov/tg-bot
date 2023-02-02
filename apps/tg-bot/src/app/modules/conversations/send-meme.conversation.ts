@@ -6,12 +6,11 @@ import {Bot, InlineKeyboard} from 'grammy';
 import {ConversationsEnum} from './constants/conversations.enum';
 import {Menu} from '@grammyjs/menu';
 import {BaseConfigService} from '../config/base-config.service';
-import {MoreThan} from 'typeorm';
 import {UserService} from '../bot/services/user.service';
 import {UserPermissionEnum} from '../bot/constants/user-permission.enum';
 import {PublicationModesEnum} from './constants/publication-modes.enum';
 import {MemeModerationMenusEnum} from './constants/meme-moderation-menus.enum';
-import {add, differenceInMinutes, sub} from 'date-fns';
+import {add, differenceInMinutes, getUnixTime} from 'date-fns';
 import {UserRequestService} from '../bot/services/user-request.service';
 
 export class SendMemeConversation implements OnModuleInit {
@@ -469,17 +468,13 @@ export class SendMemeConversation implements OnModuleInit {
   }
 
   private async isLastRequestMoreThanMinuteAgo(ctx: BotContext): Promise<boolean> {
-    const message = await this.userRequestService.repository.findOne({
-      where: {user: {id: ctx.from.id}},
-      order: {createdAt: 'DESC'},
-    });
-
-    if (!message) {
+    if (
+      !ctx.session?.lastPublishedAt ||
+      ctx.session?.lastPublishedAt + 60 < getUnixTime(new Date())
+    ) {
+      ctx.session.lastPublishedAt = getUnixTime(new Date());
       return true;
     }
-
-    const diff = differenceInMinutes(new Date(), message.createdAt);
-
-    return diff >= 1;
+    return false;
   }
 }

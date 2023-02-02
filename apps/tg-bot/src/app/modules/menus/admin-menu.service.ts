@@ -30,7 +30,7 @@ export class AdminMenuService implements OnModuleInit {
     );
   }
 
-  public buildStartAdminMenu(userStartMenu: Menu<BotContext>): Menu<BotContext> {
+  public buildStartAdminMenu(userStartMenu: Menu<BotContext>, moderatorStartMenu: Menu<BotContext>): Menu<BotContext> {
     const menu = new Menu<BotContext>(AdminMenusEnum.ADMIN_START_MENU)
       .text('Модераторы', (ctx) => ctx.menu.nav('moderators-list'))
       .row()
@@ -40,6 +40,11 @@ export class AdminMenuService implements OnModuleInit {
       .row()
       .text('Показать статистику пользователя')
       .row()
+      .text('Меню модератора', (ctx) =>
+        ctx.reply('Выбери то, что хочешь сделать', {
+          reply_markup: moderatorStartMenu,
+        })
+      )
       .row()
       .text('Меню пользователя', (ctx) =>
         ctx.reply('Выбери то, что хочешь сделать', {

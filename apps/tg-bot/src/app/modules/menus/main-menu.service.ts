@@ -1,19 +1,20 @@
 import {Inject, Injectable} from '@nestjs/common';
 import {Menu} from '@grammyjs/menu';
-import {
-  AdminMenusEnum,
-  ModeratorMenusEnum,
-  UserMenusEnum,
-} from './constants/bot-menus.enum';
+import {UserMenusEnum} from './constants/bot-menus.enum';
 import {BOT} from '../bot/providers/bot.provider';
 import {Bot, CommandContext} from 'grammy';
 import {BotContext} from '../bot/interfaces/bot-context.interface';
 import {ConversationsEnum} from '../conversations/constants/conversations.enum';
-import {AdminMenuService} from "./admin-menu.service";
+import {AdminMenuService} from './admin-menu.service';
+import {ModeratorMenuService} from './moderator-menu.service';
 
 @Injectable()
 export class MainMenuService {
-  constructor(@Inject(BOT) private bot: Bot<BotContext>, private adminMenuService: AdminMenuService) {
+  constructor(
+    @Inject(BOT) private bot: Bot<BotContext>,
+    private adminMenuService: AdminMenuService,
+    private moderatorStartMenuService: ModeratorMenuService
+  ) {
   }
 
   private userStartMenu: Menu<BotContext>;
@@ -37,9 +38,7 @@ export class MainMenuService {
     const settings = new Menu<BotContext>('main-settings-menu')
       .text(
         (ctx) =>
-          ctx.session.anonymousPublishing
-            ? '🙈️ Публикуюсь анонимно'
-            : '👁️ Публикуюсь не анонимно',
+          ctx.session.anonymousPublishing ? '🙈️ Публикуюсь анонимно' : '👁️ Публикуюсь не анонимно',
         (ctx) => {
           ctx.session.anonymousPublishing = !ctx.session.anonymousPublishing;
           ctx.menu.update();
@@ -53,18 +52,7 @@ export class MainMenuService {
     return menu;
   }
 
-
-  private buildStartModeratorMenu(): Menu<BotContext> {
-    return new Menu<BotContext>(ModeratorMenusEnum.MODERATOR_START_MENU)
-      .text('Модераторское меню', (ctx) => ctx.reply('Hi!'))
-      .row()
-      .url('Перейти в канал', 'https://t.me/filipp_memes')
-      .row();
-  }
-
-  public getRoleBasedStartMenu(
-    ctx: CommandContext<BotContext> | BotContext
-  ): Menu {
+  public getRoleBasedStartMenu(ctx: CommandContext<BotContext> | BotContext): Menu {
     switch (true) {
       case ctx.config.isOwner:
         return this.adminStartMenu;
@@ -77,8 +65,11 @@ export class MainMenuService {
 
   public initStartMenu(): void {
     this.userStartMenu = this.buildStartUserMenu();
-    this.moderatorStartMenu = this.buildStartModeratorMenu();
-    this.adminStartMenu = this.adminMenuService.buildStartAdminMenu(this.userStartMenu);
+    this.moderatorStartMenu = this.moderatorStartMenuService.buildStartModeratorMenu(this.userStartMenu);
+    this.adminStartMenu = this.adminMenuService.buildStartAdminMenu(
+      this.userStartMenu,
+      this.moderatorStartMenu
+    );
     this.bot.use(this.userStartMenu);
     this.bot.use(this.moderatorStartMenu);
     this.bot.use(this.adminStartMenu);

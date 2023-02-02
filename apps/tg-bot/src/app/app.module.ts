@@ -10,6 +10,7 @@ import {AppConfigModule} from './modules/config/app-config.module';
 import {BaseConfigService} from './modules/config/base-config.service';
 import {UserRequestEntity} from './modules/bot/entities/user-request.entity';
 import {UserEntity} from './modules/bot/entities/user.entity';
+import {environment} from '../environments/environment';
 
 @Module({
   imports: [
@@ -27,9 +28,9 @@ import {UserEntity} from './modules/bot/entities/user.entity';
         synchronize: true,
         extra: {
           ssl: {
-            "rejectUnauthorized": false
-          }
-        }
+            rejectUnauthorized: false,
+          },
+        },
       }),
       inject: [BaseConfigService],
     }),

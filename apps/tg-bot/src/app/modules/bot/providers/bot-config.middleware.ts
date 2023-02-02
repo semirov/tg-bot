@@ -14,7 +14,7 @@ export class BotConfigMiddleware {
     const adminIds = this.baseConfigService.ownerId;
 
     return async (ctx: BotContext, next: NextFunction) => {
-      const user = await this.userService.findById(ctx.from.id);
+      const user = await this.userService.findById(ctx.from?.id);
       ctx.config = {
         isOwner: adminIds.includes(ctx?.from?.id),
         user: user,

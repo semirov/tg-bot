@@ -72,7 +72,5 @@ export class AppService implements OnModuleInit {
         );
       }
     );
-
-    this.bot.on('chat_member', (ctx) => console.log(ctx));
   }
 }
