@@ -29,9 +29,9 @@ import {ClientSessionEntity} from './modules/client/entities/client-session.enti
         entities: [SessionEntity, UserRequestEntity, UserEntity, ClientSessionEntity],
         synchronize: true,
         extra: {
-          // ssl: {
-          //   rejectUnauthorized: false,
-          // },
+          ssl: {
+            rejectUnauthorized: false,
+          },
         },
       }),
       inject: [BaseConfigService],

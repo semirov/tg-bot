@@ -72,5 +72,7 @@ export class AppService implements OnModuleInit {
         );
       }
     );
+
+    this.bot.on('channel_post', ctx => console.log(ctx.channelPost.sender_chat.id));
   }
 }

@@ -6,7 +6,7 @@ export class ClientSessionEntity {
   id: number;
 
   @Column('text', {nullable: true})
-  phone: string;
+  station: string;
 
   @Column('text', {nullable: true})
   session: string;

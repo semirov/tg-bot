@@ -10,7 +10,7 @@ import {Conversation, createConversation} from '@grammyjs/conversations';
 import {ConversationsEnum} from '../conversations/constants/conversations.enum';
 import {UserEntity} from '../bot/entities/user.entity';
 import {add, getUnixTime} from 'date-fns';
-import {ClientBaseService} from "../client/services/client-base.service";
+import {ClientBaseService} from '../client/services/client-base.service';
 
 @Injectable()
 export class AdminMenuService implements OnModuleInit {
@@ -32,17 +32,23 @@ export class AdminMenuService implements OnModuleInit {
     );
   }
 
-  public buildStartAdminMenu(userStartMenu: Menu<BotContext>, moderatorStartMenu: Menu<BotContext>): Menu<BotContext> {
+  public buildStartAdminMenu(
+    userStartMenu: Menu<BotContext>,
+    moderatorStartMenu: Menu<BotContext>
+  ): Menu<BotContext> {
     const menu = new Menu<BotContext>(AdminMenusEnum.ADMIN_START_MENU)
       .text('Модераторы', (ctx) => ctx.menu.nav('moderators-list'))
       .row()
       .text('Добавить модератора', async (ctx) =>
         ctx.conversation.enter(ConversationsEnum.ADD_MODERATOR_CONVERSATION)
-      ).row()
-      .text(async () => {
+      )
+      .row()
+      .text(
+        async () => {
           const status = await this.clientBaseService.lastObserverStatus();
-          return status ? 'Остановить обсерваторию' : 'Запустить обсерваторию'
-        }, async (ctx) => {
+          return status ? 'Остановить обсерваторию' : 'Запустить обсерваторию';
+        },
+        async (ctx) => {
           await this.clientBaseService.toggleChannelObserver();
           ctx.menu.update();
         }
@@ -90,70 +96,81 @@ export class AdminMenuService implements OnModuleInit {
       })
       .row()
       .text(
-        async (ctx) =>
-          ctx.config.user.allowPublishToChannel ? 'Может публиковать' : 'Не может публиковать',
         async (ctx) => {
-          ctx.config.user.allowPublishToChannel = !ctx.config.user.allowPublishToChannel;
-          ctx.menu.update();
+          const user = await this.userService.findById(ctx.session.lastChangedModeratorId);
+          return user.allowPublishToChannel ? 'Может публиковать' : 'Не может публиковать';
+        },
+        async (ctx) => {
+          const user = await this.userService.findById(ctx.session.lastChangedModeratorId);
           await this.userService.repository.update(
-            {id: ctx.config.user.id},
-            {allowPublishToChannel: ctx.config.user.allowPublishToChannel}
+            {id: ctx.session.lastChangedModeratorId},
+            {allowPublishToChannel: !user.allowPublishToChannel}
           );
+          ctx.menu.update();
         }
       )
       .row()
       .text(
-        async (ctx) =>
-          ctx.config.user.allowDeleteRejectedPost
+        async (ctx) => {
+          const user = await this.userService.findById(ctx.session.lastChangedModeratorId);
+          return user.allowDeleteRejectedPost
             ? 'Может удалять отклоненные'
-            : 'Не может удалять отклоненные',
+            : 'Не может удалять отклоненные';
+        },
         async (ctx) => {
-          ctx.config.user.allowDeleteRejectedPost = !ctx.config.user.allowDeleteRejectedPost;
-          ctx.menu.update();
+          const user = await this.userService.findById(ctx.session.lastChangedModeratorId);
           await this.userService.repository.update(
-            {id: ctx.config.user.id},
-            {allowDeleteRejectedPost: ctx.config.user.allowDeleteRejectedPost}
+            {id: ctx.session.lastChangedModeratorId},
+            {allowDeleteRejectedPost: !user.allowDeleteRejectedPost}
           );
+          ctx.menu.update();
         }
       )
       .row()
       .text(
-        async (ctx) =>
-          ctx.config.user.allowRestoreDiscardedPost
+        async (ctx) => {
+          const user = await this.userService.findById(ctx.session.lastChangedModeratorId);
+          return user.allowRestoreDiscardedPost
             ? 'Может возвращать отклоненные'
-            : 'Не может возвращать отклоненные',
+            : 'Не может возвращать отклоненные';
+        },
         async (ctx) => {
-          ctx.config.user.allowRestoreDiscardedPost = !ctx.config.user.allowRestoreDiscardedPost;
-          ctx.menu.update();
+          const user = await this.userService.findById(ctx.session.lastChangedModeratorId);
           await this.userService.repository.update(
-            {id: ctx.config.user.id},
-            {allowRestoreDiscardedPost: ctx.config.user.allowRestoreDiscardedPost}
+            {id: ctx.session.lastChangedModeratorId},
+            {allowRestoreDiscardedPost: !user.allowRestoreDiscardedPost}
           );
+          ctx.menu.update();
         }
       )
       .row()
       .text(
-        async (ctx) =>
-          ctx.config.user.allowSetStrike ? 'Может выдавать страйки' : 'Не может выдавать страйки',
         async (ctx) => {
-          ctx.config.user.allowSetStrike = !ctx.config.user.allowSetStrike;
-          ctx.menu.update();
+          const user = await this.userService.findById(ctx.session.lastChangedModeratorId);
+          return user.allowSetStrike ? 'Может выдавать страйки' : 'Не может выдавать страйки';
+        },
+        async (ctx) => {
+          const user = await this.userService.findById(ctx.session.lastChangedModeratorId);
           await this.userService.repository.update(
-            {id: ctx.config.user.id},
-            {allowSetStrike: ctx.config.user.allowSetStrike}
+            {id: ctx.session.lastChangedModeratorId},
+            {allowSetStrike: !user.allowSetStrike}
           );
+          ctx.menu.update();
         }
       )
       .row()
       .text(
-        async (ctx) => (ctx.config.user.allowMakeBan ? 'Может банить' : 'Не может банить'),
         async (ctx) => {
-          ctx.config.user.allowMakeBan = !ctx.config.user.allowMakeBan;
-          ctx.menu.update();
+          const user = await this.userService.findById(ctx.session.lastChangedModeratorId);
+          return user.allowMakeBan ? 'Может банить' : 'Не может банить'
+        },
+        async (ctx) => {
+          const user = await this.userService.findById(ctx.session.lastChangedModeratorId);
           await this.userService.repository.update(
-            {id: ctx.config.user.id},
-            {allowMakeBan: ctx.config.user.allowMakeBan}
+            {id: ctx.session.lastChangedModeratorId},
+            {allowMakeBan: !user.allowMakeBan}
           );
+          ctx.menu.update();
         }
       )
       .row()

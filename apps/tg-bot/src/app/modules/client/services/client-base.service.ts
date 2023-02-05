@@ -52,7 +52,9 @@ export class ClientBaseService implements OnModuleInit {
   }
 
   private async stopObserverStation() {
-    await this.telegramClient.destroy();
+    if (this.telegramClient.connected) {
+      await this.telegramClient.destroy();
+    }
     await this.changeObserverState(false);
   }
 
@@ -68,7 +70,7 @@ export class ClientBaseService implements OnModuleInit {
       }
     );
 
-    await this.telegramClient.start({
+    this.telegramClient.start({
       phoneNumber: async () => {
         return await this.getPhoneNumber();
       },
@@ -89,8 +91,6 @@ export class ClientBaseService implements OnModuleInit {
     this.telegramClient.addEventHandler(async (event) => {
       this.onMessageEvent(event);
     }, new NewMessage({}));
-
-    const result = await this.telegramClient.invoke(new Api.updates.GetState());
   }
 
   private async getPhoneNumber(): Promise<string> {
@@ -180,21 +180,21 @@ export class ClientBaseService implements OnModuleInit {
   }
 
   private async saveSession(session: string): Promise<void> {
-    await this.userRequestRepository.update({id: 1}, {session});
+    await this.userRequestRepository.update({station: 'main'}, {session});
   }
 
   public async lastObserverStatus(): Promise<boolean> {
-    const settings = await this.userRequestRepository.findOne({where: {id: 1}});
+    const settings = await this.userRequestRepository.findOne({where: {station: 'main'}});
 
-    return settings.isActive;
+    return !!settings?.isActive;
   }
 
   private async changeObserverState(status: boolean): Promise<void> {
-    await this.userRequestRepository.update({id: 1}, {isActive: status});
+    await this.userRequestRepository.update({station: 'main'}, {isActive: status});
   }
 
   private async loadSession(): Promise<StringSession> {
-    const session = await this.userRequestRepository.findOne({where: {id: 1}});
+    const session = await this.userRequestRepository.findOne({where: {station: 'main'}});
     if (!session) {
       return new StringSession('');
     }
@@ -203,12 +203,14 @@ export class ClientBaseService implements OnModuleInit {
   }
 
   private async checkAutoRunObserver(): Promise<void> {
-    const hasSession = await this.userRequestRepository.countBy({id: 1});
+    const hasSession = await this.userRequestRepository.countBy({station: 'main'});
     if (!hasSession) {
-      await this.userRequestRepository.create({session: '', isActive: false});
+      const value = await this.userRequestRepository.create({station: 'main', session: '', isActive: false});
+      await this.userRequestRepository.save(value);
     }
 
     const lastStatus = await this.lastObserverStatus();
+
     if (lastStatus) {
       await this.startChannelObserver();
     } else {
