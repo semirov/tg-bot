@@ -11,12 +11,10 @@ export class BotConfigMiddleware {
   }
 
   public configMiddleware(): Middleware {
-    const adminIds = this.baseConfigService.ownerId;
-
     return async (ctx: BotContext, next: NextFunction) => {
       const user = await this.userService.findById(ctx.from?.id);
       ctx.config = {
-        isOwner: adminIds.includes(ctx?.from?.id),
+        isOwner: ctx?.from?.id === this.baseConfigService.ownerId,
         user: user,
       };
       await next();

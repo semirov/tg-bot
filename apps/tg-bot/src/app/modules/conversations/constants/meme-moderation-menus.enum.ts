@@ -5,4 +5,5 @@ export enum MemeModerationMenusEnum {
   PUBLICATION = 'PUBLICATION',
   BAN = 'BAN',
   STRIKE = 'STRIKE',
+  OBSERVATORY_POST = 'OBSERVATORY_POST',
 }

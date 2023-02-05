@@ -10,13 +10,15 @@ import {Conversation, createConversation} from '@grammyjs/conversations';
 import {ConversationsEnum} from '../conversations/constants/conversations.enum';
 import {UserEntity} from '../bot/entities/user.entity';
 import {add, getUnixTime} from 'date-fns';
+import {ClientBaseService} from "../client/services/client-base.service";
 
 @Injectable()
 export class AdminMenuService implements OnModuleInit {
   constructor(
     @Inject(BOT) private bot: Bot<BotContext>,
     private userService: UserService,
-    private baseConfigService: BaseConfigService
+    private baseConfigService: BaseConfigService,
+    private clientBaseService: ClientBaseService
   ) {
   }
 
@@ -36,6 +38,14 @@ export class AdminMenuService implements OnModuleInit {
       .row()
       .text('Добавить модератора', async (ctx) =>
         ctx.conversation.enter(ConversationsEnum.ADD_MODERATOR_CONVERSATION)
+      ).row()
+      .text(async () => {
+          const status = await this.clientBaseService.lastObserverStatus();
+          return status ? 'Остановить обсерваторию' : 'Запустить обсерваторию'
+        }, async (ctx) => {
+          await this.clientBaseService.toggleChannelObserver();
+          ctx.menu.update();
+        }
       )
       .row()
       .text('Показать статистику пользователя')

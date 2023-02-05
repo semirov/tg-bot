@@ -10,15 +10,17 @@ import {UserService} from '../bot/services/user.service';
 import {UserPermissionEnum} from '../bot/constants/user-permission.enum';
 import {PublicationModesEnum} from './constants/publication-modes.enum';
 import {MemeModerationMenusEnum} from './constants/meme-moderation-menus.enum';
-import {add, differenceInMinutes, getUnixTime} from 'date-fns';
+import {add, getUnixTime} from 'date-fns';
 import {UserRequestService} from '../bot/services/user-request.service';
+import {ClientBaseService} from "../client/services/client-base.service";
 
 export class SendMemeConversation implements OnModuleInit {
   constructor(
     @Inject(BOT) private bot: Bot<BotContext>,
     private baseConfigService: BaseConfigService,
     private userService: UserService,
-    private userRequestService: UserRequestService
+    private userRequestService: UserRequestService,
+    private clientBaseService: ClientBaseService,
   ) {
   }
 
@@ -26,6 +28,11 @@ export class SendMemeConversation implements OnModuleInit {
    * Меню публикации одобренного поста
    */
   private moderatedPostMenu: Menu<BotContext>;
+
+  /**
+   * Меню публикации одобренного поста
+   */
+  private observerPostMenu: Menu<BotContext>;
 
   public readonly MEME_RULES =
     '<b>Для публикации принимаются:</b>\n' +
@@ -42,10 +49,12 @@ export class SendMemeConversation implements OnModuleInit {
 
   public onModuleInit(): void {
     this.buildModeratedPostMenu();
+    this.buildObservatoryPostMenu();
     this.bot.errorBoundary(
       (err) => Logger.log(err),
       createConversation(this.conversation.bind(this), ConversationsEnum.SEND_MEME_CONVERSATION)
     );
+    this.onObserverStationPost();
   }
 
   public async conversation(
@@ -123,6 +132,26 @@ export class SendMemeConversation implements OnModuleInit {
     });
     await ctx.reply('Мем отправлен на одобрение 😎');
     await this.userService.updateUserLastActivity(ctx);
+  }
+
+  private buildObservatoryPostMenu(): void {
+    const menu = new Menu<BotContext>(MemeModerationMenusEnum.OBSERVATORY_POST, {autoAnswer: false})
+      .text('🤖 Пост обсерватории').row()
+      .text('🗑 Удалить', async (ctx) => {
+        if (this.userService.checkPermission(ctx, UserPermissionEnum.ALLOW_DELETE_REJECTED_POST)) {
+          await ctx.deleteMessage();
+        }
+      })
+      .text('Опубликовать', async (ctx) => {
+        if (this.userService.checkPermission(ctx, UserPermissionEnum.ALLOW_PUBLISH_TO_CHANNEL)) {
+          await this.publishObserverPost(ctx);
+        }
+      })
+      .row();
+
+
+    this.observerPostMenu = menu;
+    this.bot.use(this.observerPostMenu);
   }
 
   private buildModeratedPostMenu() {
@@ -477,4 +506,47 @@ export class SendMemeConversation implements OnModuleInit {
     }
     return false;
   }
+
+
+  private async publishObserverPost(ctx: BotContext): Promise<void> {
+
+    const channelInfo = await ctx.api.getChat(this.baseConfigService.memeChanelId);
+    const link = channelInfo['username']
+      ? `https://t.me/${channelInfo['username']}`
+      : channelInfo['invite_link'];
+    const caption = `<a href="${link}">${channelInfo['title']}</a>`;
+
+    const publishedMessage = await ctx.api.copyMessage(
+      this.baseConfigService.memeChanelId,
+      this.baseConfigService.userRequestMemeChannel,
+      ctx.callbackQuery.message.message_id,
+      {
+        caption: caption,
+        parse_mode: 'HTML',
+        disable_notification: true,
+      }
+    );
+
+    const postLink = channelInfo['username']
+      ? `https://t.me/${channelInfo['username']}/${publishedMessage.message_id}`
+      : channelInfo['invite_link'];
+
+    const inlineKeyboard = new InlineKeyboard().url('🤖 Опубликован', postLink).row();
+    await ctx.editMessageReplyMarkup({reply_markup: inlineKeyboard});
+  }
+
+  private onObserverStationPost() {
+    this.clientBaseService.observerChannelPost$.subscribe(async (ctx) => {
+
+
+      await ctx.api.copyMessage(
+        this.baseConfigService.userRequestMemeChannel,
+        ctx.channelPost.sender_chat.id,
+        ctx.channelPost.message_id,
+        {reply_markup: this.observerPostMenu}
+      );
+
+    });
+  }
+
 }

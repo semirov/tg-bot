@@ -10,11 +10,9 @@ export class BaseConfigService {
     return this.configService.getOrThrow('BOT_TOKEN');
   }
 
-  get ownerId(): number[] {
-    return this.configService
+  get ownerId(): number {
+    return +this.configService
       .getOrThrow<string>('BOT_OWNER_ID')
-      .split(',')
-      .map((id) => +id);
   }
 
   get memeChanelId(): number {
@@ -24,6 +22,12 @@ export class BaseConfigService {
   get userRequestMemeChannel(): number {
     return +this.configService.getOrThrow<string>('USER_REQUEST_CHANNEL');
   }
+
+
+  get observerChannel(): number {
+    return +this.configService.getOrThrow<string>('OBSERVER_CHANNEL');
+  }
+
 
   get databaseHost(): string {
     return this.configService.getOrThrow<string>('DATABASE_HOST');
@@ -43,5 +47,13 @@ export class BaseConfigService {
 
   get databaseName(): string {
     return this.configService.getOrThrow<string>('DATABASE_NAME');
+  }
+
+  get appApiId(): number {
+    return +this.configService.getOrThrow<string>('APP_API_ID');
+  }
+
+  get appApiHash(): string {
+    return this.configService.getOrThrow<string>('APP_API_HASH');
   }
 }

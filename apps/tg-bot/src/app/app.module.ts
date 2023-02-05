@@ -11,6 +11,8 @@ import {BaseConfigService} from './modules/config/base-config.service';
 import {UserRequestEntity} from './modules/bot/entities/user-request.entity';
 import {UserEntity} from './modules/bot/entities/user.entity';
 import {environment} from '../environments/environment';
+import {ClientModule} from './modules/client/client.module';
+import {ClientSessionEntity} from './modules/client/entities/client-session.entity';
 
 @Module({
   imports: [
@@ -24,12 +26,12 @@ import {environment} from '../environments/environment';
         username: configService.databaseUsername,
         password: configService.databasePassword,
         database: configService.databaseName,
-        entities: [SessionEntity, UserRequestEntity, UserEntity],
+        entities: [SessionEntity, UserRequestEntity, UserEntity, ClientSessionEntity],
         synchronize: true,
         extra: {
-          ssl: {
-            rejectUnauthorized: false,
-          },
+          // ssl: {
+          //   rejectUnauthorized: false,
+          // },
         },
       }),
       inject: [BaseConfigService],
@@ -37,6 +39,7 @@ import {environment} from '../environments/environment';
     ConversationsModule,
     MenuModule,
     BotModule,
+    ClientModule,
   ],
   controllers: [],
   providers: [AppService],
