@@ -24,7 +24,7 @@ export const BOT_PROVIDER = {
   ) => {
     const bot = new Bot(config.botToken);
 
-    bot.catch((err) => {
+    bot.catch((err: BotError<BotContext>) => {
       const ctx = err.ctx;
       const e = err.error;
       Logger.error(`Error while handling update ${ctx.update.update_id}:`, e);
@@ -33,8 +33,9 @@ export const BOT_PROVIDER = {
       } else if (e instanceof HttpError) {
         Logger.error('Could not contact Telegram:', e);
       } else {
-        Logger.error('Unknown error:', e);
+        Logger.error('Unknown error: ', e, e);
       }
+      console.error(e);
     });
 
 

@@ -54,8 +54,6 @@ export class AdminMenuService implements OnModuleInit {
         }
       )
       .row()
-      .text('Показать статистику пользователя')
-      .row()
       .text('Меню модератора', (ctx) =>
         ctx.reply('Выбери то, что хочешь сделать', {
           reply_markup: moderatorStartMenu,

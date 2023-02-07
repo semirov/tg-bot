@@ -13,6 +13,8 @@ import {UserEntity} from './modules/bot/entities/user.entity';
 import {environment} from '../environments/environment';
 import {ClientModule} from './modules/client/client.module';
 import {ClientSessionEntity} from './modules/client/entities/client-session.entity';
+import {ObservatoryModule} from "./modules/observatory/observatory.module";
+import {ObservatoryPostEntity} from "./modules/observatory/entities/observatory-post.entity";
 
 @Module({
   imports: [
@@ -26,16 +28,17 @@ import {ClientSessionEntity} from './modules/client/entities/client-session.enti
         username: configService.databaseUsername,
         password: configService.databasePassword,
         database: configService.databaseName,
-        entities: [SessionEntity, UserRequestEntity, UserEntity, ClientSessionEntity],
+        entities: [SessionEntity, UserRequestEntity, UserEntity, ClientSessionEntity, ObservatoryPostEntity],
         synchronize: true,
-        extra: {
+        extra: configService.useSSL ? {
           ssl: {
             rejectUnauthorized: false,
           },
-        },
+        } : undefined,
       }),
       inject: [BaseConfigService],
     }),
+    ObservatoryModule,
     ConversationsModule,
     MenuModule,
     BotModule,

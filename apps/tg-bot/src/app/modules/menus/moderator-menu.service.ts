@@ -42,40 +42,40 @@ export class ModeratorMenuService {
       dayDiscarded,
     ] = await Promise.all([
       this.userRequestService.repository.countBy({
-        processedByModerator: userId,
+        processedByModerator: {id: userId},
         isApproved: true,
       }),
       this.userRequestService.repository.countBy({
-        processedByModerator: userId,
+        processedByModerator: {id: userId},
         isApproved: true,
         moderatedAt: MoreThan<Date>(sub(new Date(Date.now()), {months: 1})),
       }),
       this.userRequestService.repository.countBy({
-        processedByModerator: userId,
+        processedByModerator: {id: userId},
         isApproved: true,
         moderatedAt: MoreThan<Date>(sub(new Date(Date.now()), {weeks: 1})),
       }),
       this.userRequestService.repository.countBy({
-        processedByModerator: userId,
+        processedByModerator: {id: userId},
         isApproved: true,
         moderatedAt: MoreThan<Date>(sub(new Date(Date.now()), {days: 1})),
       }),
       this.userRequestService.repository.countBy({
-        processedByModerator: userId,
+        processedByModerator: {id: userId},
         isApproved: false,
       }),
       this.userRequestService.repository.countBy({
-        processedByModerator: userId,
+        processedByModerator: {id: userId},
         isApproved: false,
         moderatedAt: MoreThan<Date>(sub(new Date(Date.now()), {months: 1})),
       }),
       this.userRequestService.repository.countBy({
-        processedByModerator: userId,
+        processedByModerator: {id: userId},
         isApproved: false,
         moderatedAt: MoreThan<Date>(sub(new Date(Date.now()), {weeks: 1})),
       }),
       this.userRequestService.repository.countBy({
-        processedByModerator: userId,
+        processedByModerator: {id: userId},
         isApproved: false,
         moderatedAt: MoreThan<Date>(sub(new Date(Date.now()), {days: 1})),
       }),

@@ -9,6 +9,7 @@ export class UserRequestEntity {
   @ManyToOne(() => UserEntity, (user) => user.postRequests)
   user: UserEntity;
 
+
   @Column('boolean', {nullable: true})
   public isAnonymousPublishing: boolean;
 
@@ -21,8 +22,9 @@ export class UserRequestEntity {
   @Column('boolean', {nullable: true})
   isApproved: boolean;
 
-  @Column('bigint', {nullable: true})
-  processedByModerator: number;
+
+  @ManyToOne(() => UserEntity, (user) => user.moderatedUserRequests)
+  processedByModerator: UserEntity;
 
   @Column('timestamptz', {nullable: true})
   moderatedAt: Date;

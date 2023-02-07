@@ -12,15 +12,14 @@ import {PublicationModesEnum} from './constants/publication-modes.enum';
 import {MemeModerationMenusEnum} from './constants/meme-moderation-menus.enum';
 import {add, getUnixTime} from 'date-fns';
 import {UserRequestService} from '../bot/services/user-request.service';
-import {ClientBaseService} from "../client/services/client-base.service";
+import {ClientBaseService} from '../client/services/client-base.service';
 
 export class SendMemeConversation implements OnModuleInit {
   constructor(
     @Inject(BOT) private bot: Bot<BotContext>,
     private baseConfigService: BaseConfigService,
     private userService: UserService,
-    private userRequestService: UserRequestService,
-    private clientBaseService: ClientBaseService,
+    private userRequestService: UserRequestService
   ) {
   }
 
@@ -29,10 +28,6 @@ export class SendMemeConversation implements OnModuleInit {
    */
   private moderatedPostMenu: Menu<BotContext>;
 
-  /**
-   * Меню публикации одобренного поста
-   */
-  private observerPostMenu: Menu<BotContext>;
 
   public readonly MEME_RULES =
     '<b>Для публикации принимаются:</b>\n' +
@@ -49,12 +44,10 @@ export class SendMemeConversation implements OnModuleInit {
 
   public onModuleInit(): void {
     this.buildModeratedPostMenu();
-    this.buildObservatoryPostMenu();
     this.bot.errorBoundary(
       (err) => Logger.log(err),
       createConversation(this.conversation.bind(this), ConversationsEnum.SEND_MEME_CONVERSATION)
     );
-    this.onObserverStationPost();
   }
 
   public async conversation(
@@ -134,25 +127,6 @@ export class SendMemeConversation implements OnModuleInit {
     await this.userService.updateUserLastActivity(ctx);
   }
 
-  private buildObservatoryPostMenu(): void {
-    const menu = new Menu<BotContext>(MemeModerationMenusEnum.OBSERVATORY_POST, {autoAnswer: false})
-      .text('🤖 Пост обсерватории').row()
-      .text('🗑 Удалить', async (ctx) => {
-        if (this.userService.checkPermission(ctx, UserPermissionEnum.ALLOW_DELETE_REJECTED_POST)) {
-          await ctx.deleteMessage();
-        }
-      })
-      .text('Опубликовать', async (ctx) => {
-        if (this.userService.checkPermission(ctx, UserPermissionEnum.ALLOW_PUBLISH_TO_CHANNEL)) {
-          await this.publishObserverPost(ctx);
-        }
-      })
-      .row();
-
-
-    this.observerPostMenu = menu;
-    this.bot.use(this.observerPostMenu);
-  }
 
   private buildModeratedPostMenu() {
     const menu = new Menu<BotContext>(MemeModerationMenusEnum.MODERATION, {autoAnswer: false})
@@ -173,7 +147,14 @@ export class SendMemeConversation implements OnModuleInit {
     const approvedSubmenu = new Menu<BotContext>(MemeModerationMenusEnum.APPROVAL, {
       autoAnswer: false,
     })
-      .text('✅ Одобрен', async (ctx) => {
+      .text(async (ctx) => {
+        const message = await this.userRequestService.repository.findOne({
+          select: ['processedByModerator'],
+          where: {userRequestChannelMessageId: ctx.callbackQuery.message.message_id},
+          relations: {processedByModerator: true},
+        });
+        return `✅ Одобрен (${message.processedByModerator.username})`;
+      }, async (ctx) => {
         if (this.userService.checkPermission(ctx, UserPermissionEnum.ALLOW_PUBLISH_TO_CHANNEL)) {
           ctx.menu.nav(MemeModerationMenusEnum.PUBLICATION);
         }
@@ -211,7 +192,14 @@ export class SendMemeConversation implements OnModuleInit {
     const rejectSubmenu = new Menu<BotContext>(MemeModerationMenusEnum.REJECT, {
       autoAnswer: false,
     })
-      .text('⛔️ Отклонен')
+      .text(async (ctx) => {
+        const message = await this.userRequestService.repository.findOne({
+          select: ['processedByModerator'],
+          where: {userRequestChannelMessageId: ctx.callbackQuery.message.message_id},
+          relations: {processedByModerator: true},
+        });
+        return `⛔️ Отклонен (${message.processedByModerator.username})`;
+      })
       .row()
       .text('🗑', async (ctx) => {
         if (this.userService.checkPermission(ctx, UserPermissionEnum.ALLOW_DELETE_REJECTED_POST)) {
@@ -296,7 +284,7 @@ export class SendMemeConversation implements OnModuleInit {
       {id: message.id},
       {
         isApproved: true,
-        processedByModerator: ctx.callbackQuery.from.id,
+        processedByModerator: {id: ctx.callbackQuery.from.id},
         moderatedAt: new Date(),
       }
     );
@@ -318,7 +306,7 @@ export class SendMemeConversation implements OnModuleInit {
       {id: message.id},
       {
         isApproved: false,
-        processedByModerator: ctx.callbackQuery.from.id,
+        processedByModerator: {id: ctx.callbackQuery.from.id},
         moderatedAt: new Date(),
       }
     );
@@ -505,48 +493,6 @@ export class SendMemeConversation implements OnModuleInit {
       return true;
     }
     return false;
-  }
-
-
-  private async publishObserverPost(ctx: BotContext): Promise<void> {
-
-    const channelInfo = await ctx.api.getChat(this.baseConfigService.memeChanelId);
-    const link = channelInfo['username']
-      ? `https://t.me/${channelInfo['username']}`
-      : channelInfo['invite_link'];
-    const caption = `<a href="${link}">${channelInfo['title']}</a>`;
-
-    const publishedMessage = await ctx.api.copyMessage(
-      this.baseConfigService.memeChanelId,
-      this.baseConfigService.userRequestMemeChannel,
-      ctx.callbackQuery.message.message_id,
-      {
-        caption: caption,
-        parse_mode: 'HTML',
-        disable_notification: true,
-      }
-    );
-
-    const postLink = channelInfo['username']
-      ? `https://t.me/${channelInfo['username']}/${publishedMessage.message_id}`
-      : channelInfo['invite_link'];
-
-    const inlineKeyboard = new InlineKeyboard().url('🤖 Опубликован', postLink).row();
-    await ctx.editMessageReplyMarkup({reply_markup: inlineKeyboard});
-  }
-
-  private onObserverStationPost() {
-    this.clientBaseService.observerChannelPost$.subscribe(async (ctx) => {
-
-
-      await ctx.api.copyMessage(
-        this.baseConfigService.userRequestMemeChannel,
-        ctx.channelPost.sender_chat.id,
-        ctx.channelPost.message_id,
-        {reply_markup: this.observerPostMenu}
-      );
-
-    });
   }
 
 }

@@ -37,6 +37,10 @@ export class BaseConfigService {
     return +this.configService.getOrThrow<string>('DATABASE_PORT');
   }
 
+  get useSSL(): boolean {
+    return this.configService.getOrThrow<string>('USE_SSL') === 'true';
+  }
+
   get databaseUsername(): string {
     return this.configService.getOrThrow<string>('DATABASE_USERNAME');
   }

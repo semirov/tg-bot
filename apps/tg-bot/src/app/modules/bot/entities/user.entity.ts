@@ -6,6 +6,7 @@ import {
   PrimaryGeneratedColumn,
 } from 'typeorm';
 import {UserRequestEntity} from './user-request.entity';
+import {ObservatoryPostEntity} from "../../observatory/entities/observatory-post.entity";
 
 @Entity()
 export class UserEntity {
@@ -63,4 +64,11 @@ export class UserEntity {
 
   @OneToMany(() => UserRequestEntity, (postRequest) => postRequest.user)
   postRequests: UserRequestEntity[];
+
+  @OneToMany(() => UserRequestEntity, (postRequest) => postRequest.processedByModerator)
+  moderatedUserRequests: UserRequestEntity[];
+
+
+  @OneToMany(() => ObservatoryPostEntity, (postRequest) => postRequest.processedByModerator)
+  moderatedObservatoryPosts: ObservatoryPostEntity[];
 }

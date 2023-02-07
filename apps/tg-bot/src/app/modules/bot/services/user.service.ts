@@ -43,9 +43,9 @@ export class UserService {
     ctx: BotContext,
     permission: UserPermissionEnum
   ): boolean {
-    // if (ctx.config.isOwner) {
-    //   return true;
-    // }
+    if (ctx.config.isOwner) {
+      return true;
+    }
 
     const user = ctx?.config?.user;
 
