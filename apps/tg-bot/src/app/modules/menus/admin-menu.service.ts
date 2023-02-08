@@ -1,6 +1,6 @@
 import {Inject, Injectable, Logger, OnModuleInit} from '@nestjs/common';
 import {BOT} from '../bot/providers/bot.provider';
-import {Bot} from 'grammy';
+import {Bot, InlineKeyboard} from 'grammy';
 import {BotContext} from '../bot/interfaces/bot-context.interface';
 import {Menu, MenuRange} from '@grammyjs/menu';
 import {AdminMenusEnum} from './constants/bot-menus.enum';
@@ -53,6 +53,10 @@ export class AdminMenuService implements OnModuleInit {
           ctx.menu.update();
         }
       )
+      .row()
+      .text('Опубликовать промо бота', async (ctx) => {
+        await this.publishBotPromo(ctx);
+      })
       .row()
       .text('Меню модератора', (ctx) =>
         ctx.reply('Выбери то, что хочешь сделать', {
@@ -160,7 +164,7 @@ export class AdminMenuService implements OnModuleInit {
       .text(
         async (ctx) => {
           const user = await this.userService.findById(ctx.session.lastChangedModeratorId);
-          return user.allowMakeBan ? 'Может банить' : 'Не может банить'
+          return user.allowMakeBan ? 'Может банить' : 'Не может банить';
         },
         async (ctx) => {
           const user = await this.userService.findById(ctx.session.lastChangedModeratorId);
@@ -247,6 +251,15 @@ export class AdminMenuService implements OnModuleInit {
     await ctx.api.sendMessage(
       moderatorId,
       'Жаль, но ты исключен из списка модераторов, доступ в канал предложки ограничен, но ты по прежнему можешь присылать мемы'
+    );
+  }
+
+  private async publishBotPromo(ctx: BotContext) {
+    const inlineKeyboard = new InlineKeyboard().url('Прислать мем', `https://t.me/${ctx.me.username}`);
+    await this.bot.api.sendMessage(
+      this.baseConfigService.memeChanelId,
+      'Ты можешь прислать мем через бота 😉',
+      {reply_markup: inlineKeyboard}
     );
   }
 }

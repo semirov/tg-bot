@@ -84,6 +84,7 @@ export class ClientBaseService implements OnModuleInit {
     });
 
     const session = loadedOrEmptySession.save();
+    Logger.log('session', session);
     await this.saveSession(session);
     Logger.log('Observer station started', ClientBaseService.name);
     await this.changeObserverState(true);
