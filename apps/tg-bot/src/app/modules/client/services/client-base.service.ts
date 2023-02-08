@@ -84,8 +84,8 @@ export class ClientBaseService implements OnModuleInit {
     }).then(() => {
       const session = loadedOrEmptySession.save();
       this.saveSession(session);
+      Logger.log('Observer station started', ClientBaseService.name);
     });
-    Logger.log('Observer station started', ClientBaseService.name);
     await this.changeObserverState(true);
 
     this.telegramClient.addEventHandler(async (event) => {
