@@ -81,11 +81,10 @@ export class ClientBaseService implements OnModuleInit {
         return await this.getPhoneCode();
       },
       onError: (err) => Logger.error(err, ClientBaseService.name),
+    }).then(() => {
+      const session = loadedOrEmptySession.save();
+      this.saveSession(session);
     });
-
-    const session = loadedOrEmptySession.save();
-    Logger.log('session', session);
-    await this.saveSession(session);
     Logger.log('Observer station started', ClientBaseService.name);
     await this.changeObserverState(true);
 
