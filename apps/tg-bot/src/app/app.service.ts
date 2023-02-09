@@ -4,8 +4,10 @@ import {BOT} from './modules/bot/providers/bot.provider';
 import {Bot, CommandContext} from 'grammy';
 import {BotContext} from './modules/bot/interfaces/bot-context.interface';
 import {BaseConfigService} from './modules/config/base-config.service';
-import {SendMemeConversation} from './modules/conversations/send-meme.conversation';
 import {UserService} from './modules/bot/services/user.service';
+import {UserPostManagementService} from './modules/post-management/user-post-management.service';
+import {ConversationsEnum} from "./modules/post-management/constants/conversations.enum";
+import {AskAdminService} from "./modules/post-management/ask-admin.service";
 
 @Injectable()
 export class AppService implements OnModuleInit {
@@ -13,20 +15,28 @@ export class AppService implements OnModuleInit {
     private mainMenuService: MainMenuService,
     @Inject(BOT) private bot: Bot<BotContext>,
     private baseConfigService: BaseConfigService,
-    private sendMemeConversation: SendMemeConversation,
-    private userService: UserService
+    private userPostManagementService: UserPostManagementService,
+    private userService: UserService,
+    private askAdminService: AskAdminService,
   ) {
   }
 
   public onModuleInit(): void {
     this.mainMenuService.initStartMenu();
+    // this.onAskAdmin(); // TODO
     this.onStartCommand();
     this.onMenuCommand();
     this.onMemeFromMain();
   }
 
+  private onAskAdmin() {
+    this.bot.command('ask_admin', async (ctx) => {
+      await ctx.conversation.enter(ConversationsEnum.USER_ADMIN_CONVERSATION);
+    });
+  }
+
   private onMenuCommand() {
-    this.bot.command(['menu'], async (ctx: CommandContext<BotContext>) => {
+    this.bot.command('menu', async (ctx: CommandContext<BotContext>) => {
       await ctx.reply('Выбери то, что хочешь сделать', {
         reply_markup: this.mainMenuService.getRoleBasedStartMenu(ctx),
       });
@@ -60,7 +70,7 @@ export class AppService implements OnModuleInit {
   private onMemeFromMain() {
     this.bot.on(['message:photo', 'message:video'], async (ctx) => {
       await this.userService.updateUserLastActivity(ctx);
-      await this.sendMemeConversation.handleUserMemeRequest(ctx);
+      await this.userPostManagementService.handleUserMemeRequest(ctx);
     });
 
     this.bot.on(
@@ -68,10 +78,12 @@ export class AppService implements OnModuleInit {
       async (ctx) => {
         await this.userService.updateUserLastActivity(ctx);
         await ctx.reply(
-          'К публикации принимаются только картинки и видео\nЕсли тебе нужно что-то другое\nнажми /menu'
+          'К публикации принимаются только картинки и видео\n\nЕсли тебе нужно что-то другое нажми /menu'
+          // + '\n\nЕсли хочешь связаться с админом, нажми /ask_admin'
         );
       }
     );
+
 
     this.bot.on('channel_post', ctx => console.log(ctx.channelPost.sender_chat.id));
   }

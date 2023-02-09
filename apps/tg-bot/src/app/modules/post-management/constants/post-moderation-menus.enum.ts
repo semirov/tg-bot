@@ -1,9 +1,8 @@
-export enum MemeModerationMenusEnum {
+export enum PostModerationMenusEnum {
   MODERATION = 'MODERATION',
   APPROVAL = 'APPROVAL',
   REJECT = 'REJECT',
   PUBLICATION = 'PUBLICATION',
   BAN = 'BAN',
   STRIKE = 'STRIKE',
-  OBSERVATORY_POST = 'OBSERVATORY_POST',
 }

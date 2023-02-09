@@ -7,10 +7,10 @@ import {AdminMenusEnum} from './constants/bot-menus.enum';
 import {UserService} from '../bot/services/user.service';
 import {BaseConfigService} from '../config/base-config.service';
 import {Conversation, createConversation} from '@grammyjs/conversations';
-import {ConversationsEnum} from '../conversations/constants/conversations.enum';
 import {UserEntity} from '../bot/entities/user.entity';
 import {add, getUnixTime} from 'date-fns';
 import {ClientBaseService} from '../client/services/client-base.service';
+import {ConversationsEnum} from "../post-management/constants/conversations.enum";
 
 @Injectable()
 export class AdminMenuService implements OnModuleInit {

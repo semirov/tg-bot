@@ -9,12 +9,11 @@ import {BaseConfigService} from '../config/base-config.service';
 import {UserService} from '../bot/services/user.service';
 import {UserPermissionEnum} from '../bot/constants/user-permission.enum';
 import {PublicationModesEnum} from './constants/publication-modes.enum';
-import {MemeModerationMenusEnum} from './constants/meme-moderation-menus.enum';
+import {PostModerationMenusEnum} from './constants/post-moderation-menus.enum';
 import {add, getUnixTime} from 'date-fns';
 import {UserRequestService} from '../bot/services/user-request.service';
-import {ClientBaseService} from '../client/services/client-base.service';
 
-export class SendMemeConversation implements OnModuleInit {
+export class UserPostManagementService implements OnModuleInit {
   constructor(
     @Inject(BOT) private bot: Bot<BotContext>,
     private baseConfigService: BaseConfigService,
@@ -27,7 +26,6 @@ export class SendMemeConversation implements OnModuleInit {
    * Меню публикации одобренного поста
    */
   private moderatedPostMenu: Menu<BotContext>;
-
 
   public readonly MEME_RULES =
     '<b>Для публикации принимаются:</b>\n' +
@@ -43,6 +41,7 @@ export class SendMemeConversation implements OnModuleInit {
     'Жаль что ты передумал, возвращайся снова!\nЧтобы показать основное меню бота, нажми /menu';
 
   public onModuleInit(): void {
+
     this.buildModeratedPostMenu();
     this.bot.errorBoundary(
       (err) => Logger.log(err),
@@ -127,38 +126,40 @@ export class SendMemeConversation implements OnModuleInit {
     await this.userService.updateUserLastActivity(ctx);
   }
 
-
   private buildModeratedPostMenu() {
-    const menu = new Menu<BotContext>(MemeModerationMenusEnum.MODERATION, {autoAnswer: false})
+    const menu = new Menu<BotContext>(PostModerationMenusEnum.MODERATION, {autoAnswer: false})
       .text('👍 Одобрить', async (ctx) => {
         if (this.userService.checkPermission(ctx, UserPermissionEnum.IS_BASE_MODERATOR)) {
           await this.onModeratorApprovalActions(ctx);
-          ctx.menu.nav(MemeModerationMenusEnum.APPROVAL);
+          ctx.menu.nav(PostModerationMenusEnum.APPROVAL);
         }
       })
       .text('👎 Отклонить', async (ctx) => {
         if (this.userService.checkPermission(ctx, UserPermissionEnum.IS_BASE_MODERATOR)) {
           await this.onModeratorRejectActions(ctx);
-          ctx.menu.nav(MemeModerationMenusEnum.REJECT);
+          ctx.menu.nav(PostModerationMenusEnum.REJECT);
         }
       })
       .row();
 
-    const approvedSubmenu = new Menu<BotContext>(MemeModerationMenusEnum.APPROVAL, {
+    const approvedSubmenu = new Menu<BotContext>(PostModerationMenusEnum.APPROVAL, {
       autoAnswer: false,
     })
-      .text(async (ctx) => {
-        const message = await this.userRequestService.repository.findOne({
-          select: ['processedByModerator'],
-          where: {userRequestChannelMessageId: ctx.callbackQuery.message.message_id},
-          relations: {processedByModerator: true},
-        });
-        return `✅ Одобрен (${message.processedByModerator.username})`;
-      }, async (ctx) => {
-        if (this.userService.checkPermission(ctx, UserPermissionEnum.ALLOW_PUBLISH_TO_CHANNEL)) {
-          ctx.menu.nav(MemeModerationMenusEnum.PUBLICATION);
+      .text(
+        async (ctx) => {
+          const message = await this.userRequestService.repository.findOne({
+            select: ['processedByModerator'],
+            where: {userRequestChannelMessageId: ctx.callbackQuery.message.message_id},
+            relations: {processedByModerator: true},
+          });
+          return `✅ Одобрен (${message.processedByModerator.username})`;
+        },
+        async (ctx) => {
+          if (this.userService.checkPermission(ctx, UserPermissionEnum.ALLOW_PUBLISH_TO_CHANNEL)) {
+            ctx.menu.nav(PostModerationMenusEnum.PUBLICATION);
+          }
         }
-      })
+      )
       .row()
       .text(async (ctx) => {
         const statistic = await this.userRequestService.userPostDiscardStatistic(ctx);
@@ -174,7 +175,7 @@ export class SendMemeConversation implements OnModuleInit {
       })
       .row();
 
-    const publishSubmenu = new Menu<BotContext>(MemeModerationMenusEnum.PUBLICATION, {
+    const publishSubmenu = new Menu<BotContext>(PostModerationMenusEnum.PUBLICATION, {
       autoAnswer: false,
     })
       .text('Сейчас 🔕', async (ctx) => this.onPublishActions(ctx, PublicationModesEnum.NOW_SILENT))
@@ -187,9 +188,9 @@ export class SendMemeConversation implements OnModuleInit {
       // .text('Вечером', async (ctx) => this.onPublishActions(ctx, PublicationModesEnum.NEXT_EVENING))
       // .text('Ночью', async (ctx) => this.onPublishActions(ctx, PublicationModesEnum.NEXT_NIGHT))
       .row()
-      .text('Назад', (ctx) => ctx.menu.nav(MemeModerationMenusEnum.APPROVAL));
+      .text('Назад', (ctx) => ctx.menu.nav(PostModerationMenusEnum.APPROVAL));
 
-    const rejectSubmenu = new Menu<BotContext>(MemeModerationMenusEnum.REJECT, {
+    const rejectSubmenu = new Menu<BotContext>(PostModerationMenusEnum.REJECT, {
       autoAnswer: false,
     })
       .text(async (ctx) => {
@@ -198,20 +199,19 @@ export class SendMemeConversation implements OnModuleInit {
           where: {userRequestChannelMessageId: ctx.callbackQuery.message.message_id},
           relations: {processedByModerator: true},
         });
-        return `⛔️ Отклонен (${message.processedByModerator.username})`;
-      })
-      .row()
-      .text('🗑', async (ctx) => {
+        return `👨 Отклонен ❌ (${message.processedByModerator.username})`;
+      }, async (ctx) => {
         if (this.userService.checkPermission(ctx, UserPermissionEnum.ALLOW_DELETE_REJECTED_POST)) {
           await ctx.deleteMessage();
         }
       })
+      .row()
       .text('🔁', async (ctx) => {
         if (
           this.userService.checkPermission(ctx, UserPermissionEnum.ALLOW_RESTORE_DISCARDED_POST)
         ) {
           await this.onAdminApproveAfterReject(ctx);
-          ctx.menu.nav(MemeModerationMenusEnum.APPROVAL);
+          ctx.menu.nav(PostModerationMenusEnum.APPROVAL);
         }
       })
       .text(
@@ -221,43 +221,42 @@ export class SendMemeConversation implements OnModuleInit {
         },
         async (ctx) => {
           if (this.userService.checkPermission(ctx, UserPermissionEnum.ALLOW_SET_STRIKE)) {
-            ctx.menu.nav(MemeModerationMenusEnum.STRIKE);
+            ctx.menu.nav(PostModerationMenusEnum.STRIKE);
           }
         }
       )
       .text('💀', async (ctx) => {
         if (this.userService.checkPermission(ctx, UserPermissionEnum.ALLOW_MAKE_BAN)) {
           await this.onAdminApproveAfterReject(ctx);
-          ctx.menu.nav(MemeModerationMenusEnum.BAN);
+          ctx.menu.nav(PostModerationMenusEnum.BAN);
         }
       })
       .row();
 
-    const banConfirmation = new Menu<BotContext>(MemeModerationMenusEnum.BAN, {autoAnswer: false})
+    const banConfirmation = new Menu<BotContext>(PostModerationMenusEnum.BAN, {autoAnswer: false})
       .text('Точно в бан?', async (ctx) => {
         if (this.userService.checkPermission(ctx, UserPermissionEnum.ALLOW_MAKE_BAN)) {
-          return;
+          await this.banUser(ctx);
+          await ctx.deleteMessage();
         }
-        await this.banUser(ctx);
-        await ctx.deleteMessage();
+        return;
       })
       .text('Нет', async (ctx) => {
-        ctx.menu.nav(MemeModerationMenusEnum.REJECT);
+        ctx.menu.nav(PostModerationMenusEnum.REJECT);
       })
       .row();
 
-    const strikeConfirmation = new Menu<BotContext>(MemeModerationMenusEnum.STRIKE, {
+    const strikeConfirmation = new Menu<BotContext>(PostModerationMenusEnum.STRIKE, {
       autoAnswer: false,
     })
       .text('Точно добавить страйк?', async (ctx) => {
         if (this.userService.checkPermission(ctx, UserPermissionEnum.ALLOW_SET_STRIKE)) {
-          return;
+          await this.makeUserStrike(ctx);
+          ctx.menu.nav(PostModerationMenusEnum.REJECT);
         }
-        await this.makeUserStrike(ctx);
-        await ctx.deleteMessage();
       })
       .text('Нет', async (ctx) => {
-        ctx.menu.nav(MemeModerationMenusEnum.REJECT);
+        ctx.menu.nav(PostModerationMenusEnum.REJECT);
       })
       .row();
 
@@ -405,7 +404,9 @@ export class SendMemeConversation implements OnModuleInit {
       ? `https://t.me/${channelInfo['username']}/${publishedMessage.message_id}`
       : channelInfo['invite_link'];
 
-    const inlineKeyboard = new InlineKeyboard().url('🚀 Опубликован', postLink).row();
+    const inlineKeyboard = new InlineKeyboard()
+      .url(`👨 Опубликован (${ctx.callbackQuery.from.username})`, postLink)
+      .row();
     await ctx.editMessageReplyMarkup({reply_markup: inlineKeyboard});
   }
 
@@ -436,7 +437,7 @@ export class SendMemeConversation implements OnModuleInit {
     );
   }
 
-  private async banUser(ctx: BotContext) {
+  public async banUser(ctx: BotContext) {
     const message = await this.userRequestService.repository.findOne({
       where: {userRequestChannelMessageId: ctx.callbackQuery.message.message_id},
       relations: {user: true},
@@ -457,7 +458,7 @@ export class SendMemeConversation implements OnModuleInit {
       'ты серьезно нарушил правила публикации и нашего сообщества, ' +
       'нам жаль что пришлось применить столь серьезную меру, ' +
       'но у нас не осталось иного выхода.\n\n' +
-      'Бот больше не будет реагировать на сообщения\n\nЧерез месяц у тебя появится кнопка запроса снятия ограничений'
+      'Бот больше не будет реагировать на сообщения'
     );
   }
 
@@ -494,5 +495,4 @@ export class SendMemeConversation implements OnModuleInit {
     }
     return false;
   }
-
 }

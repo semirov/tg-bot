@@ -6,16 +6,16 @@ export class ObservatoryPostEntity {
   @PrimaryGeneratedColumn()
   id: number;
 
-  @Column('text', {nullable: true})
-  station: string;
-
   @Column('bigint', {nullable: true})
-  requestChannelMessageId: string;
+  requestChannelMessageId: number;
 
   @Column("bool", {nullable: true})
   isApproved: boolean;
 
   @ManyToOne(() => UserEntity, (user) => user.moderatedObservatoryPosts)
   processedByModerator: UserEntity;
+
+  @Column('bigint', {nullable: true})
+  publishedMessageId: number;
 
 }

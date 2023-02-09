@@ -4,9 +4,9 @@ import {UserMenusEnum} from './constants/bot-menus.enum';
 import {BOT} from '../bot/providers/bot.provider';
 import {Bot, CommandContext} from 'grammy';
 import {BotContext} from '../bot/interfaces/bot-context.interface';
-import {ConversationsEnum} from '../conversations/constants/conversations.enum';
 import {AdminMenuService} from './admin-menu.service';
 import {ModeratorMenuService} from './moderator-menu.service';
+import {ConversationsEnum} from "../post-management/constants/conversations.enum";
 
 @Injectable()
 export class MainMenuService {
