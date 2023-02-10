@@ -8,6 +8,9 @@ export interface SessionDataInterface {
   anonymousPublishing: boolean;
   lastChangedModeratorId?: number;
   lastPublishedAt?: number;
+
+  adminUserConversationUserId?: number;
+  adminUserConversationMessageId?: number;
 }
 
 export type BotContext = Context &

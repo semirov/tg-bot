@@ -23,7 +23,7 @@ export class AppService implements OnModuleInit {
 
   public onModuleInit(): void {
     this.mainMenuService.initStartMenu();
-    // this.onAskAdmin(); // TODO
+    this.onAskAdmin();
     this.onStartCommand();
     this.onMenuCommand();
     this.onMemeFromMain();
@@ -79,7 +79,7 @@ export class AppService implements OnModuleInit {
         await this.userService.updateUserLastActivity(ctx);
         await ctx.reply(
           'К публикации принимаются только картинки и видео\n\nЕсли тебе нужно что-то другое нажми /menu'
-          // + '\n\nЕсли хочешь связаться с админом, нажми /ask_admin'
+          + '\n\nЕсли хочешь связаться с админом, нажми /ask_admin'
         );
       }
     );

@@ -7,6 +7,7 @@ import {BotContext} from '../bot/interfaces/bot-context.interface';
 import {BaseConfigService} from '../config/base-config.service';
 import {UserService} from '../bot/services/user.service';
 import {UserPostManagementService} from './user-post-management.service';
+import {add} from 'date-fns';
 
 @Injectable()
 export class AskAdminService implements OnModuleInit {
@@ -34,7 +35,7 @@ export class AskAdminService implements OnModuleInit {
       )
     );
 
-    // this.onAdminUserQuery(); // TODO
+    this.onAdminUserQuery();
   }
 
   public async userAdminConversation(
@@ -52,15 +53,21 @@ export class AskAdminService implements OnModuleInit {
     await ctx.reply('Я передам твое сообщение админу, он ответит тебе через бота');
 
     const menu = new InlineKeyboard()
-      .text('Ответить', `admin_user_dialog_start$${replyCtx.from.id}$${replyCtx.message.message_id}`)
+      .text(
+        'Ответить',
+        `admin_user_dialog_start$${replyCtx.message.from.id}$${replyCtx.message.message_id}`
+      )
       .row()
-      .text('💀 Бан', `admin_user_dialog_ban_user$${replyCtx.from.id}$${replyCtx.message.message_id}`)
+      .text(
+        '💀 Бан',
+        `admin_user_dialog_ban_user$${replyCtx.message.from.id}$${replyCtx.message.message_id}`
+      )
       .row();
 
     await replyCtx.forwardMessage(this.baseConfigService.ownerId);
     await replyCtx.api.sendMessage(
       this.baseConfigService.ownerId,
-      `Обращение пользователя @${ctx.message.from.username}`,
+      `Обращение пользователя @${replyCtx.message.from.username}`,
       {reply_markup: menu}
     );
   }
@@ -70,20 +77,46 @@ export class AskAdminService implements OnModuleInit {
     ctx: BotContext
   ): Promise<void> {
     await ctx.reply('Напиши ответ пользователю');
+
+    const replyCtx = await conversation.wait();
+
+    await ctx.api.copyMessage(
+      ctx.session.adminUserConversationUserId,
+      replyCtx.message.chat.id,
+      replyCtx.message.message_id,
+      {reply_to_message_id: ctx.session.adminUserConversationMessageId}
+    );
+    ctx.session.adminUserConversationMessageId = undefined;
+    ctx.session.adminUserConversationUserId = undefined;
+    await ctx.reply('Сообщение отправлено пользователю');
+    await ctx.deleteMessage();
   }
 
-
   private onAdminUserQuery(): void {
-
     this.bot.callbackQuery(/admin_user_dialog_start/, async (ctx) => {
       const [cmd, userId, messageId] = ctx.callbackQuery.data.split('$');
 
-      console.log(userId, messageId);
+      ctx.session.adminUserConversationUserId = +userId;
+      ctx.session.adminUserConversationMessageId = +messageId;
+
+      await ctx.conversation.enter(ConversationsEnum.ADMIN_USER_CONVERSATION);
     });
 
     this.bot.callbackQuery(/admin_user_dialog_ban_user/, async (ctx) => {
       const [cmd, userId, messageId] = ctx.callbackQuery.data.split('$');
 
+      await this.userService.repository.update(
+        {id: +userId},
+        {isBanned: true, bannedBy: ctx.callbackQuery.from.id}
+      );
+
+      await ctx.api.sendMessage(
+        +userId,
+        'К сожалению, мы вынуждены ограничить доступ к боту, т.к. ' +
+        'ты серьезно нарушил правила нашего сообщества\n\n' +
+        'Бот больше не будет реагировать на сообщения',
+        {reply_to_message_id: +messageId}
+      );
     });
   }
 }

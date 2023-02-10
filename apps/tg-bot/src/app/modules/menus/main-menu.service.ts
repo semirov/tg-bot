@@ -33,6 +33,10 @@ export class MainMenuService {
       // .row() // TODO
       .submenu('Настройки', 'main-settings-menu')
       .row()
+      .text('Связаться с админом', async (ctx) => {
+        await ctx.conversation.enter(ConversationsEnum.USER_ADMIN_CONVERSATION);
+      })
+      .row()
       .url('Перейти в канал', 'https://t.me/filipp_memes');
 
     const settings = new Menu<BotContext>('main-settings-menu')
