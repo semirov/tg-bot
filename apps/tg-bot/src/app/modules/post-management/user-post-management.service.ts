@@ -358,18 +358,16 @@ export class UserPostManagementService implements OnModuleInit {
     if (!message.isAnonymousPublishing) {
       const chatInfo = await this.bot.api.getChat(message.user.id);
       if (chatInfo['username']) {
-        caption += `Мем предложил(а)`;
-        caption += ` @${chatInfo['username']}`;
+        caption += `#предложка @${chatInfo['username']}\n`;
       }
     } else {
-      caption += `Мем опубликован`;
+      caption += `#предложка\n`;
     }
     const channelInfo = await ctx.api.getChat(this.baseConfigService.memeChanelId);
-    caption += ` через <a href="https://t.me/${ctx.me.username}">бота</a>`;
     const link = channelInfo['username']
       ? `https://t.me/${channelInfo['username']}`
       : channelInfo['invite_link'];
-    caption += ` для <a href="${link}">канала ${channelInfo['title']}</a>`;
+    caption += `<a href="${link}">${channelInfo['title']}</a>`;
 
     const publishedMessage = await ctx.api.copyMessage(
       this.baseConfigService.memeChanelId,
