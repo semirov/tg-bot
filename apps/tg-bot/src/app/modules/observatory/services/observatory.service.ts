@@ -20,6 +20,7 @@ import {
 import {formatInTimeZone} from 'date-fns-tz';
 import {ru} from 'date-fns/locale';
 import {format} from 'date-fns';
+import {SettingsService} from "../../bot/services/settings.service";
 
 @Injectable()
 export class ObservatoryService implements OnModuleInit {
@@ -31,7 +32,8 @@ export class ObservatoryService implements OnModuleInit {
     private clientBaseService: ClientBaseService,
     @InjectRepository(ObservatoryPostEntity)
     private observatoryPostRepository: Repository<ObservatoryPostEntity>,
-    private postSchedulerService: PostSchedulerService
+    private postSchedulerService: PostSchedulerService,
+    private settingsService: SettingsService,
   ) {
   }
 
@@ -140,11 +142,7 @@ export class ObservatoryService implements OnModuleInit {
   }
 
   public async onPublishNow(publishContext: ScheduledPostContextInterface): Promise<void> {
-    const channelInfo = await this.bot.api.getChat(this.baseConfigService.memeChanelId);
-    const link = channelInfo['username']
-      ? `https://t.me/${channelInfo['username']}`
-      : channelInfo['invite_link'];
-    const caption = `<a href="${link}">${channelInfo['title']}</a>`;
+    const caption = await this.settingsService.channelHtmlLink();
 
     const publishedMessage = await this.bot.api.copyMessage(
       this.baseConfigService.memeChanelId,
@@ -166,16 +164,14 @@ export class ObservatoryService implements OnModuleInit {
       }
     );
 
-    const postLink = channelInfo['username']
-      ? `https://t.me/${channelInfo['username']}/${publishedMessage.message_id}`
-      : channelInfo['invite_link'];
 
     const user = await this.userService.repository.findOne({
       where: {id: publishContext.processedByModerator},
     });
 
+    const url = await this.settingsService.channelLinkUrl();
     const inlineKeyboard = new InlineKeyboard()
-      .url(`🤖 Опубликован (${user.username})`, postLink)
+      .url(`🤖 Опубликован (${user.username})`, url)
       .row();
 
     await this.bot.api.editMessageReplyMarkup(

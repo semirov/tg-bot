@@ -18,6 +18,7 @@ import {
 } from '../bot/services/post-scheduler.service';
 import {ru} from 'date-fns/locale';
 import {formatInTimeZone} from 'date-fns-tz';
+import {SettingsService} from "../bot/services/settings.service";
 
 export class UserPostManagementService implements OnModuleInit {
   constructor(
@@ -25,7 +26,8 @@ export class UserPostManagementService implements OnModuleInit {
     private baseConfigService: BaseConfigService,
     private userService: UserService,
     private userRequestService: UserRequestService,
-    private postSchedulerService: PostSchedulerService
+    private postSchedulerService: PostSchedulerService,
+    private settingsService: SettingsService,
   ) {
   }
 
@@ -382,10 +384,8 @@ export class UserPostManagementService implements OnModuleInit {
       caption += `#предложка\n`;
     }
     const channelInfo = await this.bot.api.getChat(this.baseConfigService.memeChanelId);
-    const link = channelInfo['username']
-      ? `https://t.me/${channelInfo['username']}`
-      : channelInfo['invite_link'];
-    caption += `<a href="${link}">${channelInfo['title']}</a>`;
+    const channelHtmlLink = await this.settingsService.channelHtmlLink();
+    caption += channelHtmlLink;
 
     const publishedMessage = await this.bot.api.copyMessage(
       this.baseConfigService.memeChanelId,
@@ -416,16 +416,14 @@ export class UserPostManagementService implements OnModuleInit {
 
     await this.bot.api.sendMessage(message.user.id, userFeedbackMessage);
 
-    const postLink = channelInfo['username']
-      ? `https://t.me/${channelInfo['username']}/${publishedMessage.message_id}`
-      : channelInfo['invite_link'];
 
     const user = await this.userService.repository.findOne({
       where: {id: publishContext.processedByModerator},
     });
 
+    const url = await this.settingsService.channelLinkUrl();
     const inlineKeyboard = new InlineKeyboard()
-      .url(`👨 Опубликован (${user.username})`, postLink)
+      .url(`👨 Опубликован (${user.username})`, url)
       .row();
 
     await this.bot.api.editMessageReplyMarkup(
