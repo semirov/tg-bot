@@ -1,4 +1,4 @@
-import {Inject, Injectable, OnApplicationBootstrap, OnModuleInit} from '@nestjs/common';
+import {Inject, Injectable, OnModuleInit} from '@nestjs/common';
 import {Menu} from '@grammyjs/menu';
 import {BotContext} from '../../bot/interfaces/bot-context.interface';
 import {UserPermissionEnum} from '../../bot/constants/user-permission.enum';
@@ -12,11 +12,13 @@ import {ObservatoryPostMenusEnum} from '../contsants/observatory-post-menus.enum
 import {InjectRepository} from '@nestjs/typeorm';
 import {Repository} from 'typeorm';
 import {ObservatoryPostEntity} from '../entities/observatory-post.entity';
-import {PostModerationMenusEnum} from '../../post-management/constants/post-moderation-menus.enum';
 import {PublicationModesEnum} from '../../post-management/constants/publication-modes.enum';
-import {SchedulerCommonService} from '../../common/scheduler-common.service';
-import {PostSchedulerService, ScheduledPostContext} from '../../bot/services/post-scheduler.service';
-import {format} from "date-fns";
+import {
+  PostSchedulerService,
+  ScheduledPostContext,
+} from '../../bot/services/post-scheduler.service';
+import {formatInTimeZone} from 'date-fns-tz';
+import {ru} from 'date-fns/locale';
 
 @Injectable()
 export class ObservatoryService implements OnModuleInit {
@@ -183,13 +185,13 @@ export class ObservatoryService implements OnModuleInit {
   }
 
   private async publishScheduled(publishContext: ScheduledPostContext): Promise<void> {
-
-
     const publishDate = await this.postSchedulerService.addPostToSchedule(publishContext);
     const user = await this.userService.repository.findOne({
       where: {id: publishContext.processedByModerator},
     });
-    const dateFormatted = format(publishDate, 'dd.LL.yy в HH:mm');
+    const dateFormatted = formatInTimeZone(publishDate, 'Europe/Moscow', 'dd.LL.yy в HH:mm', {
+      locale: ru,
+    });
 
     const inlineKeyboard = new InlineKeyboard()
       .text(`⏰ ${dateFormatted} (${user.username})`)

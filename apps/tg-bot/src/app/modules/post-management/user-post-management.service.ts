@@ -10,10 +10,11 @@ import {UserService} from '../bot/services/user.service';
 import {UserPermissionEnum} from '../bot/constants/user-permission.enum';
 import {PublicationModesEnum} from './constants/publication-modes.enum';
 import {PostModerationMenusEnum} from './constants/post-moderation-menus.enum';
-import {add, format, getUnixTime} from 'date-fns';
+import {add, getUnixTime} from 'date-fns';
 import {UserRequestService} from '../bot/services/user-request.service';
 import {PostSchedulerService, ScheduledPostContext} from '../bot/services/post-scheduler.service';
 import {ru} from 'date-fns/locale';
+import {formatInTimeZone} from 'date-fns-tz';
 
 export class UserPostManagementService implements OnModuleInit {
   constructor(
@@ -434,7 +435,7 @@ export class UserPostManagementService implements OnModuleInit {
   private async publishScheduled(publishContext: ScheduledPostContext): Promise<void> {
     const publishDate = await this.postSchedulerService.addPostToSchedule(publishContext);
 
-    const dateFormatted = format(publishDate, 'dd.LL.yy в HH:mm', {
+    const dateFormatted = formatInTimeZone(publishDate, 'Europe/Moscow', 'dd.LL.yy в HH:mm', {
       locale: ru,
     });
 
