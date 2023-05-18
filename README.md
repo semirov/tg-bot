@@ -3,6 +3,6 @@
 Based on nest.js, nx, nest-telegraf
 
 
-Demo link https://t.me/filipp_memes_bot
+Demo link [filipp_memes_bot](https://t.me/filipp_memes_bot)
 
-Controlled channel: https://filipp_memes
+Controlled channel: [filipp_memes](https://t.me/filipp_memes)
