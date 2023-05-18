@@ -105,7 +105,7 @@ export class PostSchedulerService {
 
       default:
         lastPublishPost = await this.postSchedulerEntity.findOne({
-          where: {publishDate: Between(startTimestamp, endTimestamp), isPublished: false},
+          where: {publishDate: Between(startTimestamp, endTimestamp), mode, isPublished: false},
           order: {publishDate: 'DESC'},
           cache: false,
           transaction: true,
