@@ -51,7 +51,7 @@ export class PostSchedulerService {
       isUserPost: context.isUserPost,
     });
 
-    await this.repository.save(scheduledPost);
+    await this.repository.save(scheduledPost, {transaction: true});
 
     return publishDate;
   }
@@ -82,6 +82,8 @@ export class PostSchedulerService {
         lastPublishPost = await this.postSchedulerEntity.findOne({
           where: {publishDate: Between(nowTimeStamp, endTimestamp), mode, isPublished: false},
           order: {publishDate: 'DESC'},
+          cache: false,
+          transaction: true,
         });
         break;
 
@@ -93,9 +95,11 @@ export class PostSchedulerService {
             isPublished: false,
           },
           order: {publishDate: 'DESC'},
+          cache: false,
+          transaction: true,
         });
         if (!lastPublishPost) {
-          return add(new Date(), {minutes: 5});
+          return add(new Date(), {minutes: 10});
         }
         break;
 
@@ -103,15 +107,17 @@ export class PostSchedulerService {
         lastPublishPost = await this.postSchedulerEntity.findOne({
           where: {publishDate: Between(startTimestamp, endTimestamp), isPublished: false},
           order: {publishDate: 'DESC'},
+          cache: false,
+          transaction: true,
         });
         break;
     }
 
     if (lastPublishPost) {
-      return add(lastPublishPost.publishDate, {minutes: 5});
+      return add(lastPublishPost.publishDate, {minutes: 10});
     }
     if (nowTimeStamp > startTimestamp) {
-      return add(nowTimeStamp, {minutes: 5});
+      return add(nowTimeStamp, {minutes: 10});
     }
 
     return startTimestamp;
