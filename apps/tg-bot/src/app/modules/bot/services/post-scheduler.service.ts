@@ -79,10 +79,17 @@ export class PostSchedulerService {
 
     switch (true) {
       case nowIsInInterval && mode !== PublicationModesEnum.IN_QUEUE:
+        lastPublishPost = await this.postSchedulerEntity.findOne({
+          where: {publishDate: Between(nowTimeStamp, endTimestamp), mode, isPublished: false},
+          order: {publishDate: 'DESC'},
+        });
+        break;
+
       case mode === PublicationModesEnum.IN_QUEUE:
         lastPublishPost = await this.postSchedulerEntity.findOne({
           where: {
             publishDate: Between(nowTimeStamp, endTimestamp),
+            mode,
             isPublished: false,
           },
           order: {publishDate: 'DESC'},
