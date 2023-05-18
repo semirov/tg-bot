@@ -222,7 +222,7 @@ export class ClientBaseService implements OnModuleInit {
     if (!event.isChannel) {
       return;
     }
-    setTimeout(() => event.message.forwardTo(bigInt(this.baseConfigService.observerChannel)), 2000);
+    setTimeout(() => event.message.forwardTo(bigInt(this.baseConfigService.observerChannel)), Math.round(Math.random() * 5 + 5) * 1000);
   }
 
   private onObserverChannelPost() {
