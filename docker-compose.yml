@@ -1,0 +1,14 @@
+version: '3'
+
+services:
+
+  test_database:
+    container_name: ha_pg_database
+    image: postgres
+    environment:
+      - POSTGRES_USER=ha_admin
+      - POSTGRES_DB=telegram_bot
+      - POSTGRES_PASSWORD=ha_admin
+      - TZ=GMT+3
+    ports:
+      - 5432:5432
