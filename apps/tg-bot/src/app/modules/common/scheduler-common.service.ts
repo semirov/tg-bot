@@ -12,7 +12,6 @@ export interface IntervalInterface {
 }
 
 export class SchedulerCommonService {
-  private static BETWEEN_POST_INTERVAL = '5m';
   private static readonly TIME_INTERVALS = {
     [PublicationModesEnum.NEXT_NIGHT]: {
       from: {hours: 0, minutes: 0, seconds: 0},
