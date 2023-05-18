@@ -12,7 +12,7 @@ import {PublicationModesEnum} from './constants/publication-modes.enum';
 import {PostModerationMenusEnum} from './constants/post-moderation-menus.enum';
 import {add, getUnixTime} from 'date-fns';
 import {UserRequestService} from '../bot/services/user-request.service';
-import {PostSchedulerService, ScheduledPostContext} from '../bot/services/post-scheduler.service';
+import {PostSchedulerService, ScheduledPostContextInterface} from '../bot/services/post-scheduler.service';
 import {ru} from 'date-fns/locale';
 import {formatInTimeZone} from 'date-fns-tz';
 
@@ -336,13 +336,15 @@ export class UserPostManagementService implements OnModuleInit {
       return;
     }
 
-    const publishContext: ScheduledPostContext = {
+    const publishContext: ScheduledPostContextInterface = {
       mode,
       requestChannelMessageId: ctx.callbackQuery.message.message_id,
       processedByModerator: ctx.callbackQuery.from.id,
       caption: ctx.callbackQuery?.message?.caption,
       isUserPost: true,
     };
+
+    console.log('onPublishActions', publishContext);
 
     switch (mode) {
       case PublicationModesEnum.NOW_SILENT:
@@ -357,7 +359,7 @@ export class UserPostManagementService implements OnModuleInit {
     }
   }
 
-  public async onPublishNow(publishContext: ScheduledPostContext) {
+  public async onPublishNow(publishContext: ScheduledPostContextInterface) {
     const message = await this.userRequestService.repository.findOne({
       relations: {user: true},
       where: {
@@ -432,10 +434,10 @@ export class UserPostManagementService implements OnModuleInit {
     );
   }
 
-  private async publishScheduled(publishContext: ScheduledPostContext): Promise<void> {
+  private async publishScheduled(publishContext: ScheduledPostContextInterface): Promise<void> {
     const publishDate = await this.postSchedulerService.addPostToSchedule(publishContext);
 
-    const dateFormatted = formatInTimeZone(publishDate, 'Europe/Moscow', 'dd.LL.yy в HH:mm', {
+    const dateFormatted = formatInTimeZone(publishDate, 'Europe/Moscow', 'dd.LL.yy в ~HH:mm', {
       locale: ru,
     });
 

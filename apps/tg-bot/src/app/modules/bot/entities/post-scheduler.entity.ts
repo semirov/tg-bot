@@ -10,7 +10,7 @@ export class PostSchedulerEntity {
   @Column('bigint', {nullable: true})
   requestChannelMessageId: number;
 
-  @ManyToOne(() => UserEntity, (user) => user.moderatedUserRequests)
+  @ManyToOne(() => UserEntity, (user) => user.id)
   processedByModerator: UserEntity;
 
   @Column('timestamptz', {nullable: true})

@@ -15,7 +15,7 @@ import {ObservatoryPostEntity} from '../entities/observatory-post.entity';
 import {PublicationModesEnum} from '../../post-management/constants/publication-modes.enum';
 import {
   PostSchedulerService,
-  ScheduledPostContext,
+  ScheduledPostContextInterface,
 } from '../../bot/services/post-scheduler.service';
 import {formatInTimeZone} from 'date-fns-tz';
 import {ru} from 'date-fns/locale';
@@ -117,7 +117,7 @@ export class ObservatoryService implements OnModuleInit {
       return;
     }
 
-    const publishContext: ScheduledPostContext = {
+    const publishContext: ScheduledPostContextInterface = {
       mode,
       requestChannelMessageId: ctx.callbackQuery.message.message_id,
       processedByModerator: ctx.callbackQuery.from.id,
@@ -138,7 +138,7 @@ export class ObservatoryService implements OnModuleInit {
     }
   }
 
-  public async onPublishNow(publishContext: ScheduledPostContext): Promise<void> {
+  public async onPublishNow(publishContext: ScheduledPostContextInterface): Promise<void> {
     const channelInfo = await this.bot.api.getChat(this.baseConfigService.memeChanelId);
     const link = channelInfo['username']
       ? `https://t.me/${channelInfo['username']}`
@@ -184,12 +184,12 @@ export class ObservatoryService implements OnModuleInit {
     );
   }
 
-  private async publishScheduled(publishContext: ScheduledPostContext): Promise<void> {
+  private async publishScheduled(publishContext: ScheduledPostContextInterface): Promise<void> {
     const publishDate = await this.postSchedulerService.addPostToSchedule(publishContext);
     const user = await this.userService.repository.findOne({
       where: {id: publishContext.processedByModerator},
     });
-    const dateFormatted = formatInTimeZone(publishDate, 'Europe/Moscow', 'dd.LL.yy в HH:mm', {
+    const dateFormatted = formatInTimeZone(publishDate, 'Europe/Moscow', 'dd.LL.yy в ~HH:mm', {
       locale: ru,
     });
 

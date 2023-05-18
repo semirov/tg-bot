@@ -6,10 +6,10 @@ import {PublicationModesEnum} from '../../post-management/constants/publication-
 import {SchedulerCommonService} from '../../common/scheduler-common.service';
 import {add, isAfter, set} from 'date-fns';
 
-export interface ScheduledPostContext {
+export interface ScheduledPostContextInterface {
   mode: PublicationModesEnum;
   requestChannelMessageId: number;
-  processedByModerator;
+  processedByModerator: number;
   caption?: string;
   isUserPost: boolean;
 }
@@ -28,18 +28,19 @@ export class PostSchedulerService {
 
   public nextScheduledPost(): Promise<PostSchedulerEntity | null> {
     return this.postSchedulerEntity.findOne({
+      relations: {processedByModerator: true},
       where: {publishDate: LessThan(new Date()), isPublished: false},
       order: {publishDate: 'DESC'},
     });
   }
 
-  public async addPostToSchedule(context: ScheduledPostContext): Promise<Date> {
+  public async addPostToSchedule(context: ScheduledPostContextInterface): Promise<Date> {
     const publishDate = await this.nextScheduledTimeByMode(context.mode);
 
     const scheduledPost = await this.repository.create({
       publishDate: publishDate,
       requestChannelMessageId: context.requestChannelMessageId,
-      processedByModerator: context.processedByModerator,
+      processedByModerator: {id: context.processedByModerator},
       mode: context.mode,
       caption: context.caption,
       isPublished: false,
