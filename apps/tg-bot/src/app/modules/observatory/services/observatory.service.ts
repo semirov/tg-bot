@@ -19,6 +19,7 @@ import {
 } from '../../bot/services/post-scheduler.service';
 import {formatInTimeZone} from 'date-fns-tz';
 import {ru} from 'date-fns/locale';
+import {format} from 'date-fns';
 
 @Injectable()
 export class ObservatoryService implements OnModuleInit {
@@ -189,9 +190,10 @@ export class ObservatoryService implements OnModuleInit {
     const user = await this.userService.repository.findOne({
       where: {id: publishContext.processedByModerator},
     });
-    const dateFormatted = formatInTimeZone(publishDate, 'Europe/Moscow', 'dd.LL.yy в ~HH:mm', {
-      locale: ru,
-    });
+    const dateFormatted = format(
+      PostSchedulerService.formatToMsk(publishDate),
+      'dd.LL.yy в ~HH:mm'
+    );
 
     const inlineKeyboard = new InlineKeyboard()
       .text(`⏰ ${dateFormatted} (${user.username})`)

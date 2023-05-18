@@ -5,7 +5,7 @@ import {PostSchedulerEntity} from '../entities/post-scheduler.entity';
 import {PublicationModesEnum} from '../../post-management/constants/publication-modes.enum';
 import {SchedulerCommonService} from '../../common/scheduler-common.service';
 import {add, isAfter, set} from 'date-fns';
-import {utcToZonedTime, zonedTimeToUtc} from "date-fns-tz";
+import {utcToZonedTime, zonedTimeToUtc} from 'date-fns-tz';
 
 export interface ScheduledPostContextInterface {
   mode: PublicationModesEnum;
@@ -30,7 +30,10 @@ export class PostSchedulerService {
   public nextScheduledPost(): Promise<PostSchedulerEntity | null> {
     return this.postSchedulerEntity.findOne({
       relations: {processedByModerator: true},
-      where: {publishDate: LessThan(utcToZonedTime(new Date(), 'Europe/Moscow')), isPublished: false},
+      where: {
+        publishDate: LessThan(new Date()),
+        isPublished: false,
+      },
       order: {publishDate: 'DESC'},
     });
   }
@@ -53,20 +56,22 @@ export class PostSchedulerService {
     return publishDate;
   }
 
+  public static formatToMsk(date: Date): Date {
+    return utcToZonedTime(date, 'Europe/Moscow');
+  }
+
   private async nextScheduledTimeByMode(mode: PublicationModesEnum): Promise<Date> {
     const interval = SchedulerCommonService.timeIntervalByMode(mode);
 
-    const formatToMsk = (date: Date): Date => utcToZonedTime(date, 'Europe/Moscow');
-
-    const nowTimeStamp = formatToMsk(new Date());
-    let startTimestamp = formatToMsk(set(new Date(), interval.from));
-    let endTimestamp = formatToMsk(set(new Date(), interval.to));
+    const nowTimeStamp = new Date();
+    let startTimestamp = set(new Date(), interval.from);
+    let endTimestamp = set(new Date(), interval.to);
     const nowIsAfterEnd = isAfter(nowTimeStamp, endTimestamp);
     const nowIsInInterval = nowTimeStamp >= startTimestamp && nowTimeStamp <= endTimestamp;
 
     if (nowIsAfterEnd) {
-      startTimestamp = formatToMsk(add(startTimestamp, {days: 1}));
-      endTimestamp = formatToMsk(add(endTimestamp, {days: 1}));
+      startTimestamp = add(startTimestamp, {days: 1});
+      endTimestamp = add(endTimestamp, {days: 1});
     }
 
     let lastPublishPost: PostSchedulerEntity = null;
@@ -89,7 +94,7 @@ export class PostSchedulerService {
           order: {publishDate: 'DESC'},
         });
         if (!lastPublishPost) {
-          return formatToMsk(add(new Date(), {minutes: 5}));
+          return add(new Date(), {minutes: 5});
         }
         break;
 
@@ -102,10 +107,10 @@ export class PostSchedulerService {
     }
 
     if (lastPublishPost) {
-      return formatToMsk(add(lastPublishPost.publishDate, {minutes: 5}));
+      return add(lastPublishPost.publishDate, {minutes: 5});
     }
     if (nowTimeStamp > startTimestamp) {
-      return formatToMsk(add(nowTimeStamp, {minutes: 5}));
+      return add(nowTimeStamp, {minutes: 5});
     }
 
     return startTimestamp;
@@ -115,4 +120,3 @@ export class PostSchedulerService {
     return this.postSchedulerEntity.update({id}, {isPublished: true});
   }
 }
-

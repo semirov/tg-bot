@@ -10,9 +10,12 @@ import {UserService} from '../bot/services/user.service';
 import {UserPermissionEnum} from '../bot/constants/user-permission.enum';
 import {PublicationModesEnum} from './constants/publication-modes.enum';
 import {PostModerationMenusEnum} from './constants/post-moderation-menus.enum';
-import {add, getUnixTime} from 'date-fns';
+import {add, format, getUnixTime} from 'date-fns';
 import {UserRequestService} from '../bot/services/user-request.service';
-import {PostSchedulerService, ScheduledPostContextInterface} from '../bot/services/post-scheduler.service';
+import {
+  PostSchedulerService,
+  ScheduledPostContextInterface,
+} from '../bot/services/post-scheduler.service';
 import {ru} from 'date-fns/locale';
 import {formatInTimeZone} from 'date-fns-tz';
 
@@ -344,8 +347,6 @@ export class UserPostManagementService implements OnModuleInit {
       isUserPost: true,
     };
 
-    console.log('onPublishActions', publishContext);
-
     switch (mode) {
       case PublicationModesEnum.NOW_SILENT:
       case PublicationModesEnum.NOW_WITH_ALARM:
@@ -437,9 +438,10 @@ export class UserPostManagementService implements OnModuleInit {
   private async publishScheduled(publishContext: ScheduledPostContextInterface): Promise<void> {
     const publishDate = await this.postSchedulerService.addPostToSchedule(publishContext);
 
-    const dateFormatted = formatInTimeZone(publishDate, 'Europe/Moscow', 'dd.LL.yy в ~HH:mm', {
-      locale: ru,
-    });
+    const dateFormatted = format(
+      PostSchedulerService.formatToMsk(publishDate),
+      'dd.LL.yy в ~HH:mm'
+    );
 
     const user = await this.userService.repository.findOne({
       where: {id: publishContext.processedByModerator},
