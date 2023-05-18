@@ -15,18 +15,18 @@ export class SchedulerCommonService {
   private static readonly TIME_INTERVALS = {
     [PublicationModesEnum.NEXT_NIGHT]: {
       from: {hours: 0, minutes: 0, seconds: 0},
-      to: {hours: 6, minutes: 0, seconds: 0},
+      to: {hours: 9, minutes: 0, seconds: 0},
     },
     [PublicationModesEnum.NEXT_MORNING]: {
-      from: {hours: 6, minutes: 0, seconds: 0},
-      to: {hours: 12, minutes: 0, seconds: 0},
+      from: {hours: 9, minutes: 0, seconds: 0},
+      to: {hours: 13, minutes: 0, seconds: 0},
     },
     [PublicationModesEnum.NEXT_MIDDAY]: {
-      from: {hours: 12, minutes: 0, seconds: 0},
-      to: {hours: 18, minutes: 0, seconds: 0},
+      from: {hours: 13, minutes: 0, seconds: 0},
+      to: {hours: 20, minutes: 0, seconds: 0},
     },
     [PublicationModesEnum.NEXT_EVENING]: {
-      from: {hours: 18, minutes: 0, seconds: 0},
+      from: {hours: 20, minutes: 0, seconds: 0},
       to: {hours: 23, minutes: 59, seconds: 59},
     },
     [PublicationModesEnum.IN_QUEUE]: {

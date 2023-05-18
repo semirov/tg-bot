@@ -99,7 +99,7 @@ export class PostSchedulerService {
           transaction: true,
         });
         if (!lastPublishPost) {
-          return add(new Date(), {minutes: 10});
+          return add(new Date(), {minutes: 15});
         }
         break;
 
@@ -114,10 +114,10 @@ export class PostSchedulerService {
     }
 
     if (lastPublishPost) {
-      return add(lastPublishPost.publishDate, {minutes: 10});
+      return add(lastPublishPost.publishDate, {minutes: 15});
     }
     if (nowTimeStamp > startTimestamp) {
-      return add(nowTimeStamp, {minutes: 10});
+      return add(nowTimeStamp, {minutes: 15});
     }
 
     return startTimestamp;
