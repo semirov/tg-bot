@@ -9,6 +9,7 @@ import {ObservatoryPostEntity} from "./entities/observatory-post.entity";
 @Module({
   imports: [BotModule, AppConfigModule, ClientModule, TypeOrmModule.forFeature([ObservatoryPostEntity])],
   providers: [ObservatoryService],
+  exports: [ObservatoryService]
 })
 export class ObservatoryModule {
 }

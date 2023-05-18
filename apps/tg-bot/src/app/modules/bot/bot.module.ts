@@ -9,11 +9,13 @@ import {UserService} from './services/user.service';
 import {UserEntity} from './entities/user.entity';
 import {UserRequestEntity} from './entities/user-request.entity';
 import {UserRequestService} from './services/user-request.service';
+import {PostSchedulerEntity} from './entities/post-scheduler.entity';
+import {PostSchedulerService} from './services/post-scheduler.service';
 
 @Module({
   imports: [
     AppConfigModule,
-    TypeOrmModule.forFeature([SessionEntity, UserEntity, UserRequestEntity]),
+    TypeOrmModule.forFeature([SessionEntity, UserEntity, UserRequestEntity, PostSchedulerEntity]),
   ],
   providers: [
     BOT_PROVIDER,
@@ -21,8 +23,9 @@ import {UserRequestService} from './services/user-request.service';
     SessionManagerService,
     UserService,
     UserRequestService,
+    PostSchedulerService,
   ],
-  exports: [BOT_PROVIDER, UserService, UserRequestService],
+  exports: [BOT_PROVIDER, UserService, UserRequestService, PostSchedulerService],
 })
 export class BotModule {
 }

@@ -1,4 +1,4 @@
-import {forwardRef, Inject, Injectable, OnModuleInit} from '@nestjs/common';
+import {Inject, Injectable, OnModuleInit} from '@nestjs/common';
 import {MainMenuService} from './modules/menus/main-menu.service';
 import {BOT} from './modules/bot/providers/bot.provider';
 import {Bot, CommandContext} from 'grammy';
@@ -6,8 +6,7 @@ import {BotContext} from './modules/bot/interfaces/bot-context.interface';
 import {BaseConfigService} from './modules/config/base-config.service';
 import {UserService} from './modules/bot/services/user.service';
 import {UserPostManagementService} from './modules/post-management/user-post-management.service';
-import {ConversationsEnum} from "./modules/post-management/constants/conversations.enum";
-import {AskAdminService} from "./modules/post-management/ask-admin.service";
+import {ConversationsEnum} from './modules/post-management/constants/conversations.enum';
 
 @Injectable()
 export class AppService implements OnModuleInit {
@@ -16,8 +15,7 @@ export class AppService implements OnModuleInit {
     @Inject(BOT) private bot: Bot<BotContext>,
     private baseConfigService: BaseConfigService,
     private userPostManagementService: UserPostManagementService,
-    private userService: UserService,
-    private askAdminService: AskAdminService,
+    private userService: UserService
   ) {
   }
 
@@ -46,9 +44,7 @@ export class AppService implements OnModuleInit {
 
   private onStartCommand() {
     this.bot.command(['start'], async (ctx) => {
-      const channelInfo = await ctx.api.getChat(
-        this.baseConfigService.memeChanelId
-      );
+      const channelInfo = await ctx.api.getChat(this.baseConfigService.memeChanelId);
       const link = channelInfo['username']
         ? `https://t.me/${channelInfo['username']}`
         : channelInfo['invite_link'];
@@ -78,13 +74,12 @@ export class AppService implements OnModuleInit {
       async (ctx) => {
         await this.userService.updateUserLastActivity(ctx);
         await ctx.reply(
-          'К публикации принимаются только картинки и видео\n\nЕсли тебе нужно что-то другое нажми /menu'
-          + '\n\nЕсли хочешь связаться с админом, нажми /ask_admin'
+          'К публикации принимаются только картинки и видео\n\nЕсли тебе нужно что-то другое нажми /menu' +
+          '\n\nЕсли хочешь связаться с админом, нажми /ask_admin'
         );
       }
     );
 
-
-    this.bot.on('channel_post', ctx => console.log(ctx.channelPost.sender_chat.id));
+    this.bot.on('channel_post', (ctx) => console.log(ctx.channelPost.sender_chat.id));
   }
 }

@@ -212,13 +212,13 @@ export class AdminMenuService implements OnModuleInit {
         text = 'Этот пользователь заблокирован';
         user = null;
       }
+      if (messageCtx.message?.text === '/cancel') {
+        await ctx.reply('Закончили искать модератора');
+        return;
+      }
 
       if (!user) {
         await ctx.reply(text + '\nесли ты передумал, то нажми /cancel');
-      }
-      if (ctx.message?.text === '/cancel') {
-        await ctx.reply('Закончили искать модератора');
-        return;
       }
     }
 

@@ -12,6 +12,11 @@ import {ObservatoryPostMenusEnum} from '../contsants/observatory-post-menus.enum
 import {InjectRepository} from '@nestjs/typeorm';
 import {Repository} from 'typeorm';
 import {ObservatoryPostEntity} from '../entities/observatory-post.entity';
+import {PostModerationMenusEnum} from '../../post-management/constants/post-moderation-menus.enum';
+import {PublicationModesEnum} from '../../post-management/constants/publication-modes.enum';
+import {SchedulerCommonService} from '../../common/scheduler-common.service';
+import {PostSchedulerService, ScheduledPostContext} from '../../bot/services/post-scheduler.service';
+import {format} from "date-fns";
 
 @Injectable()
 export class ObservatoryService implements OnModuleInit {
@@ -22,7 +27,8 @@ export class ObservatoryService implements OnModuleInit {
     private userRequestService: UserRequestService,
     private clientBaseService: ClientBaseService,
     @InjectRepository(ObservatoryPostEntity)
-    private observatoryPostRepository: Repository<ObservatoryPostEntity>
+    private observatoryPostRepository: Repository<ObservatoryPostEntity>,
+    private postSchedulerService: PostSchedulerService
   ) {
   }
 
@@ -59,44 +65,101 @@ export class ObservatoryService implements OnModuleInit {
     })
       .text('🤖 Пост обсерватории')
       .row()
+      .text('Опубликовать', async (ctx) => {
+        if (this.userService.checkPermission(ctx, UserPermissionEnum.IS_BASE_MODERATOR)) {
+          ctx.menu.nav(ObservatoryPostMenusEnum.OBSERVATORY_PUBLICATION);
+        }
+      })
       .text('Отклонить', async (ctx) => {
         if (this.userService.checkPermission(ctx, UserPermissionEnum.IS_BASE_MODERATOR)) {
           await this.rejectObserverPost(ctx);
         }
       })
-      .text('Опубликовать', async (ctx) => {
-        if (this.userService.checkPermission(ctx, UserPermissionEnum.IS_BASE_MODERATOR)) {
-          await this.publishObservatoryPost(ctx);
-        }
-      })
       .row();
+
+    const publishSubmenu = new Menu<BotContext>(ObservatoryPostMenusEnum.OBSERVATORY_PUBLICATION, {
+      autoAnswer: false,
+    })
+      .text('В очередь', async (ctx) =>
+        this.publishObservatoryPost(ctx, PublicationModesEnum.IN_QUEUE)
+      )
+      .text('Сейчас 🔕', async (ctx) =>
+        this.publishObservatoryPost(ctx, PublicationModesEnum.NOW_SILENT)
+      )
+      .text('Сейчас 🔔', async (ctx) =>
+        this.publishObservatoryPost(ctx, PublicationModesEnum.NOW_WITH_ALARM)
+      )
+      .row()
+      .text('Ночью', async (ctx) =>
+        this.publishObservatoryPost(ctx, PublicationModesEnum.NEXT_NIGHT)
+      )
+      .text('Утром', async (ctx) =>
+        this.publishObservatoryPost(ctx, PublicationModesEnum.NEXT_MORNING)
+      )
+      .text('Днем', async (ctx) =>
+        this.publishObservatoryPost(ctx, PublicationModesEnum.NEXT_MIDDAY)
+      )
+      .text('Вечером', async (ctx) =>
+        this.publishObservatoryPost(ctx, PublicationModesEnum.NEXT_EVENING)
+      )
+      .row()
+      .text('Назад', (ctx) => ctx.menu.nav(ObservatoryPostMenusEnum.POST_MENU));
+
+    this.observatoryPostMenu.register(publishSubmenu);
+
     this.bot.use(this.observatoryPostMenu);
   }
 
-  private async publishObservatoryPost(ctx: BotContext): Promise<void> {
-    const channelInfo = await ctx.api.getChat(this.baseConfigService.memeChanelId);
+  private async publishObservatoryPost(ctx: BotContext, mode: PublicationModesEnum): Promise<void> {
+    if (!this.userService.checkPermission(ctx, UserPermissionEnum.ALLOW_PUBLISH_TO_CHANNEL)) {
+      return;
+    }
+
+    const publishContext: ScheduledPostContext = {
+      mode,
+      requestChannelMessageId: ctx.callbackQuery.message.message_id,
+      processedByModerator: ctx.callbackQuery.from.id,
+      caption: ctx.callbackQuery?.message?.caption,
+      isUserPost: false,
+    };
+
+    switch (mode) {
+      case PublicationModesEnum.NOW_SILENT:
+      case PublicationModesEnum.NOW_WITH_ALARM:
+        return this.onPublishNow(publishContext);
+      case PublicationModesEnum.IN_QUEUE:
+      case PublicationModesEnum.NEXT_MORNING:
+      case PublicationModesEnum.NEXT_MIDDAY:
+      case PublicationModesEnum.NEXT_EVENING:
+      case PublicationModesEnum.NEXT_NIGHT:
+        return this.publishScheduled(publishContext);
+    }
+  }
+
+  public async onPublishNow(publishContext: ScheduledPostContext): Promise<void> {
+    const channelInfo = await this.bot.api.getChat(this.baseConfigService.memeChanelId);
     const link = channelInfo['username']
       ? `https://t.me/${channelInfo['username']}`
       : channelInfo['invite_link'];
     const caption = `<a href="${link}">${channelInfo['title']}</a>`;
 
-    const publishedMessage = await ctx.api.copyMessage(
+    const publishedMessage = await this.bot.api.copyMessage(
       this.baseConfigService.memeChanelId,
       this.baseConfigService.userRequestMemeChannel,
-      ctx.callbackQuery.message.message_id,
+      publishContext.requestChannelMessageId,
       {
         caption: caption,
         parse_mode: 'HTML',
-        disable_notification: true,
+        disable_notification: publishContext.mode === PublicationModesEnum.NOW_SILENT,
       }
     );
 
     await this.observatoryPostRepository.update(
-      {requestChannelMessageId: ctx.callbackQuery.message.message_id},
+      {requestChannelMessageId: publishContext.requestChannelMessageId},
       {
         publishedMessageId: publishedMessage.message_id,
         isApproved: true,
-        processedByModerator: {id: ctx.callbackQuery.from.id},
+        processedByModerator: {id: publishContext.processedByModerator},
       }
     );
 
@@ -104,10 +167,41 @@ export class ObservatoryService implements OnModuleInit {
       ? `https://t.me/${channelInfo['username']}/${publishedMessage.message_id}`
       : channelInfo['invite_link'];
 
+    const user = await this.userService.repository.findOne({
+      where: {id: publishContext.processedByModerator},
+    });
+
     const inlineKeyboard = new InlineKeyboard()
-      .url(`🤖 Опубликован (${ctx.callbackQuery.from.username})`, postLink)
+      .url(`🤖 Опубликован (${user.username})`, postLink)
       .row();
-    await ctx.editMessageReplyMarkup({reply_markup: inlineKeyboard});
+
+    await this.bot.api.editMessageReplyMarkup(
+      this.baseConfigService.userRequestMemeChannel,
+      publishContext.requestChannelMessageId,
+      {reply_markup: inlineKeyboard}
+    );
+  }
+
+  private async publishScheduled(publishContext: ScheduledPostContext): Promise<void> {
+
+
+    const publishDate = await this.postSchedulerService.addPostToSchedule(publishContext);
+    const user = await this.userService.repository.findOne({
+      where: {id: publishContext.processedByModerator},
+    });
+    const dateFormatted = format(publishDate, 'dd.LL.yy в HH:mm');
+
+    const inlineKeyboard = new InlineKeyboard()
+      .text(`⏰ ${dateFormatted} (${user.username})`)
+      .row();
+
+    await this.bot.api.editMessageReplyMarkup(
+      this.baseConfigService.userRequestMemeChannel,
+      publishContext.requestChannelMessageId,
+      {reply_markup: inlineKeyboard}
+    );
+
+    return Promise.resolve();
   }
 
   private async rejectObserverPost(ctx: BotContext): Promise<void> {

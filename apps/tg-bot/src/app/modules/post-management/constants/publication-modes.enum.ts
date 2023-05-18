@@ -5,4 +5,5 @@ export enum PublicationModesEnum {
   NEXT_MIDDAY = 'NEXT_MIDDAY',
   NEXT_EVENING = 'NEXT_EVENING',
   NEXT_NIGHT = 'NEXT_NIGHT',
+  IN_QUEUE = 'IN_QUEUE'
 }

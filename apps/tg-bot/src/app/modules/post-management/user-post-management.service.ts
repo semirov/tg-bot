@@ -10,15 +10,18 @@ import {UserService} from '../bot/services/user.service';
 import {UserPermissionEnum} from '../bot/constants/user-permission.enum';
 import {PublicationModesEnum} from './constants/publication-modes.enum';
 import {PostModerationMenusEnum} from './constants/post-moderation-menus.enum';
-import {add, getUnixTime} from 'date-fns';
+import {add, format, getUnixTime} from 'date-fns';
 import {UserRequestService} from '../bot/services/user-request.service';
+import {PostSchedulerService, ScheduledPostContext} from '../bot/services/post-scheduler.service';
+import {ru} from 'date-fns/locale';
 
 export class UserPostManagementService implements OnModuleInit {
   constructor(
     @Inject(BOT) private bot: Bot<BotContext>,
     private baseConfigService: BaseConfigService,
     private userService: UserService,
-    private userRequestService: UserRequestService
+    private userRequestService: UserRequestService,
+    private postSchedulerService: PostSchedulerService
   ) {
   }
 
@@ -41,7 +44,6 @@ export class UserPostManagementService implements OnModuleInit {
     'Жаль что ты передумал, возвращайся снова!\nЧтобы показать основное меню бота, нажми /menu';
 
   public onModuleInit(): void {
-
     this.buildModeratedPostMenu();
     this.bot.errorBoundary(
       (err) => Logger.log(err),
@@ -178,33 +180,39 @@ export class UserPostManagementService implements OnModuleInit {
     const publishSubmenu = new Menu<BotContext>(PostModerationMenusEnum.PUBLICATION, {
       autoAnswer: false,
     })
+      .text('В очередь', async (ctx) => this.onPublishActions(ctx, PublicationModesEnum.IN_QUEUE))
       .text('Сейчас 🔕', async (ctx) => this.onPublishActions(ctx, PublicationModesEnum.NOW_SILENT))
       .text('Сейчас 🔔', async (ctx) =>
         this.onPublishActions(ctx, PublicationModesEnum.NOW_WITH_ALARM)
       )
-      // .row() // TODO
-      // .text('Утром', async (ctx) => this.onPublishActions(ctx, PublicationModesEnum.NEXT_MORNING))
-      // .text('Днем', async (ctx) => this.onPublishActions(ctx, PublicationModesEnum.NEXT_MIDDAY))
-      // .text('Вечером', async (ctx) => this.onPublishActions(ctx, PublicationModesEnum.NEXT_EVENING))
-      // .text('Ночью', async (ctx) => this.onPublishActions(ctx, PublicationModesEnum.NEXT_NIGHT))
+      .row()
+      .text('Ночью', async (ctx) => this.onPublishActions(ctx, PublicationModesEnum.NEXT_NIGHT))
+      .text('Утром', async (ctx) => this.onPublishActions(ctx, PublicationModesEnum.NEXT_MORNING))
+      .text('Днем', async (ctx) => this.onPublishActions(ctx, PublicationModesEnum.NEXT_MIDDAY))
+      .text('Вечером', async (ctx) => this.onPublishActions(ctx, PublicationModesEnum.NEXT_EVENING))
       .row()
       .text('Назад', (ctx) => ctx.menu.nav(PostModerationMenusEnum.APPROVAL));
 
     const rejectSubmenu = new Menu<BotContext>(PostModerationMenusEnum.REJECT, {
       autoAnswer: false,
     })
-      .text(async (ctx) => {
-        const message = await this.userRequestService.repository.findOne({
-          select: ['processedByModerator'],
-          where: {userRequestChannelMessageId: ctx.callbackQuery.message.message_id},
-          relations: {processedByModerator: true},
-        });
-        return `👨 Отклонен ❌ (${message.processedByModerator.username})`;
-      }, async (ctx) => {
-        if (this.userService.checkPermission(ctx, UserPermissionEnum.ALLOW_DELETE_REJECTED_POST)) {
-          await ctx.deleteMessage();
+      .text(
+        async (ctx) => {
+          const message = await this.userRequestService.repository.findOne({
+            select: ['processedByModerator'],
+            where: {userRequestChannelMessageId: ctx.callbackQuery.message.message_id},
+            relations: {processedByModerator: true},
+          });
+          return `👨 Отклонен ❌ (${message.processedByModerator.username})`;
+        },
+        async (ctx) => {
+          if (
+            this.userService.checkPermission(ctx, UserPermissionEnum.ALLOW_DELETE_REJECTED_POST)
+          ) {
+            await ctx.deleteMessage();
+          }
         }
-      })
+      )
       .row()
       .text('🔁', async (ctx) => {
         if (
@@ -322,37 +330,43 @@ export class UserPostManagementService implements OnModuleInit {
   /**
    * Обработка нажатия кнопки опубликовать для одобренного модераторами поста
    */
-  private async onPublishActions(ctx: BotContext, mode: PublicationModesEnum) {
+  public async onPublishActions(ctx: BotContext, mode: PublicationModesEnum) {
     if (!this.userService.checkPermission(ctx, UserPermissionEnum.ALLOW_PUBLISH_TO_CHANNEL)) {
       return;
     }
 
+    const publishContext: ScheduledPostContext = {
+      mode,
+      requestChannelMessageId: ctx.callbackQuery.message.message_id,
+      processedByModerator: ctx.callbackQuery.from.id,
+      caption: ctx.callbackQuery?.message?.caption,
+      isUserPost: true,
+    };
+
     switch (mode) {
       case PublicationModesEnum.NOW_SILENT:
       case PublicationModesEnum.NOW_WITH_ALARM:
-        return this.onPublishNow(ctx, mode);
+        return this.onPublishNow(publishContext);
+      case PublicationModesEnum.IN_QUEUE:
       case PublicationModesEnum.NEXT_MORNING:
-        return; // TODO
       case PublicationModesEnum.NEXT_MIDDAY:
-        return; // TODO
       case PublicationModesEnum.NEXT_EVENING:
-        return; // TODO
       case PublicationModesEnum.NEXT_NIGHT:
-        return; // TODO
+        return this.publishScheduled(publishContext);
     }
   }
 
-  private async onPublishNow(ctx: BotContext, mode: PublicationModesEnum) {
+  public async onPublishNow(publishContext: ScheduledPostContext) {
     const message = await this.userRequestService.repository.findOne({
       relations: {user: true},
       where: {
-        userRequestChannelMessageId: ctx.update.callback_query.message.message_id,
+        userRequestChannelMessageId: publishContext.requestChannelMessageId,
       },
     });
 
     let caption = '';
-    if (ctx.callbackQuery?.message?.caption) {
-      caption += `${ctx.callbackQuery?.message?.caption}\n\n`;
+    if (publishContext.caption) {
+      caption += `${publishContext.caption}\n\n`;
     }
 
     if (!message.isAnonymousPublishing) {
@@ -363,20 +377,20 @@ export class UserPostManagementService implements OnModuleInit {
     } else {
       caption += `#предложка\n`;
     }
-    const channelInfo = await ctx.api.getChat(this.baseConfigService.memeChanelId);
+    const channelInfo = await this.bot.api.getChat(this.baseConfigService.memeChanelId);
     const link = channelInfo['username']
       ? `https://t.me/${channelInfo['username']}`
       : channelInfo['invite_link'];
     caption += `<a href="${link}">${channelInfo['title']}</a>`;
 
-    const publishedMessage = await ctx.api.copyMessage(
+    const publishedMessage = await this.bot.api.copyMessage(
       this.baseConfigService.memeChanelId,
       this.baseConfigService.userRequestMemeChannel,
-      ctx.callbackQuery.message.message_id,
+      publishContext.requestChannelMessageId,
       {
         caption: caption,
         parse_mode: 'HTML',
-        disable_notification: mode === PublicationModesEnum.NOW_SILENT,
+        disable_notification: publishContext.caption === PublicationModesEnum.NOW_SILENT,
       }
     );
 
@@ -385,7 +399,7 @@ export class UserPostManagementService implements OnModuleInit {
       {
         isPublished: true,
         publishedAt: new Date(),
-        publishedBy: ctx.callbackQuery.from.id,
+        publishedBy: publishContext.processedByModerator,
         publishedMessageId: publishedMessage.message_id,
       }
     );
@@ -402,10 +416,57 @@ export class UserPostManagementService implements OnModuleInit {
       ? `https://t.me/${channelInfo['username']}/${publishedMessage.message_id}`
       : channelInfo['invite_link'];
 
+    const user = await this.userService.repository.findOne({
+      where: {id: publishContext.processedByModerator},
+    });
+
     const inlineKeyboard = new InlineKeyboard()
-      .url(`👨 Опубликован (${ctx.callbackQuery.from.username})`, postLink)
+      .url(`👨 Опубликован (${user.username})`, postLink)
       .row();
-    await ctx.editMessageReplyMarkup({reply_markup: inlineKeyboard});
+
+    await this.bot.api.editMessageReplyMarkup(
+      this.baseConfigService.userRequestMemeChannel,
+      publishContext.requestChannelMessageId,
+      {reply_markup: inlineKeyboard}
+    );
+  }
+
+  private async publishScheduled(publishContext: ScheduledPostContext): Promise<void> {
+    const publishDate = await this.postSchedulerService.addPostToSchedule(publishContext);
+
+    const dateFormatted = format(publishDate, 'dd.LL.yy в HH:mm', {
+      locale: ru,
+    });
+
+    const user = await this.userService.repository.findOne({
+      where: {id: publishContext.processedByModerator},
+    });
+
+    const inlineKeyboard = new InlineKeyboard()
+      .text(`⏰ ${dateFormatted} (${user.username})`)
+      .row();
+
+    await this.bot.api.editMessageReplyMarkup(
+      this.baseConfigService.userRequestMemeChannel,
+      publishContext.requestChannelMessageId,
+      {reply_markup: inlineKeyboard}
+    );
+
+    const message = await this.userRequestService.repository.findOne({
+      relations: {user: true},
+      where: {
+        userRequestChannelMessageId: publishContext.requestChannelMessageId,
+      },
+    });
+
+    await this.bot.api.forwardMessage(message.user.id, message.user.id, message.originalMessageId);
+
+    let userFeedbackMessage = `Твой мем будет опубликован ${dateFormatted} ⏱\n\n`;
+    userFeedbackMessage += 'Присылай еще 😉️\n\n';
+
+    await this.bot.api.sendMessage(message.user.id, userFeedbackMessage);
+
+    return Promise.resolve();
   }
 
   private async onAdminApproveAfterReject(ctx: BotContext) {

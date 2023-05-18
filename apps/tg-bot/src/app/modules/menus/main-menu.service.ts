@@ -27,10 +27,6 @@ export class MainMenuService {
         ctx.conversation.enter(ConversationsEnum.SEND_MEME_CONVERSATION)
       )
       .row()
-      // .text('Связаться с админом', (ctx) =>
-      //   ctx.conversation.enter(ConversationsEnum.USER_ADMIN_DIALOG_CONVERSATION)
-      // )
-      // .row() // TODO
       .submenu('Настройки', 'main-settings-menu')
       .row()
       .text('Связаться с админом', async (ctx) => {
