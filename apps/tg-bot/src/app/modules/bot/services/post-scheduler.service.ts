@@ -60,11 +60,11 @@ export class PostSchedulerService {
     return utcToZonedTime(date, 'Europe/Moscow');
   }
 
-
   private async nextScheduledTimeByMode(mode: PublicationModesEnum): Promise<Date> {
     const interval = SchedulerCommonService.timeIntervalByMode(mode);
+    const postDelay = SchedulerCommonService.POST_DELAY_MINUTES;
 
-    const nowTimeStamp = new Date()
+    const nowTimeStamp = new Date();
     let startTimestamp = zonedTimeToUtc(set(nowTimeStamp, interval.from), 'Europe/Moscow');
     let endTimestamp = zonedTimeToUtc(set(nowTimeStamp, interval.to), 'Europe/Moscow');
     const nowIsAfterEnd = isAfter(nowTimeStamp, endTimestamp);
@@ -99,8 +99,21 @@ export class PostSchedulerService {
           transaction: true,
         });
         if (!lastPublishPost) {
-          return add(new Date(), {minutes: 15});
+          return add(new Date(), {minutes: postDelay});
         }
+        break;
+
+      case mode === PublicationModesEnum.NEXT_NIGHT:
+        lastPublishPost = await this.postSchedulerEntity.findOne({
+          where: {
+            publishDate: Between(startTimestamp, add(endTimestamp, {minutes: postDelay})),
+            mode,
+            isPublished: false,
+          },
+          order: {publishDate: 'DESC'},
+          cache: false,
+          transaction: true,
+        });
         break;
 
       default:
@@ -114,10 +127,10 @@ export class PostSchedulerService {
     }
 
     if (lastPublishPost) {
-      return add(lastPublishPost.publishDate, {minutes: 15});
+      return add(lastPublishPost.publishDate, {minutes: postDelay});
     }
     if (nowTimeStamp > startTimestamp) {
-      return add(nowTimeStamp, {minutes: 15});
+      return add(nowTimeStamp, {minutes: postDelay});
     }
 
     return startTimestamp;
