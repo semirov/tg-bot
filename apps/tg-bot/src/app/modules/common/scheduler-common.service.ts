@@ -23,10 +23,10 @@ export class SchedulerCommonService {
     },
     [PublicationModesEnum.NEXT_MIDDAY]: {
       from: {hours: 13, minutes: 0, seconds: 0},
-      to: {hours: 20, minutes: 0, seconds: 0},
+      to: {hours: 19, minutes: 0, seconds: 0},
     },
     [PublicationModesEnum.NEXT_EVENING]: {
-      from: {hours: 20, minutes: 0, seconds: 0},
+      from: {hours: 19, minutes: 0, seconds: 0},
       to: {hours: 23, minutes: 59, seconds: 59},
     },
     [PublicationModesEnum.IN_QUEUE]: {
