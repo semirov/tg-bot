@@ -186,7 +186,6 @@ export class UserPostManagementService implements OnModuleInit {
     const publishSubmenu = new Menu<BotContext>(PostModerationMenusEnum.PUBLICATION, {
       autoAnswer: false,
     })
-      .text('В очередь', async (ctx) => this.onPublishActions(ctx, PublicationModesEnum.IN_QUEUE))
       .text('Сейчас 🔕', async (ctx) => this.onPublishActions(ctx, PublicationModesEnum.NOW_SILENT))
       .text('Сейчас 🔔', async (ctx) =>
         this.onPublishActions(ctx, PublicationModesEnum.NOW_WITH_ALARM)
@@ -353,7 +352,6 @@ export class UserPostManagementService implements OnModuleInit {
       case PublicationModesEnum.NOW_SILENT:
       case PublicationModesEnum.NOW_WITH_ALARM:
         return this.onPublishNow(publishContext);
-      case PublicationModesEnum.IN_QUEUE:
       case PublicationModesEnum.NEXT_MORNING:
       case PublicationModesEnum.NEXT_MIDDAY:
       case PublicationModesEnum.NEXT_EVENING:

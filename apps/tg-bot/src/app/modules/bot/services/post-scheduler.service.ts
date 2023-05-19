@@ -62,7 +62,7 @@ export class PostSchedulerService {
 
   private async nextScheduledTimeByMode(mode: PublicationModesEnum): Promise<Date> {
     const interval = SchedulerCommonService.timeIntervalByMode(mode);
-    const postDelay = SchedulerCommonService.POST_DELAY_MINUTES;
+    let postDelay = SchedulerCommonService.POST_DELAY_MINUTES;
 
     const nowTimeStamp = new Date();
     let startTimestamp = zonedTimeToUtc(set(nowTimeStamp, interval.from), 'Europe/Moscow');
@@ -78,29 +78,13 @@ export class PostSchedulerService {
     let lastPublishPost: PostSchedulerEntity;
 
     switch (true) {
-      case nowIsInInterval && mode !== PublicationModesEnum.IN_QUEUE:
+      case nowIsInInterval:
         lastPublishPost = await this.postSchedulerEntity.findOne({
           where: {publishDate: Between(nowTimeStamp, endTimestamp), mode, isPublished: false},
           order: {publishDate: 'DESC'},
           cache: false,
           transaction: true,
         });
-        break;
-
-      case mode === PublicationModesEnum.IN_QUEUE:
-        lastPublishPost = await this.postSchedulerEntity.findOne({
-          where: {
-            publishDate: Between(nowTimeStamp, endTimestamp),
-            mode,
-            isPublished: false,
-          },
-          order: {publishDate: 'DESC'},
-          cache: false,
-          transaction: true,
-        });
-        if (!lastPublishPost) {
-          return add(new Date(), {minutes: postDelay});
-        }
         break;
 
       case mode === PublicationModesEnum.NEXT_NIGHT:
@@ -114,6 +98,8 @@ export class PostSchedulerService {
           cache: false,
           transaction: true,
         });
+        // ночью интервал х2
+        postDelay = postDelay * 2;
         break;
 
       default:

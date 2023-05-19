@@ -85,9 +85,6 @@ export class ObservatoryService implements OnModuleInit {
     const publishSubmenu = new Menu<BotContext>(ObservatoryPostMenusEnum.OBSERVATORY_PUBLICATION, {
       autoAnswer: false,
     })
-      .text('В очередь', async (ctx) =>
-        this.publishObservatoryPost(ctx, PublicationModesEnum.IN_QUEUE)
-      )
       .text('Сейчас 🔕', async (ctx) =>
         this.publishObservatoryPost(ctx, PublicationModesEnum.NOW_SILENT)
       )
@@ -132,7 +129,6 @@ export class ObservatoryService implements OnModuleInit {
       case PublicationModesEnum.NOW_SILENT:
       case PublicationModesEnum.NOW_WITH_ALARM:
         return this.onPublishNow(publishContext);
-      case PublicationModesEnum.IN_QUEUE:
       case PublicationModesEnum.NEXT_MORNING:
       case PublicationModesEnum.NEXT_MIDDAY:
       case PublicationModesEnum.NEXT_EVENING:

@@ -29,10 +29,6 @@ export class SchedulerCommonService {
       from: {hours: 19, minutes: 0, seconds: 0},
       to: {hours: 23, minutes: 59, seconds: 59},
     },
-    [PublicationModesEnum.IN_QUEUE]: {
-      from: {hours: 0, minutes: 0, seconds: 0},
-      to: {hours: 23, minutes: 59, seconds: 59},
-    },
   };
   static readonly POST_DELAY_MINUTES: number = 15;
 
