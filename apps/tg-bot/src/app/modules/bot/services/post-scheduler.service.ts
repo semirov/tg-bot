@@ -51,7 +51,7 @@ export class PostSchedulerService {
       isUserPost: context.isUserPost,
     });
 
-    await this.repository.save(scheduledPost);
+    await this.repository.save(scheduledPost, {transaction: true});
 
     return publishDate;
   }
@@ -60,11 +60,11 @@ export class PostSchedulerService {
     return utcToZonedTime(date, 'Europe/Moscow');
   }
 
-
   private async nextScheduledTimeByMode(mode: PublicationModesEnum): Promise<Date> {
     const interval = SchedulerCommonService.timeIntervalByMode(mode);
+    let postDelay = SchedulerCommonService.POST_DELAY_MINUTES;
 
-    const nowTimeStamp = new Date()
+    const nowTimeStamp = new Date();
     let startTimestamp = zonedTimeToUtc(set(nowTimeStamp, interval.from), 'Europe/Moscow');
     let endTimestamp = zonedTimeToUtc(set(nowTimeStamp, interval.to), 'Europe/Moscow');
     const nowIsAfterEnd = isAfter(nowTimeStamp, endTimestamp);
@@ -75,42 +75,48 @@ export class PostSchedulerService {
       endTimestamp = add(endTimestamp, {days: 1});
     }
 
-    let lastPublishPost: PostSchedulerEntity = null;
+    let lastPublishPost: PostSchedulerEntity;
 
     switch (true) {
-      case nowIsInInterval && mode !== PublicationModesEnum.IN_QUEUE:
+      case nowIsInInterval:
         lastPublishPost = await this.postSchedulerEntity.findOne({
-          where: {publishDate: Between(nowTimeStamp, endTimestamp), isPublished: false},
+          where: {publishDate: Between(nowTimeStamp, endTimestamp), mode, isPublished: false},
           order: {publishDate: 'DESC'},
+          cache: false,
+          transaction: true,
         });
         break;
 
-      case mode === PublicationModesEnum.IN_QUEUE:
+      case mode === PublicationModesEnum.NEXT_NIGHT:
         lastPublishPost = await this.postSchedulerEntity.findOne({
           where: {
-            publishDate: Between(nowTimeStamp, endTimestamp),
+            publishDate: Between(startTimestamp, add(endTimestamp, {minutes: postDelay})),
+            mode,
             isPublished: false,
           },
           order: {publishDate: 'DESC'},
+          cache: false,
+          transaction: true,
         });
-        if (!lastPublishPost) {
-          return add(new Date(), {minutes: 5});
-        }
+        // ночью интервал х2
+        postDelay = postDelay * 2;
         break;
 
       default:
         lastPublishPost = await this.postSchedulerEntity.findOne({
           where: {publishDate: Between(startTimestamp, endTimestamp), mode, isPublished: false},
           order: {publishDate: 'DESC'},
+          cache: false,
+          transaction: true,
         });
         break;
     }
 
     if (lastPublishPost) {
-      return add(lastPublishPost.publishDate, {minutes: 5});
+      return add(lastPublishPost.publishDate, {minutes: postDelay});
     }
     if (nowTimeStamp > startTimestamp) {
-      return add(nowTimeStamp, {minutes: 5});
+      return add(nowTimeStamp, {minutes: postDelay});
     }
 
     return startTimestamp;

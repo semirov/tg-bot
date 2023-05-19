@@ -7,6 +7,7 @@ import {BaseConfigService} from './modules/config/base-config.service';
 import {UserService} from './modules/bot/services/user.service';
 import {UserPostManagementService} from './modules/post-management/user-post-management.service';
 import {ConversationsEnum} from './modules/post-management/constants/conversations.enum';
+import {SettingsService} from "./modules/bot/services/settings.service";
 
 @Injectable()
 export class AppService implements OnModuleInit {
@@ -15,7 +16,8 @@ export class AppService implements OnModuleInit {
     @Inject(BOT) private bot: Bot<BotContext>,
     private baseConfigService: BaseConfigService,
     private userPostManagementService: UserPostManagementService,
-    private userService: UserService
+    private userService: UserService,
+    private settingsService: SettingsService
   ) {
   }
 
@@ -25,6 +27,7 @@ export class AppService implements OnModuleInit {
     this.onStartCommand();
     this.onMenuCommand();
     this.onMemeFromMain();
+    this.onNewMember();
   }
 
   private onAskAdmin() {
@@ -44,14 +47,11 @@ export class AppService implements OnModuleInit {
 
   private onStartCommand() {
     this.bot.command(['start'], async (ctx) => {
-      const channelInfo = await ctx.api.getChat(this.baseConfigService.memeChanelId);
-      const link = channelInfo['username']
-        ? `https://t.me/${channelInfo['username']}`
-        : channelInfo['invite_link'];
+      const channelLink = await this.settingsService.channelHtmlLink();
 
       const text =
         'Привет, это бот канала' +
-        ` <a href="${link}">${channelInfo['title']}</a>\n\n` +
+        ` ${channelLink}\n\n` +
         'Можешь прислать мем\n' +
         'или нажми /menu, чтобы показать основное меню бота\n\n' +
         `Если хочешь, чтобы твой мем опубликовали ${
@@ -79,5 +79,11 @@ export class AppService implements OnModuleInit {
         );
       }
     );
+  }
+
+  private onNewMember() {
+    this.bot.on(['chat_join_request'], async (ctx) => {
+      await ctx.approveChatJoinRequest(ctx.chatJoinRequest.from.id);
+    });
   }
 }
