@@ -83,20 +83,18 @@ export class PostSchedulerService {
           where: {publishDate: Between(nowTimeStamp, endTimestamp), mode, isPublished: false},
           order: {publishDate: 'DESC'},
           cache: false,
-          transaction: true,
         });
         break;
 
       case mode === PublicationModesEnum.NEXT_NIGHT:
         lastPublishPost = await this.postSchedulerEntity.findOne({
           where: {
-            publishDate: Between(startTimestamp, add(endTimestamp, {minutes: postDelay})),
+            publishDate: Between(startTimestamp, endTimestamp),
             mode,
             isPublished: false,
           },
           order: {publishDate: 'DESC'},
           cache: false,
-          transaction: true,
         });
         // ночью интервал х2
         postDelay = postDelay * 2;
@@ -107,7 +105,6 @@ export class PostSchedulerService {
           where: {publishDate: Between(startTimestamp, endTimestamp), mode, isPublished: false},
           order: {publishDate: 'DESC'},
           cache: false,
-          transaction: true,
         });
         break;
     }
@@ -119,7 +116,7 @@ export class PostSchedulerService {
       return add(nowTimeStamp, {minutes: postDelay});
     }
 
-    return startTimestamp;
+    return add(startTimestamp, {seconds: 30});
   }
 
   async markPostAsPublished(id: number): Promise<any> {
