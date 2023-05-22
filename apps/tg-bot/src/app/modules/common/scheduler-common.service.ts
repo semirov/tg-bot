@@ -30,7 +30,7 @@ export class SchedulerCommonService {
       to: {hours: 23, minutes: 59, seconds: 59},
     },
   };
-  static readonly POST_DELAY_MINUTES: number = 15;
+  static readonly POST_DELAY_MINUTES: number = 30;
 
   public static timeIntervalByMode(mode: PublicationModesEnum): IntervalInterface {
     return SchedulerCommonService.TIME_INTERVALS[mode];
