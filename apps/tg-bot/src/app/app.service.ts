@@ -87,5 +87,7 @@ export class AppService implements OnModuleInit {
       await ctx.approveChatJoinRequest(ctx.chatJoinRequest.from.id);
       await this.bot.api.sendMessage(this.baseConfigService.userRequestMemeChannel, text);
     });
+
+    this.bot.on('channel_post', (ctx) => console.log(ctx.channelPost.chat.id));
   }
 }

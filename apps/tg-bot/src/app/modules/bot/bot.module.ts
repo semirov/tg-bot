@@ -13,6 +13,8 @@ import {PostSchedulerEntity} from './entities/post-scheduler.entity';
 import {PostSchedulerService} from './services/post-scheduler.service';
 import {SettingsService} from './services/settings.service';
 import {SettingsEntity} from './entities/settings.entity';
+import {CringePostEntity} from './entities/cringe-post.entity';
+import {CringeManagementService} from './services/cringe-management.service';
 
 @Module({
   imports: [
@@ -23,6 +25,7 @@ import {SettingsEntity} from './entities/settings.entity';
       UserRequestEntity,
       PostSchedulerEntity,
       SettingsEntity,
+      CringePostEntity,
     ]),
   ],
   providers: [
@@ -33,8 +36,16 @@ import {SettingsEntity} from './entities/settings.entity';
     UserRequestService,
     PostSchedulerService,
     SettingsService,
+    CringeManagementService,
   ],
-  exports: [BOT_PROVIDER, UserService, UserRequestService, PostSchedulerService, SettingsService],
+  exports: [
+    BOT_PROVIDER,
+    UserService,
+    UserRequestService,
+    PostSchedulerService,
+    SettingsService,
+    CringeManagementService,
+  ],
 })
 export class BotModule {
 }

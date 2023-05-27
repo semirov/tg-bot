@@ -38,6 +38,14 @@ export class PostSchedulerService {
     });
   }
 
+  public get nowIsMorning(): boolean {
+    const interval = SchedulerCommonService.timeIntervalByMode(PublicationModesEnum.NEXT_MORNING);
+    const nowTimeStamp = new Date();
+    const startTimestamp = zonedTimeToUtc(set(nowTimeStamp, interval.from), 'Europe/Moscow');
+    const endTimestamp = zonedTimeToUtc(set(nowTimeStamp, interval.to), 'Europe/Moscow');
+    return nowTimeStamp >= startTimestamp && nowTimeStamp <= endTimestamp;
+  }
+
   public async addPostToSchedule(context: ScheduledPostContextInterface): Promise<Date> {
     const publishDate = await this.nextScheduledTimeByMode(context.mode);
 

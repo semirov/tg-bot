@@ -23,6 +23,9 @@ export class BaseConfigService {
     return +this.configService.getOrThrow<string>('USER_REQUEST_CHANNEL');
   }
 
+  get cringeMemeChannelId(): number {
+    return +this.configService.getOrThrow<string>('CRINGE_CHANNEL');
+  }
 
   get observerChannel(): number {
     return +this.configService.getOrThrow<string>('OBSERVER_CHANNEL');

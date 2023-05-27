@@ -12,13 +12,9 @@ import {PublicationModesEnum} from './constants/publication-modes.enum';
 import {PostModerationMenusEnum} from './constants/post-moderation-menus.enum';
 import {add, format, getUnixTime} from 'date-fns';
 import {UserRequestService} from '../bot/services/user-request.service';
-import {
-  PostSchedulerService,
-  ScheduledPostContextInterface,
-} from '../bot/services/post-scheduler.service';
-import {ru} from 'date-fns/locale';
-import {formatInTimeZone} from 'date-fns-tz';
-import {SettingsService} from "../bot/services/settings.service";
+import {PostSchedulerService, ScheduledPostContextInterface,} from '../bot/services/post-scheduler.service';
+import {SettingsService} from '../bot/services/settings.service';
+import {CringeManagementService} from '../bot/services/cringe-management.service';
 
 export class UserPostManagementService implements OnModuleInit {
   constructor(
@@ -28,6 +24,7 @@ export class UserPostManagementService implements OnModuleInit {
     private userRequestService: UserRequestService,
     private postSchedulerService: PostSchedulerService,
     private settingsService: SettingsService,
+    private cringeManagementService: CringeManagementService
   ) {
   }
 
@@ -186,6 +183,7 @@ export class UserPostManagementService implements OnModuleInit {
     const publishSubmenu = new Menu<BotContext>(PostModerationMenusEnum.PUBLICATION, {
       autoAnswer: false,
     })
+      .text('Кринж', async (ctx) => this.onPublishActions(ctx, PublicationModesEnum.NIGHT_CRINGE))
       .text('Сейчас 🔕', async (ctx) => this.onPublishActions(ctx, PublicationModesEnum.NOW_SILENT))
       .text('Сейчас 🔔', async (ctx) =>
         this.onPublishActions(ctx, PublicationModesEnum.NOW_WITH_ALARM)
@@ -357,6 +355,8 @@ export class UserPostManagementService implements OnModuleInit {
       case PublicationModesEnum.NEXT_EVENING:
       case PublicationModesEnum.NEXT_NIGHT:
         return this.publishScheduled(publishContext);
+      case PublicationModesEnum.NIGHT_CRINGE:
+        return this.publishNightCringeScheduled(publishContext);
     }
   }
 
@@ -381,9 +381,15 @@ export class UserPostManagementService implements OnModuleInit {
     } else {
       caption += `#предложка\n`;
     }
+
+    if (publishContext.mode === PublicationModesEnum.NIGHT_CRINGE) {
+      const channelHtmlLink = await this.settingsService.cringeChannelHtmlLink();
+      caption += channelHtmlLink;
+    } else {
+      const channelHtmlLink = await this.settingsService.channelHtmlLink();
+      caption += channelHtmlLink;
+    }
     const channelInfo = await this.bot.api.getChat(this.baseConfigService.memeChanelId);
-    const channelHtmlLink = await this.settingsService.channelHtmlLink();
-    caption += channelHtmlLink;
 
     const publishedMessage = await this.bot.api.copyMessage(
       this.baseConfigService.memeChanelId,
@@ -408,27 +414,45 @@ export class UserPostManagementService implements OnModuleInit {
 
     await this.bot.api.forwardMessage(message.user.id, channelInfo.id, publishedMessage.message_id);
 
-    let userFeedbackMessage = 'Твой мем опубликован 👍\n\n';
-    userFeedbackMessage += 'Спасибо что делишься смешными мемами, присылай еще! ❤️\n\n';
-    userFeedbackMessage += 'P.S. Не забудь поделиться мемом с друзьями 😉';
+    let userFeedbackMessage = 'Твой мем опубликован 👍\n';
+    if (publishContext.mode !== PublicationModesEnum.NIGHT_CRINGE) {
+      userFeedbackMessage += 'Спасибо что делишься смешными мемами, присылай еще! ❤️\n';
+    } else {
+      const cringeChannelLink = await this.settingsService.cringeChannelHtmlLink();
+      userFeedbackMessage += `Утром пост будет перемещен в канал ${cringeChannelLink}`;
+    }
 
-    await this.bot.api.sendMessage(message.user.id, userFeedbackMessage);
-
+    await this.bot.api.sendMessage(message.user.id, userFeedbackMessage, {parse_mode: "HTML"});
 
     const user = await this.userService.repository.findOne({
       where: {id: publishContext.processedByModerator},
     });
 
     const url = await this.settingsService.channelLinkUrl();
-    const inlineKeyboard = new InlineKeyboard()
-      .url(`👨 Опубликован (${user.username})`, url)
-      .row();
+    const inlineKeyboard = new InlineKeyboard().url(`👨 Опубликован (${user.username})`, url).row();
 
     await this.bot.api.editMessageReplyMarkup(
       this.baseConfigService.userRequestMemeChannel,
       publishContext.requestChannelMessageId,
       {reply_markup: inlineKeyboard}
     );
+
+    if (publishContext.mode == PublicationModesEnum.NIGHT_CRINGE) {
+      await this.cringeManagementService.repository.update(
+        {requestChannelMessageId: publishContext.requestChannelMessageId},
+        {memeChannelMessageId: publishedMessage.message_id}
+      );
+    }
+  }
+
+  private async publishNightCringeScheduled(
+    publicContext: ScheduledPostContextInterface
+  ): Promise<void> {
+    await this.cringeManagementService.repository.insert({
+      requestChannelMessageId: publicContext.requestChannelMessageId,
+      isUserPost: publicContext.isUserPost,
+    });
+    await this.publishScheduled(publicContext);
   }
 
   private async publishScheduled(publishContext: ScheduledPostContextInterface): Promise<void> {
@@ -463,9 +487,13 @@ export class UserPostManagementService implements OnModuleInit {
     await this.bot.api.forwardMessage(message.user.id, message.user.id, message.originalMessageId);
 
     let userFeedbackMessage = `Твой мем будет опубликован ${dateFormatted} ⏱\n\n`;
-    userFeedbackMessage += 'Присылай еще 😉️\n\n';
+    if (publishContext.mode === PublicationModesEnum.NIGHT_CRINGE) {
+      const cringeChannelLink = await this.settingsService.cringeChannelHtmlLink();
+      userFeedbackMessage += `Пост попал в особую рубрику, которая публикуется только ночью, а утром перемещается в отдельный канал: ${cringeChannelLink}\n`;
+    }
+    userFeedbackMessage += 'Присылай еще 😉️';
 
-    await this.bot.api.sendMessage(message.user.id, userFeedbackMessage);
+    await this.bot.api.sendMessage(message.user.id, userFeedbackMessage, {parse_mode: "HTML"});
 
     return Promise.resolve();
   }

@@ -13,6 +13,10 @@ export interface IntervalInterface {
 
 export class SchedulerCommonService {
   private static readonly TIME_INTERVALS = {
+    [PublicationModesEnum.NIGHT_CRINGE]: {
+      from: {hours: 0, minutes: 0, seconds: 0},
+      to: {hours: 8, minutes: 0, seconds: 0},
+    },
     [PublicationModesEnum.NEXT_NIGHT]: {
       from: {hours: 0, minutes: 0, seconds: 0},
       to: {hours: 9, minutes: 0, seconds: 0},

@@ -18,6 +18,7 @@ import {PostSchedulerEntity} from './modules/bot/entities/post-scheduler.entity'
 import {CronModule} from './modules/cron/cron.module';
 import {ScheduleModule} from '@nestjs/schedule';
 import {SettingsEntity} from "./modules/bot/entities/settings.entity";
+import {CringePostEntity} from "./modules/bot/entities/cringe-post.entity";
 
 @Module({
   imports: [
@@ -42,6 +43,7 @@ import {SettingsEntity} from "./modules/bot/entities/settings.entity";
           ObservatoryPostEntity,
           PostSchedulerEntity,
           SettingsEntity,
+          CringePostEntity
         ],
         synchronize: true,
         extra: configService.useSSL
