@@ -15,7 +15,7 @@ export class CronService {
   ) {
   }
 
-  @Interval(60000 * 5)
+  @Interval(60000)
   async handleCron() {
     await this.handleNextScheduledPost();
     await this.tryToMoveCringe();
