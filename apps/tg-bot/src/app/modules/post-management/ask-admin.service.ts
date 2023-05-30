@@ -81,7 +81,7 @@ export class AskAdminService implements OnModuleInit {
       ctx.session.adminUserConversationUserId,
       replyCtx.message.chat.id,
       replyCtx.message.message_id,
-      {reply_to_message_id: ctx.session.adminUserConversationMessageId}
+      {reply_to_message_id: ctx.session.adminUserConversationMessageId, disable_notification: true}
     );
     ctx.session.adminUserConversationMessageId = undefined;
     ctx.session.adminUserConversationUserId = undefined;

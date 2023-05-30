@@ -88,11 +88,8 @@ export class ObservatoryService implements OnModuleInit {
       .text('Кринж', async (ctx) =>
         this.publishObservatoryPost(ctx, PublicationModesEnum.NIGHT_CRINGE)
       )
-      .text('Сейчас 🔕', async (ctx) =>
+      .text('Сейчас', async (ctx) =>
         this.publishObservatoryPost(ctx, PublicationModesEnum.NOW_SILENT)
-      )
-      .text('Сейчас 🔔', async (ctx) =>
-        this.publishObservatoryPost(ctx, PublicationModesEnum.NOW_WITH_ALARM)
       )
       .row()
       .text('Ночью', async (ctx) =>
@@ -159,7 +156,7 @@ export class ObservatoryService implements OnModuleInit {
       {
         caption: caption,
         parse_mode: 'HTML',
-        disable_notification: publishContext.mode === PublicationModesEnum.NOW_SILENT,
+        disable_notification: true,
       }
     );
 

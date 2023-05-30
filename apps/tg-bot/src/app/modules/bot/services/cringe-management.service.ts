@@ -37,7 +37,7 @@ export class CringeManagementService {
       const cringeMessage = await this.bot.api.copyMessage(
         this.baseConfigService.cringeMemeChannelId,
         this.baseConfigService.memeChanelId,
-        cringePost.memeChannelMessageId
+        cringePost.memeChannelMessageId, {disable_notification: true}
       );
 
       await this.repository.update(

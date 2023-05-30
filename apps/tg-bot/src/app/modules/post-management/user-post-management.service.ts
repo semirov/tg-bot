@@ -12,7 +12,10 @@ import {PublicationModesEnum} from './constants/publication-modes.enum';
 import {PostModerationMenusEnum} from './constants/post-moderation-menus.enum';
 import {add, format, getUnixTime} from 'date-fns';
 import {UserRequestService} from '../bot/services/user-request.service';
-import {PostSchedulerService, ScheduledPostContextInterface,} from '../bot/services/post-scheduler.service';
+import {
+  PostSchedulerService,
+  ScheduledPostContextInterface,
+} from '../bot/services/post-scheduler.service';
 import {SettingsService} from '../bot/services/settings.service';
 import {CringeManagementService} from '../bot/services/cringe-management.service';
 
@@ -111,16 +114,20 @@ export class UserPostManagementService implements OnModuleInit {
       return;
     }
 
+    const user = await this.userService.repository.findOne({
+      where: {id: ctx.message.from.id},
+    });
+    await this.bot.api.sendMessage(
+      this.baseConfigService.userRequestMemeChannel,
+      `пост от @${user.username}`, {disable_notification: true}
+    );
     const message = await ctx.api.copyMessage(
       this.baseConfigService.userRequestMemeChannel,
       ctx.message.chat.id,
       ctx.message.message_id,
-      {reply_markup: this.moderatedPostMenu}
+      {reply_markup: this.moderatedPostMenu, disable_notification: true}
     );
 
-    const user = await this.userService.repository.findOne({
-      where: {id: ctx.message.from.id},
-    });
     await this.userRequestService.repository.insert({
       user: user,
       isAnonymousPublishing: ctx.session.anonymousPublishing,
@@ -184,9 +191,8 @@ export class UserPostManagementService implements OnModuleInit {
       autoAnswer: false,
     })
       .text('Кринж', async (ctx) => this.onPublishActions(ctx, PublicationModesEnum.NIGHT_CRINGE))
-      .text('Сейчас 🔕', async (ctx) => this.onPublishActions(ctx, PublicationModesEnum.NOW_SILENT))
-      .text('Сейчас 🔔', async (ctx) =>
-        this.onPublishActions(ctx, PublicationModesEnum.NOW_WITH_ALARM)
+      .text('Сейчас', async (ctx) =>
+        this.onPublishActions(ctx, PublicationModesEnum.NOW_SILENT)
       )
       .row()
       .text('Ночью', async (ctx) => this.onPublishActions(ctx, PublicationModesEnum.NEXT_NIGHT))
@@ -422,7 +428,7 @@ export class UserPostManagementService implements OnModuleInit {
       userFeedbackMessage += `Утром пост будет перемещен в канал ${cringeChannelLink}`;
     }
 
-    await this.bot.api.sendMessage(message.user.id, userFeedbackMessage, {parse_mode: "HTML"});
+    await this.bot.api.sendMessage(message.user.id, userFeedbackMessage, {parse_mode: 'HTML'});
 
     const user = await this.userService.repository.findOne({
       where: {id: publishContext.processedByModerator},
@@ -493,7 +499,7 @@ export class UserPostManagementService implements OnModuleInit {
     }
     userFeedbackMessage += 'Присылай еще 😉️';
 
-    await this.bot.api.sendMessage(message.user.id, userFeedbackMessage, {parse_mode: "HTML"});
+    await this.bot.api.sendMessage(message.user.id, userFeedbackMessage, {parse_mode: 'HTML'});
 
     return Promise.resolve();
   }

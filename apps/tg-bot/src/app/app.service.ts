@@ -83,6 +83,15 @@ export class AppService implements OnModuleInit {
 
   private onNewMember() {
     this.bot.on(['chat_join_request'], async (ctx) => {
+      const channelInfo = await this.bot.api.getChat(this.baseConfigService.memeChanelId);
+      const channelUrl = await this.settingsService.channelLinkUrl();
+      let messageText = `Привет!\nДобро пожаловать в канал <b>${channelInfo['title']}</b>!`;
+      messageText += '\n\nЕсли хочешь, чтобы твой мем опубликовали в канале, просто пришли его мне';
+      const menu = new InlineKeyboard().url('Перейти в канал', channelUrl);
+      await this.bot.api.sendMessage(ctx.chatJoinRequest.from.id, messageText, {
+        reply_markup: menu,
+        parse_mode: "HTML"
+      });
       const text = `${ctx.chatJoinRequest.from.first_name} ${ctx.chatJoinRequest.from.last_name} (@${ctx.chatJoinRequest.from.username}) присоединился к каналу`;
       await ctx.approveChatJoinRequest(ctx.chatJoinRequest.from.id);
       await this.bot.api.sendMessage(this.baseConfigService.userRequestMemeChannel, text);
