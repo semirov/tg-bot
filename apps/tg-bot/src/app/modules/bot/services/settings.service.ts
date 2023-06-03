@@ -17,22 +17,36 @@ export class SettingsService {
   ) {
   }
 
-  public async channelLinkUrl(): Promise<string> {
-    const lastActiveLink = await this.settingsRepository.findOne({
+  private async channelSettings(): Promise<SettingsEntity> {
+    return this.settingsRepository.findOne({
       where: {joinLink: Not(IsNull())},
       order: {id: 'DESC'},
     });
-
-    return lastActiveLink.joinLink;
   }
 
-  public async channelHtmlLink(): Promise<string> {
-    const channelInfo = await this.bot.api.getChat(this.baseConfigService.memeChanelId);
-    const channelLinkUrl = await this.channelLinkUrl();
+  public async channelLinkUrl(): Promise<string> {
+    const channelSettings = await this.channelSettings();
+    return channelSettings.joinLink;
+  }
+
+  public async cringeChannelHtmlLink(): Promise<string> {
+    const channelInfo = await this.bot.api.getChat(this.baseConfigService.cringeMemeChannelId);
     const channelLink = channelInfo['username']
       ? `https://t.me/${channelInfo['username']}`
       : channelInfo['invite_link'];
 
-    return `<a href="${channelLinkUrl || channelLink}">${channelInfo['title']}</a>`;
+    return `<a href="${channelLink}">${channelInfo['title']}</a>`;
+  }
+
+  public async channelHtmlLink(): Promise<string> {
+    const channelInfo = await this.bot.api.getChat(this.baseConfigService.memeChanelId);
+    const channelSettings = await this.channelSettings();
+    const channelLink = channelInfo['username']
+      ? `https://t.me/${channelInfo['username']}`
+      : channelInfo['invite_link'];
+
+    return `<a href="${channelSettings.joinLink || channelLink}">${
+      channelSettings.postLinkText || channelInfo['title']
+    }</a>`;
   }
 }

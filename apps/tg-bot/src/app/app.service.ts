@@ -1,13 +1,13 @@
 import {Inject, Injectable, OnModuleInit} from '@nestjs/common';
 import {MainMenuService} from './modules/menus/main-menu.service';
 import {BOT} from './modules/bot/providers/bot.provider';
-import {Bot, CommandContext} from 'grammy';
+import {Bot, CommandContext, InlineKeyboard} from 'grammy';
 import {BotContext} from './modules/bot/interfaces/bot-context.interface';
 import {BaseConfigService} from './modules/config/base-config.service';
 import {UserService} from './modules/bot/services/user.service';
 import {UserPostManagementService} from './modules/post-management/user-post-management.service';
 import {ConversationsEnum} from './modules/post-management/constants/conversations.enum';
-import {SettingsService} from "./modules/bot/services/settings.service";
+import {SettingsService} from './modules/bot/services/settings.service';
 
 @Injectable()
 export class AppService implements OnModuleInit {
@@ -83,7 +83,20 @@ export class AppService implements OnModuleInit {
 
   private onNewMember() {
     this.bot.on(['chat_join_request'], async (ctx) => {
+      const channelInfo = await this.bot.api.getChat(this.baseConfigService.memeChanelId);
+      const channelUrl = await this.settingsService.channelLinkUrl();
+      let messageText = `Привет!\nДобро пожаловать в канал <b>${channelInfo['title']}</b>!`;
+      messageText += '\n\nЕсли хочешь, чтобы твой мем опубликовали в канале, просто пришли его мне';
+      const menu = new InlineKeyboard().url('Перейти в канал', channelUrl);
+      await this.bot.api.sendMessage(ctx.chatJoinRequest.from.id, messageText, {
+        reply_markup: menu,
+        parse_mode: "HTML"
+      });
+      const text = `${ctx.chatJoinRequest.from.first_name} ${ctx.chatJoinRequest.from.last_name} (@${ctx.chatJoinRequest.from.username}) присоединился к каналу`;
       await ctx.approveChatJoinRequest(ctx.chatJoinRequest.from.id);
+      await this.bot.api.sendMessage(this.baseConfigService.userRequestMemeChannel, text);
     });
+
+    // this.bot.on('channel_post', (ctx) => console.log(ctx.channelPost.chat.id));
   }
 }

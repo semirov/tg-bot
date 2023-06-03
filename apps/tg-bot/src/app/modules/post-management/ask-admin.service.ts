@@ -6,16 +6,13 @@ import {Bot, InlineKeyboard} from 'grammy';
 import {BotContext} from '../bot/interfaces/bot-context.interface';
 import {BaseConfigService} from '../config/base-config.service';
 import {UserService} from '../bot/services/user.service';
-import {UserPostManagementService} from './user-post-management.service';
-import {add} from 'date-fns';
 
 @Injectable()
 export class AskAdminService implements OnModuleInit {
   constructor(
     @Inject(BOT) private bot: Bot<BotContext>,
     private baseConfigService: BaseConfigService,
-    private userService: UserService,
-    private userPostManagementService: UserPostManagementService
+    private userService: UserService
   ) {
   }
 
@@ -84,7 +81,7 @@ export class AskAdminService implements OnModuleInit {
       ctx.session.adminUserConversationUserId,
       replyCtx.message.chat.id,
       replyCtx.message.message_id,
-      {reply_to_message_id: ctx.session.adminUserConversationMessageId}
+      {reply_to_message_id: ctx.session.adminUserConversationMessageId, disable_notification: true}
     );
     ctx.session.adminUserConversationMessageId = undefined;
     ctx.session.adminUserConversationUserId = undefined;

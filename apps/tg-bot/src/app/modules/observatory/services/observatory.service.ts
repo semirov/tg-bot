@@ -17,10 +17,9 @@ import {
   PostSchedulerService,
   ScheduledPostContextInterface,
 } from '../../bot/services/post-scheduler.service';
-import {formatInTimeZone} from 'date-fns-tz';
-import {ru} from 'date-fns/locale';
 import {format} from 'date-fns';
-import {SettingsService} from "../../bot/services/settings.service";
+import {SettingsService} from '../../bot/services/settings.service';
+import {CringeManagementService} from '../../bot/services/cringe-management.service';
 
 @Injectable()
 export class ObservatoryService implements OnModuleInit {
@@ -34,6 +33,7 @@ export class ObservatoryService implements OnModuleInit {
     private observatoryPostRepository: Repository<ObservatoryPostEntity>,
     private postSchedulerService: PostSchedulerService,
     private settingsService: SettingsService,
+    private cringeManagementService: CringeManagementService
   ) {
   }
 
@@ -85,11 +85,11 @@ export class ObservatoryService implements OnModuleInit {
     const publishSubmenu = new Menu<BotContext>(ObservatoryPostMenusEnum.OBSERVATORY_PUBLICATION, {
       autoAnswer: false,
     })
-      .text('Сейчас 🔕', async (ctx) =>
-        this.publishObservatoryPost(ctx, PublicationModesEnum.NOW_SILENT)
+      .text('Кринж', async (ctx) =>
+        this.publishObservatoryPost(ctx, PublicationModesEnum.NIGHT_CRINGE)
       )
-      .text('Сейчас 🔔', async (ctx) =>
-        this.publishObservatoryPost(ctx, PublicationModesEnum.NOW_WITH_ALARM)
+      .text('Сейчас', async (ctx) =>
+        this.publishObservatoryPost(ctx, PublicationModesEnum.NOW_SILENT)
       )
       .row()
       .text('Ночью', async (ctx) =>
@@ -134,11 +134,20 @@ export class ObservatoryService implements OnModuleInit {
       case PublicationModesEnum.NEXT_EVENING:
       case PublicationModesEnum.NEXT_NIGHT:
         return this.publishScheduled(publishContext);
+      case PublicationModesEnum.NIGHT_CRINGE:
+        return this.publishNightCringeScheduled(publishContext);
     }
   }
 
   public async onPublishNow(publishContext: ScheduledPostContextInterface): Promise<void> {
-    const caption = await this.settingsService.channelHtmlLink();
+    let caption = '';
+    if (publishContext.mode === PublicationModesEnum.NIGHT_CRINGE) {
+      const channelHtmlLink = await this.settingsService.cringeChannelHtmlLink();
+      caption += channelHtmlLink;
+    } else {
+      const channelHtmlLink = await this.settingsService.channelHtmlLink();
+      caption += channelHtmlLink;
+    }
 
     const publishedMessage = await this.bot.api.copyMessage(
       this.baseConfigService.memeChanelId,
@@ -147,7 +156,7 @@ export class ObservatoryService implements OnModuleInit {
       {
         caption: caption,
         parse_mode: 'HTML',
-        disable_notification: publishContext.mode === PublicationModesEnum.NOW_SILENT,
+        disable_notification: true,
       }
     );
 
@@ -160,21 +169,35 @@ export class ObservatoryService implements OnModuleInit {
       }
     );
 
-
     const user = await this.userService.repository.findOne({
       where: {id: publishContext.processedByModerator},
     });
 
     const url = await this.settingsService.channelLinkUrl();
-    const inlineKeyboard = new InlineKeyboard()
-      .url(`🤖 Опубликован (${user.username})`, url)
-      .row();
+    const inlineKeyboard = new InlineKeyboard().url(`🤖 Опубликован (${user.username})`, url).row();
 
     await this.bot.api.editMessageReplyMarkup(
       this.baseConfigService.userRequestMemeChannel,
       publishContext.requestChannelMessageId,
       {reply_markup: inlineKeyboard}
     );
+
+    if (publishContext.mode == PublicationModesEnum.NIGHT_CRINGE) {
+      await this.cringeManagementService.repository.update(
+        {requestChannelMessageId: publishContext.requestChannelMessageId},
+        {memeChannelMessageId: publishedMessage.message_id}
+      );
+    }
+  }
+
+  private async publishNightCringeScheduled(
+    publicContext: ScheduledPostContextInterface
+  ): Promise<void> {
+    await this.cringeManagementService.repository.insert({
+      requestChannelMessageId: publicContext.requestChannelMessageId,
+      isUserPost: publicContext.isUserPost,
+    });
+    await this.publishScheduled(publicContext);
   }
 
   private async publishScheduled(publishContext: ScheduledPostContextInterface): Promise<void> {

@@ -259,7 +259,7 @@ export class AdminMenuService implements OnModuleInit {
     await this.bot.api.sendMessage(
       this.baseConfigService.memeChanelId,
       'Ты можешь прислать мем через бота 😉',
-      {reply_markup: inlineKeyboard}
+      {reply_markup: inlineKeyboard, disable_notification: true}
     );
   }
 }

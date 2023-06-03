@@ -3,6 +3,7 @@ import {Cron, Interval} from '@nestjs/schedule';
 import {PostSchedulerService, ScheduledPostContextInterface} from '../../bot/services/post-scheduler.service';
 import {UserPostManagementService} from '../../post-management/user-post-management.service';
 import {ObservatoryService} from "../../observatory/services/observatory.service";
+import {CringeManagementService} from "../../bot/services/cringe-management.service";
 
 @Injectable()
 export class CronService {
@@ -10,12 +11,14 @@ export class CronService {
     private postSchedulerService: PostSchedulerService,
     private userPostManagementService: UserPostManagementService,
     private observatoryService: ObservatoryService,
+    private cringeManagementService: CringeManagementService
   ) {
   }
 
-  @Interval(30000)
+  @Interval(60000)
   async handleCron() {
     await this.handleNextScheduledPost();
+    await this.tryToMoveCringe();
   }
 
   async handleNextScheduledPost(): Promise<void> {
@@ -43,5 +46,12 @@ export class CronService {
     }
 
     await this.postSchedulerService.markPostAsPublished(post.id);
+  }
+
+  private async tryToMoveCringe(): Promise<void> {
+    if (!this.postSchedulerService.nowIsMorning) {
+      return;
+    }
+    await this.cringeManagementService.moveCringeMessages();
   }
 }

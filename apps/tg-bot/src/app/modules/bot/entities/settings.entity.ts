@@ -11,4 +11,7 @@ export class SettingsEntity {
 
   @Column('text', {nullable: true})
   joinLink: string;
+
+  @Column('text', {nullable: true})
+  postLinkText: string;
 }
