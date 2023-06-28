@@ -104,8 +104,6 @@ export class PostSchedulerService {
           order: {publishDate: 'DESC'},
           cache: false,
         });
-        // ночью интервал х2
-        postDelay = postDelay * 2;
         break;
 
       default:
