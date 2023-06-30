@@ -4,7 +4,7 @@ import {Between, LessThan, Repository} from 'typeorm';
 import {PostSchedulerEntity} from '../entities/post-scheduler.entity';
 import {PublicationModesEnum} from '../../post-management/constants/publication-modes.enum';
 import {SchedulerCommonService} from '../../common/scheduler-common.service';
-import {add, isAfter, set} from 'date-fns';
+import {add, differenceInMinutes, isAfter, set} from 'date-fns';
 import {utcToZonedTime, zonedTimeToUtc} from 'date-fns-tz';
 
 export interface ScheduledPostContextInterface {
@@ -70,7 +70,7 @@ export class PostSchedulerService {
 
   private async nextScheduledTimeByMode(mode: PublicationModesEnum): Promise<Date> {
     const interval = SchedulerCommonService.timeIntervalByMode(mode);
-    let postDelay = SchedulerCommonService.POST_DELAY_MINUTES;
+    const regularPostInterval = SchedulerCommonService.POST_DELAY_MINUTES;
 
     const nowTimeStamp = new Date();
     let startTimestamp = zonedTimeToUtc(set(nowTimeStamp, interval.from), 'Europe/Moscow');
@@ -78,51 +78,56 @@ export class PostSchedulerService {
     const nowIsAfterEnd = isAfter(nowTimeStamp, endTimestamp);
     const nowIsInInterval = nowTimeStamp >= startTimestamp && nowTimeStamp <= endTimestamp;
 
+    // если прям сейчас дальше начала интервала, переносим на следующий день
     if (nowIsAfterEnd) {
       startTimestamp = add(startTimestamp, {days: 1});
       endTimestamp = add(endTimestamp, {days: 1});
     }
 
-    let lastPublishPost: PostSchedulerEntity;
-
-    switch (true) {
-      case nowIsInInterval:
-        lastPublishPost = await this.postSchedulerEntity.findOne({
-          where: {publishDate: Between(nowTimeStamp, endTimestamp), mode, isPublished: false},
-          order: {publishDate: 'DESC'},
-          cache: false,
-        });
-        break;
-
-      case mode === PublicationModesEnum.NEXT_NIGHT:
-        lastPublishPost = await this.postSchedulerEntity.findOne({
-          where: {
-            publishDate: Between(startTimestamp, endTimestamp),
-            mode,
-            isPublished: false,
-          },
-          order: {publishDate: 'DESC'},
-          cache: false,
-        });
-        break;
-
-      default:
-        lastPublishPost = await this.postSchedulerEntity.findOne({
-          where: {publishDate: Between(startTimestamp, endTimestamp), mode, isPublished: false},
-          order: {publishDate: 'DESC'},
-          cache: false,
-        });
-        break;
+    // если сейчас внутри интервала, двигаем левый конец на текущее время
+    if (nowIsInInterval) {
+      startTimestamp = nowTimeStamp;
     }
 
-    if (lastPublishPost) {
-      return add(lastPublishPost.publishDate, {minutes: postDelay});
-    }
-    if (nowTimeStamp > startTimestamp) {
-      return add(nowTimeStamp, {minutes: postDelay});
-    }
+    const scheduledPosts: PostSchedulerEntity[] = await this.postSchedulerEntity.find({
+      where: {publishDate: Between(startTimestamp, endTimestamp), mode, isPublished: false},
+      order: {publishDate: 'DESC'},
+      select: ['publishDate'],
+      cache: false,
+    });
 
-    return add(startTimestamp, {seconds: 30});
+    // формируем границы интервала
+    const postIntervals = [
+      set(startTimestamp, {seconds: 0, milliseconds: 0}).getTime(),
+      ...scheduledPosts.map((post) =>
+        set(post.publishDate, {seconds: 0, milliseconds: 0}).getTime()
+      ),
+      set(endTimestamp, {seconds: 0, milliseconds: 0}).getTime(),
+    ];
+
+    // получаем уникальные метки времени
+    const uniqueTimes = [...new Set(postIntervals)].sort((a, b) => a - b);
+
+    // формируем границы со значением интервалов
+    const intervalsArray = uniqueTimes.reduce((acc, curr, index, arr) => {
+      const prev = arr[index - 1];
+      if (!prev) {
+        return acc;
+      }
+      const diff = differenceInMinutes(curr, prev);
+
+      acc.push({diff, left: new Date(prev), right: new Date(curr)});
+
+      return acc;
+    }, []);
+
+    // ищем максимальный интервал
+    const maxInterval = intervalsArray.reduce(function (prev, current) {
+      return (prev.diff > current.diff) ? prev : current
+    });
+
+    // возвращаем дату публикации посреди максимального интервала времени
+    return (add(maxInterval.left, {minutes: (maxInterval.diff / 2)}));
   }
 
   async markPostAsPublished(id: number): Promise<any> {
