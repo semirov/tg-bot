@@ -117,9 +117,19 @@ export class UserPostManagementService implements OnModuleInit {
     const user = await this.userService.repository.findOne({
       where: {id: ctx.message.from.id},
     });
+    const {first_name, last_name, username, is_bot, is_premium} = ctx.message.from;
+    const text = [
+      'Пост от',
+      is_premium ? '👑' : null,
+      is_bot ? '🤖' : null,
+      first_name,
+      last_name,
+      username ? `@${username}` : null,
+      '\n#предложка'
+    ].filter(v => !!v).join(' ');
     await this.bot.api.sendMessage(
       this.baseConfigService.userRequestMemeChannel,
-      `пост от @${user.username}`, {disable_notification: true}
+      text, {disable_notification: true}
     );
     const message = await ctx.api.copyMessage(
       this.baseConfigService.userRequestMemeChannel,

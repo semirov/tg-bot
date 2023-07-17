@@ -26,7 +26,7 @@ export class SettingsService {
 
   public async channelLinkUrl(): Promise<string> {
     const channelSettings = await this.channelSettings();
-    return channelSettings.joinLink;
+    return channelSettings?.joinLink;
   }
 
   public async cringeChannelHtmlLink(): Promise<string> {
@@ -45,8 +45,8 @@ export class SettingsService {
       ? `https://t.me/${channelInfo['username']}`
       : channelInfo['invite_link'];
 
-    return `<a href="${channelSettings.joinLink || channelLink}">${
-      channelSettings.postLinkText || channelInfo['title']
+    return `<a href="${channelSettings?.joinLink || channelLink}">${
+      channelSettings?.postLinkText || channelInfo['title']
     }</a>`;
   }
 }

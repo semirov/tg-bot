@@ -34,16 +34,26 @@ export class CringeManagementService {
     }
 
     for (const cringePost of cringePosts) {
-      const cringeMessage = await this.bot.api.copyMessage(
-        this.baseConfigService.cringeMemeChannelId,
-        this.baseConfigService.memeChanelId,
-        cringePost.memeChannelMessageId, {disable_notification: true}
-      );
+      let cringeMessage = null;
+      try {
+        cringeMessage = await this.bot.api.copyMessage(
+          this.baseConfigService.cringeMemeChannelId,
+          this.baseConfigService.memeChanelId,
+          cringePost.memeChannelMessageId, {disable_notification: true}
+        );
+      } catch (e) {
+        console.error('[Error while copy message]', e);
+      }
 
       await this.repository.update(
         {memeChannelMessageId: cringePost.memeChannelMessageId},
-        {isMovedToCringe: true, cringeChannelMessageId: cringeMessage.message_id}
+        {isMovedToCringe: true, cringeChannelMessageId: cringeMessage?.message_id || null}
       );
+
+      if (!cringeMessage) {
+        return;
+      }
+
 
       await this.bot.api.deleteMessage(
         this.baseConfigService.memeChanelId,

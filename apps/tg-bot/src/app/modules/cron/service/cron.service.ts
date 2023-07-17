@@ -1,9 +1,10 @@
 import {Injectable} from '@nestjs/common';
-import {Cron, Interval} from '@nestjs/schedule';
+import {Interval} from '@nestjs/schedule';
 import {PostSchedulerService, ScheduledPostContextInterface} from '../../bot/services/post-scheduler.service';
 import {UserPostManagementService} from '../../post-management/user-post-management.service';
 import {ObservatoryService} from "../../observatory/services/observatory.service";
 import {CringeManagementService} from "../../bot/services/cringe-management.service";
+import {PublicationModesEnum} from "../../post-management/constants/publication-modes.enum";
 
 @Injectable()
 export class CronService {
@@ -49,7 +50,7 @@ export class CronService {
   }
 
   private async tryToMoveCringe(): Promise<void> {
-    if (!this.postSchedulerService.nowIsMorning) {
+    if (!this.postSchedulerService.nowIsMode(PublicationModesEnum.NIGHT_CRINGE)) {
       return;
     }
     await this.cringeManagementService.moveCringeMessages();

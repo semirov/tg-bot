@@ -90,11 +90,21 @@ export class AppService implements OnModuleInit {
       const menu = new InlineKeyboard().url('Перейти в канал', channelUrl);
       await this.bot.api.sendMessage(ctx.chatJoinRequest.from.id, messageText, {
         reply_markup: menu,
-        parse_mode: "HTML"
+        parse_mode: 'HTML',
       });
-      const text = `${ctx.chatJoinRequest.from.first_name} ${ctx.chatJoinRequest.from.last_name} (@${ctx.chatJoinRequest.from.username}) присоединился к каналу`;
+      const {first_name, last_name, username, is_bot, is_premium} = ctx.chatJoinRequest.from;
+
+      const text = [
+        'Новый подписчик:\n',
+        is_premium ? '👑' : null,
+        is_bot ? '🤖' : null,
+        first_name,
+        last_name,
+        username ? `@${username}` : null,
+      ].filter(v => !!v).join(' ');
+
       await ctx.approveChatJoinRequest(ctx.chatJoinRequest.from.id);
-      await this.bot.api.sendMessage(this.baseConfigService.userRequestMemeChannel, text);
+      await this.bot.api.sendMessage(this.baseConfigService.ownerId, text);
     });
 
     // this.bot.on('channel_post', (ctx) => console.log(ctx.channelPost.chat.id));
