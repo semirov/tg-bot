@@ -1,6 +1,6 @@
 import {Injectable} from '@nestjs/common';
 import {InjectRepository} from '@nestjs/typeorm';
-import {Between, LessThan, Repository} from 'typeorm';
+import {Between, LessThan, MoreThanOrEqual, Repository} from 'typeorm';
 import {PostSchedulerEntity} from '../entities/post-scheduler.entity';
 import {PublicationModesEnum} from '../../post-management/constants/publication-modes.enum';
 import {SchedulerCommonService} from '../../common/scheduler-common.service';
@@ -38,8 +38,8 @@ export class PostSchedulerService {
     });
   }
 
-  public get nowIsMorning(): boolean {
-    const interval = SchedulerCommonService.timeIntervalByMode(PublicationModesEnum.NEXT_MORNING);
+  public nowIsMode(mode: PublicationModesEnum): boolean {
+    const interval = SchedulerCommonService.timeIntervalByMode(mode);
     const nowTimeStamp = new Date();
     const startTimestamp = zonedTimeToUtc(set(nowTimeStamp, interval.from), 'Europe/Moscow');
     const endTimestamp = zonedTimeToUtc(set(nowTimeStamp, interval.to), 'Europe/Moscow');
@@ -70,7 +70,6 @@ export class PostSchedulerService {
 
   private async nextScheduledTimeByMode(mode: PublicationModesEnum): Promise<Date> {
     const interval = SchedulerCommonService.timeIntervalByMode(mode);
-    const regularPostInterval = SchedulerCommonService.POST_DELAY_MINUTES;
 
     const nowTimeStamp = new Date();
     let startTimestamp = zonedTimeToUtc(set(nowTimeStamp, interval.from), 'Europe/Moscow');
@@ -132,5 +131,16 @@ export class PostSchedulerService {
 
   async markPostAsPublished(id: number): Promise<any> {
     return this.postSchedulerEntity.update({id}, {isPublished: true});
+  }
+
+  public async getScheduledPost(): Promise<PostSchedulerEntity[]> {
+    const nowTimeStamp = new Date();
+    const startTimestamp = zonedTimeToUtc(nowTimeStamp, 'Europe/Moscow');
+    return this.postSchedulerEntity.find({
+      where: {publishDate: MoreThanOrEqual(startTimestamp), isPublished: false},
+      relations: {processedByModerator: true},
+      order: {publishDate: 'ASC'},
+      cache: false,
+    });
   }
 }

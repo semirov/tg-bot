@@ -8,9 +8,14 @@ import {UserService} from '../bot/services/user.service';
 import {BaseConfigService} from '../config/base-config.service';
 import {Conversation, createConversation} from '@grammyjs/conversations';
 import {UserEntity} from '../bot/entities/user.entity';
-import {add, getUnixTime} from 'date-fns';
+import {add, format, getUnixTime, set} from 'date-fns';
 import {ClientBaseService} from '../client/services/client-base.service';
-import {ConversationsEnum} from "../post-management/constants/conversations.enum";
+import {ConversationsEnum} from '../post-management/constants/conversations.enum';
+import {PostSchedulerService} from '../bot/services/post-scheduler.service';
+import {PublicationModesEnum} from '../post-management/constants/publication-modes.enum';
+import {PostSchedulerEntity} from '../bot/entities/post-scheduler.entity';
+import {SchedulerCommonService} from '../common/scheduler-common.service';
+import {zonedTimeToUtc} from 'date-fns-tz';
 
 @Injectable()
 export class AdminMenuService implements OnModuleInit {
@@ -18,7 +23,8 @@ export class AdminMenuService implements OnModuleInit {
     @Inject(BOT) private bot: Bot<BotContext>,
     private userService: UserService,
     private baseConfigService: BaseConfigService,
-    private clientBaseService: ClientBaseService
+    private clientBaseService: ClientBaseService,
+    private postSchedulerService: PostSchedulerService
   ) {
   }
 
@@ -42,6 +48,8 @@ export class AdminMenuService implements OnModuleInit {
       .text('Добавить модератора', async (ctx) =>
         ctx.conversation.enter(ConversationsEnum.ADD_MODERATOR_CONVERSATION)
       )
+      .row()
+      .text('Сетка публикаций', async (ctx) => this.showPublicationGrid(ctx))
       .row()
       .text(
         async () => {
@@ -255,11 +263,73 @@ export class AdminMenuService implements OnModuleInit {
   }
 
   private async publishBotPromo(ctx: BotContext) {
-    const inlineKeyboard = new InlineKeyboard().url('Прислать мем', `https://t.me/${ctx.me.username}`);
+    const inlineKeyboard = new InlineKeyboard().url(
+      'Прислать мем',
+      `https://t.me/${ctx.me.username}`
+    );
     await this.bot.api.sendMessage(
       this.baseConfigService.memeChanelId,
       'Ты можешь прислать мем через бота 😉',
       {reply_markup: inlineKeyboard, disable_notification: true}
     );
+  }
+
+  private async showPublicationGrid(ctx: BotContext): Promise<void> {
+    const scheduledPost = await this.postSchedulerService.getScheduledPost();
+    let message = '';
+    const mapped = scheduledPost.reduce((acc, post) => {
+      if (!acc[post.mode]?.length) {
+        acc[post.mode] = [];
+      }
+      acc[post.mode].push(post);
+      return acc;
+    }, {});
+    message += '<b>Сетка публикаций</b>\n\n';
+    message += this.getPostMessagesGrid('Кринж', PublicationModesEnum.NIGHT_CRINGE, mapped);
+    message += this.getPostMessagesGrid('Ночь', PublicationModesEnum.NEXT_NIGHT, mapped);
+    message += this.getPostMessagesGrid('Утро', PublicationModesEnum.NEXT_MORNING, mapped);
+    message += this.getPostMessagesGrid('День', PublicationModesEnum.NEXT_MIDDAY, mapped);
+    message += this.getPostMessagesGrid('Вечер', PublicationModesEnum.NEXT_EVENING, mapped);
+
+    await ctx.api.sendMessage(ctx.callbackQuery.from.id, message, {parse_mode: 'HTML'});
+    return;
+  }
+
+  public getPostMessagesGrid(
+    header: string,
+    mode: PublicationModesEnum,
+    mappedPosts: { [key: string]: PostSchedulerEntity[] }
+  ): string {
+    const posts = mappedPosts[mode];
+    const interval = SchedulerCommonService.timeIntervalByMode(mode);
+
+    const channelLinkId = this.baseConfigService.userRequestMemeChannel * -1 - 1000000000000;
+
+    const nowTimeStamp = new Date();
+    const startTimestamp = zonedTimeToUtc(set(nowTimeStamp, interval.from), 'Europe/Moscow');
+    const endTimestamp = zonedTimeToUtc(set(nowTimeStamp, interval.to), 'Europe/Moscow');
+
+    let message = '';
+    message += `<b>${header}:</b>`;
+    message += ` c ${format(startTimestamp, 'HH:mm')}`;
+    message += ` по ${format(endTimestamp, 'HH:mm')}\n`;
+
+    if (!posts?.length) {
+      message += 'Постов нет\n\n';
+      return message;
+    }
+
+    for (const post of posts) {
+      if (post.isUserPost) {
+        message += `👨`;
+      }
+      message += `- <a href="https://t.me/c/${channelLinkId}/${post.id}">${format(post.publishDate, 'HH:mm')}</a>`;
+      message += ` @${post.processedByModerator.username}`;
+
+      message += '\n';
+    }
+
+    message += '\n';
+    return message;
   }
 }
