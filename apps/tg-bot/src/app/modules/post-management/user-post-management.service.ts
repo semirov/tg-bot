@@ -402,7 +402,7 @@ export class UserPostManagementService implements OnModuleInit {
       const channelHtmlLink = await this.settingsService.cringeChannelHtmlLink();
       caption += channelHtmlLink;
     } else {
-      const channelHtmlLink = await this.settingsService.channelHtmlLink();
+      const channelHtmlLink = await this.settingsService.channelHtmlLinkIfPrivate();
       caption += channelHtmlLink;
     }
     const channelInfo = await this.bot.api.getChat(this.baseConfigService.memeChanelId);

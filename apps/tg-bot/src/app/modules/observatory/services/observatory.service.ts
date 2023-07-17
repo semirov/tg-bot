@@ -145,7 +145,7 @@ export class ObservatoryService implements OnModuleInit {
       const channelHtmlLink = await this.settingsService.cringeChannelHtmlLink();
       caption += channelHtmlLink;
     } else {
-      const channelHtmlLink = await this.settingsService.channelHtmlLink();
+      const channelHtmlLink = await this.settingsService.channelHtmlLinkIfPrivate();
       caption += channelHtmlLink;
     }
 

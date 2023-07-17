@@ -38,6 +38,19 @@ export class SettingsService {
     return `<a href="${channelLink}">${channelInfo['title']}</a>`;
   }
 
+  public async channelHtmlLinkIfPrivate(): Promise<string> {
+    const channelInfo = await this.bot.api.getChat(this.baseConfigService.memeChanelId);
+    const channelSettings = await this.channelSettings();
+    if (channelInfo && channelInfo['username']) {
+      return '';
+    }
+    const channelLink = channelInfo['invite_link'];
+
+    return `<a href="${channelSettings?.joinLink || channelLink}">${
+      channelSettings?.postLinkText || channelInfo['title']
+    }</a>`;
+  }
+
   public async channelHtmlLink(): Promise<string> {
     const channelInfo = await this.bot.api.getChat(this.baseConfigService.memeChanelId);
     const channelSettings = await this.channelSettings();

@@ -15,7 +15,7 @@ import {PostSchedulerService} from '../bot/services/post-scheduler.service';
 import {PublicationModesEnum} from '../post-management/constants/publication-modes.enum';
 import {PostSchedulerEntity} from '../bot/entities/post-scheduler.entity';
 import {SchedulerCommonService} from '../common/scheduler-common.service';
-import {zonedTimeToUtc} from 'date-fns-tz';
+import {utcToZonedTime} from 'date-fns-tz';
 
 @Injectable()
 export class AdminMenuService implements OnModuleInit {
@@ -303,16 +303,16 @@ export class AdminMenuService implements OnModuleInit {
     const posts = mappedPosts[mode];
     const interval = SchedulerCommonService.timeIntervalByMode(mode);
 
+
+    // чтобы ссылка работала
     const channelLinkId = this.baseConfigService.userRequestMemeChannel * -1 - 1000000000000;
 
     const nowTimeStamp = new Date();
-    const startTimestamp = zonedTimeToUtc(set(nowTimeStamp, interval.from), 'Europe/Moscow');
-    const endTimestamp = zonedTimeToUtc(set(nowTimeStamp, interval.to), 'Europe/Moscow');
 
     let message = '';
     message += `<b>${header}:</b>`;
-    message += ` c ${format(startTimestamp, 'HH:mm')}`;
-    message += ` по ${format(endTimestamp, 'HH:mm')}\n`;
+    message += ` c ${format(set(nowTimeStamp, interval.from), 'HH:mm')}`;
+    message += ` по ${format(set(nowTimeStamp, interval.to), 'HH:mm')}\n`;
 
     if (!posts?.length) {
       message += 'Постов нет\n\n';
@@ -323,7 +323,9 @@ export class AdminMenuService implements OnModuleInit {
       if (post.isUserPost) {
         message += `👨`;
       }
-      message += `- <a href="https://t.me/c/${channelLinkId}/${post.id}">${format(post.publishDate, 'HH:mm')}</a>`;
+      message += `- <a href="https://t.me/c/${channelLinkId}/${
+        post.requestChannelMessageId
+      }">${format(utcToZonedTime(post.publishDate, 'Europe/Moscow'), 'HH:mm')}</a>`;
       message += ` @${post.processedByModerator.username}`;
 
       message += '\n';
