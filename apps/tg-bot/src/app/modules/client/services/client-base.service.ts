@@ -28,7 +28,6 @@ export class ClientBaseService implements OnModuleInit {
   private phoneCodeSubject = new Subject<string>();
   private telegramClient: TelegramClient;
 
-
   private observerChannelPostSubject = new Subject<BotContext>();
 
   async onModuleInit(): Promise<void> {
@@ -70,22 +69,24 @@ export class ClientBaseService implements OnModuleInit {
       }
     );
 
-    this.telegramClient.start({
-      phoneNumber: async () => {
-        return await this.getPhoneNumber();
-      },
-      password: async () => {
-        return await this.getPassword();
-      },
-      phoneCode: async () => {
-        return await this.getPhoneCode();
-      },
-      onError: (err) => Logger.error(err, ClientBaseService.name),
-    }).then(() => {
-      const session = loadedOrEmptySession.save();
-      this.saveSession(session);
-      Logger.log('Observer station started', ClientBaseService.name);
-    });
+    this.telegramClient
+      .start({
+        phoneNumber: async () => {
+          return await this.getPhoneNumber();
+        },
+        password: async () => {
+          return await this.getPassword();
+        },
+        phoneCode: async () => {
+          return await this.getPhoneCode();
+        },
+        onError: (err) => Logger.error(err, ClientBaseService.name),
+      })
+      .then(() => {
+        const session = loadedOrEmptySession.save();
+        this.saveSession(session);
+        Logger.log('Observer station started', ClientBaseService.name);
+      });
     await this.changeObserverState(true);
 
     this.telegramClient.addEventHandler(async (event) => {
@@ -205,7 +206,11 @@ export class ClientBaseService implements OnModuleInit {
   private async checkAutoRunObserver(): Promise<void> {
     const hasSession = await this.userRequestRepository.countBy({station: 'main'});
     if (!hasSession) {
-      const value = await this.userRequestRepository.create({station: 'main', session: '', isActive: false});
+      const value = await this.userRequestRepository.create({
+        station: 'main',
+        session: '',
+        isActive: false,
+      });
       await this.userRequestRepository.save(value);
     }
 
@@ -222,7 +227,17 @@ export class ClientBaseService implements OnModuleInit {
     if (!event.isChannel) {
       return;
     }
-    setTimeout(() => event.message.forwardTo(bigInt(this.baseConfigService.observerChannel)), Math.round(Math.random() * 5 + 5) * 1000);
+
+    if (await this.isPostWithLinks(event)) {
+      console.log('is post with link', event?.message?.message);
+      return;
+    }
+    console.log('is normal post');
+
+    setTimeout(
+      () => event.message.forwardTo(bigInt(this.baseConfigService.observerChannel)),
+      Math.round(Math.random() * 5 + 5) * 1000
+    );
   }
 
   private onObserverChannelPost() {
@@ -232,5 +247,24 @@ export class ClientBaseService implements OnModuleInit {
       }
       this.observerChannelPostSubject.next(ctx);
     });
+  }
+
+  private async isPostWithLinks(event: NewMessageEvent) {
+    const caption = event?.message?.message;
+    const entities = event?.message?.entities || [];
+
+    if (!caption) {
+      return false;
+    }
+
+    for (const entity of entities) {
+      switch (true) {
+        case entity instanceof Api.MessageEntityUrl:
+        case entity instanceof Api.MessageEntityTextUrl: {
+          return true
+        }
+      }
+    }
+    return false;
   }
 }

@@ -127,7 +127,6 @@ export class ObservatoryService implements OnModuleInit {
 
     switch (mode) {
       case PublicationModesEnum.NOW_SILENT:
-      case PublicationModesEnum.NOW_WITH_ALARM:
         return this.onPublishNow(publishContext);
       case PublicationModesEnum.NEXT_MORNING:
       case PublicationModesEnum.NEXT_MIDDAY:
@@ -145,7 +144,7 @@ export class ObservatoryService implements OnModuleInit {
       const channelHtmlLink = await this.settingsService.cringeChannelHtmlLink();
       caption += channelHtmlLink;
     } else {
-      const channelHtmlLink = await this.settingsService.channelHtmlLink();
+      const channelHtmlLink = await this.settingsService.channelHtmlLinkIfPrivate();
       caption += channelHtmlLink;
     }
 

@@ -49,8 +49,11 @@ export class CronService {
     await this.postSchedulerService.markPostAsPublished(post.id);
   }
 
+  /**
+   * Перемещаем посты кринжа когда выходим из интервала, пытаться переместить начнем за переход в интервал to
+   */
   private async tryToMoveCringe(): Promise<void> {
-    if (!this.postSchedulerService.nowIsMode(PublicationModesEnum.NIGHT_CRINGE)) {
+    if (this.postSchedulerService.nowIsMode(PublicationModesEnum.NIGHT_CRINGE)) {
       return;
     }
     await this.cringeManagementService.moveCringeMessages();
