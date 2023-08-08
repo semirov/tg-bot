@@ -1,6 +1,4 @@
-import {Column, Entity, Index, ManyToOne, PrimaryGeneratedColumn} from 'typeorm';
-import {UserEntity} from './user.entity';
-import {PublicationModesEnum} from "../../post-management/constants/publication-modes.enum";
+import {Column, Entity, Index, PrimaryGeneratedColumn} from 'typeorm';
 
 @Entity()
 export class PublishedPostHashesEntity {

@@ -31,7 +31,6 @@
     "date-fns-tz": "2.0.0",
     "grammy": "1.13.1",
     "imghash": "0.0.9",
-    "leven": "4.0.0",
     "lodash-es": "4.17.21",
     "nestjs-telegraf": "2.6.3",
     "pg": "8.9.0",
