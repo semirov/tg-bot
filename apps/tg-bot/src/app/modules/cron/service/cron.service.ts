@@ -34,6 +34,7 @@ export class CronService {
       processedByModerator: post.processedByModerator.id,
       caption: post.caption,
       isUserPost: post.isUserPost,
+      hash: post.hash,
     };
 
     try {

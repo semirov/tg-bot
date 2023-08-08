@@ -46,4 +46,7 @@ export class UserRequestEntity {
 
   @Column('timestamptz', {default: 'NOW'})
   createdAt: Date;
+
+  @Column('text', {nullable: true})
+  hash?: string;
 }

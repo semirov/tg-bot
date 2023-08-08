@@ -15,10 +15,14 @@ import {SettingsService} from './services/settings.service';
 import {SettingsEntity} from './entities/settings.entity';
 import {CringePostEntity} from './entities/cringe-post.entity';
 import {CringeManagementService} from './services/cringe-management.service';
+import {DeduplicationService} from "./services/deduplication.service";
+import {HttpModule} from "@nestjs/axios";
+import {PublishedPostHashesEntity} from "./entities/published-post-hashes.entity";
 
 @Module({
   imports: [
     AppConfigModule,
+    HttpModule,
     TypeOrmModule.forFeature([
       SessionEntity,
       UserEntity,
@@ -26,6 +30,7 @@ import {CringeManagementService} from './services/cringe-management.service';
       PostSchedulerEntity,
       SettingsEntity,
       CringePostEntity,
+      PublishedPostHashesEntity,
     ]),
   ],
   providers: [
@@ -37,6 +42,7 @@ import {CringeManagementService} from './services/cringe-management.service';
     PostSchedulerService,
     SettingsService,
     CringeManagementService,
+    DeduplicationService,
   ],
   exports: [
     BOT_PROVIDER,
@@ -45,6 +51,7 @@ import {CringeManagementService} from './services/cringe-management.service';
     PostSchedulerService,
     SettingsService,
     CringeManagementService,
+    DeduplicationService,
   ],
 })
 export class BotModule {

@@ -17,8 +17,9 @@ import {PostManagementModule} from './modules/post-management/post-management.mo
 import {PostSchedulerEntity} from './modules/bot/entities/post-scheduler.entity';
 import {CronModule} from './modules/cron/cron.module';
 import {ScheduleModule} from '@nestjs/schedule';
-import {SettingsEntity} from "./modules/bot/entities/settings.entity";
-import {CringePostEntity} from "./modules/bot/entities/cringe-post.entity";
+import {SettingsEntity} from './modules/bot/entities/settings.entity';
+import {CringePostEntity} from './modules/bot/entities/cringe-post.entity';
+import {PublishedPostHashesEntity} from "./modules/bot/entities/published-post-hashes.entity";
 
 @Module({
   imports: [
@@ -43,7 +44,8 @@ import {CringePostEntity} from "./modules/bot/entities/cringe-post.entity";
           ObservatoryPostEntity,
           PostSchedulerEntity,
           SettingsEntity,
-          CringePostEntity
+          CringePostEntity,
+          PublishedPostHashesEntity,
         ],
         synchronize: true,
         extra: configService.useSSL

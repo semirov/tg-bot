@@ -229,10 +229,8 @@ export class ClientBaseService implements OnModuleInit {
     }
 
     if (await this.isPostWithLinks(event)) {
-      console.log('is post with link', event?.message?.message);
       return;
     }
-    console.log('is normal post');
 
     setTimeout(
       () => event.message.forwardTo(bigInt(this.baseConfigService.observerChannel)),

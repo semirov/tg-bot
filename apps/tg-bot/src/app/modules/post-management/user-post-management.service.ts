@@ -18,6 +18,7 @@ import {
 } from '../bot/services/post-scheduler.service';
 import {SettingsService} from '../bot/services/settings.service';
 import {CringeManagementService} from '../bot/services/cringe-management.service';
+import {DeduplicationService} from '../bot/services/deduplication.service';
 
 export class UserPostManagementService implements OnModuleInit {
   constructor(
@@ -27,7 +28,8 @@ export class UserPostManagementService implements OnModuleInit {
     private userRequestService: UserRequestService,
     private postSchedulerService: PostSchedulerService,
     private settingsService: SettingsService,
-    private cringeManagementService: CringeManagementService
+    private cringeManagementService: CringeManagementService,
+    private deduplicationService: DeduplicationService
   ) {
   }
 
@@ -110,7 +112,25 @@ export class UserPostManagementService implements OnModuleInit {
     const isLastRequestMoreThanMinuteAgo = await this.isLastRequestMoreThanMinuteAgo(ctx);
 
     if (!isLastRequestMoreThanMinuteAgo) {
-      await ctx.reply('Предлагать мемы можно не чаще чем раз в минуту');
+      await ctx.reply('Предлагать мемы можно не чаще чем раз в минуту ⏳');
+      return;
+    }
+
+    const hash = await this.deduplicationService.getPostImageHash(ctx?.message?.photo);
+    const duplicates = await this.deduplicationService.checkDuplicate(hash);
+    if (duplicates.some((duplicate) => duplicate.distance >= 0.5)) {
+      const [duplicate] = duplicates;
+      await ctx.reply(
+        'Жаль, но такой мем уже публиковался 😏\n\n' +
+        'Он смешной, но мы не можем его опубликовать еще раз, попробуй предложить что-нибудь другое 😉\n\n\n' +
+        'Если ты считаешь что произошло чудовищное недоразумение\nнажми /ask_admin и напиши об этом'
+      );
+      await this.bot.api.forwardMessage(
+        ctx.from.id,
+        this.baseConfigService.memeChanelId,
+        duplicate.memePostId
+      );
+      ctx.session.lastPublishedAt = null;
       return;
     }
 
@@ -125,12 +145,13 @@ export class UserPostManagementService implements OnModuleInit {
       first_name,
       last_name,
       username ? `@${username}` : null,
-      '\n#предложка'
-    ].filter(v => !!v).join(' ');
-    await this.bot.api.sendMessage(
-      this.baseConfigService.userRequestMemeChannel,
-      text, {disable_notification: true}
-    );
+      '\n#предложка',
+    ]
+      .filter((v) => !!v)
+      .join(' ');
+    await this.bot.api.sendMessage(this.baseConfigService.userRequestMemeChannel, text, {
+      disable_notification: true,
+    });
     const message = await ctx.api.copyMessage(
       this.baseConfigService.userRequestMemeChannel,
       ctx.message.chat.id,
@@ -201,9 +222,7 @@ export class UserPostManagementService implements OnModuleInit {
       autoAnswer: false,
     })
       .text('Кринж', async (ctx) => this.onPublishActions(ctx, PublicationModesEnum.NIGHT_CRINGE))
-      .text('Сейчас', async (ctx) =>
-        this.onPublishActions(ctx, PublicationModesEnum.NOW_SILENT)
-      )
+      .text('Сейчас', async (ctx) => this.onPublishActions(ctx, PublicationModesEnum.NOW_SILENT))
       .row()
       .text('Ночью', async (ctx) => this.onPublishActions(ctx, PublicationModesEnum.NEXT_NIGHT))
       .text('Утром', async (ctx) => this.onPublishActions(ctx, PublicationModesEnum.NEXT_MORNING))
@@ -354,12 +373,17 @@ export class UserPostManagementService implements OnModuleInit {
       return;
     }
 
+    const imageHash = await this.deduplicationService.getPostImageHash(
+      ctx?.callbackQuery?.message?.photo
+    );
+
     const publishContext: ScheduledPostContextInterface = {
       mode,
       requestChannelMessageId: ctx.callbackQuery.message.message_id,
       processedByModerator: ctx.callbackQuery.from.id,
       caption: ctx.callbackQuery?.message?.caption,
       isUserPost: true,
+      hash: imageHash,
     };
 
     switch (mode) {
@@ -458,6 +482,11 @@ export class UserPostManagementService implements OnModuleInit {
         {memeChannelMessageId: publishedMessage.message_id}
       );
     }
+
+    await this.deduplicationService.createPublishedPostHash(
+      publishContext.hash,
+      publishedMessage.message_id
+    );
   }
 
   private async publishNightCringeScheduled(
