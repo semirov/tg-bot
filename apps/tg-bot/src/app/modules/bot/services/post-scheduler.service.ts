@@ -13,6 +13,7 @@ export interface ScheduledPostContextInterface {
   processedByModerator: number;
   caption?: string;
   isUserPost: boolean;
+  hash: string;
 }
 
 @Injectable()
@@ -57,6 +58,7 @@ export class PostSchedulerService {
       caption: context.caption,
       isPublished: false,
       isUserPost: context.isUserPost,
+      hash: context.hash,
     });
 
     await this.repository.save(scheduledPost, {transaction: true});

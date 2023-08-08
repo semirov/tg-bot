@@ -20,6 +20,7 @@ import {
 import {format} from 'date-fns';
 import {SettingsService} from '../../bot/services/settings.service';
 import {CringeManagementService} from '../../bot/services/cringe-management.service';
+import {DeduplicationService} from '../../bot/services/deduplication.service';
 
 @Injectable()
 export class ObservatoryService implements OnModuleInit {
@@ -33,7 +34,8 @@ export class ObservatoryService implements OnModuleInit {
     private observatoryPostRepository: Repository<ObservatoryPostEntity>,
     private postSchedulerService: PostSchedulerService,
     private settingsService: SettingsService,
-    private cringeManagementService: CringeManagementService
+    private cringeManagementService: CringeManagementService,
+    private deduplicationService: DeduplicationService
   ) {
   }
 
@@ -50,6 +52,12 @@ export class ObservatoryService implements OnModuleInit {
 
   private onNewObservatoryPost() {
     this.clientBaseService.observerChannelPost$.subscribe(async (ctx) => {
+      const imageHash = await this.deduplicationService.getPostImageHash(ctx?.channelPost?.photo);
+      const duplicates = await this.deduplicationService.checkDuplicate(imageHash);
+      // если есть дубликат с похожестью больше 0.5 - выкидываем пост
+      if (duplicates.some(duplicate => duplicate.distance >= 0.5)) {
+        return;
+      }
       const message = await ctx.api.copyMessage(
         this.baseConfigService.userRequestMemeChannel,
         ctx.channelPost.sender_chat.id,
@@ -117,12 +125,16 @@ export class ObservatoryService implements OnModuleInit {
       return;
     }
 
+    const imageHash = await this.deduplicationService.getPostImageHash(ctx?.callbackQuery?.message?.photo);
+    const duplicates = await this.deduplicationService.checkDuplicate(imageHash);
+
     const publishContext: ScheduledPostContextInterface = {
       mode,
       requestChannelMessageId: ctx.callbackQuery.message.message_id,
       processedByModerator: ctx.callbackQuery.from.id,
       caption: ctx.callbackQuery?.message?.caption,
       isUserPost: false,
+      hash: imageHash,
     };
 
     switch (mode) {
@@ -187,6 +199,11 @@ export class ObservatoryService implements OnModuleInit {
         {memeChannelMessageId: publishedMessage.message_id}
       );
     }
+
+    await this.deduplicationService.createPublishedPostHash(
+      publishContext.hash,
+      publishedMessage.message_id
+    );
   }
 
   private async publishNightCringeScheduled(

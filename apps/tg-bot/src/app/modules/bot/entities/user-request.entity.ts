@@ -46,4 +46,5 @@ export class UserRequestEntity {
 
   @Column('timestamptz', {default: 'NOW'})
   createdAt: Date;
+
 }

@@ -81,12 +81,10 @@ export class UserRequestService {
   }
 
   public async username(ctx: BotContext): Promise<string> {
-    console.log(ctx);
     const message = await this.repository.findOne({
       where: {userRequestChannelMessageId: ctx.message.message_id},
       relations: {user: true},
     });
-    console.log(message);
 
     return message.user.username;
   }

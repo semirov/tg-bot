@@ -25,8 +25,12 @@ export class SettingsService {
   }
 
   public async channelLinkUrl(): Promise<string> {
+    const channelInfo = await this.bot.api.getChat(this.baseConfigService.memeChanelId);
+    const channelLink = channelInfo['username']
+      ? `https://t.me/${channelInfo['username']}`
+      : channelInfo['invite_link'];
     const channelSettings = await this.channelSettings();
-    return channelSettings?.joinLink;
+    return channelSettings?.joinLink || channelLink;
   }
 
   public async cringeChannelHtmlLink(): Promise<string> {
