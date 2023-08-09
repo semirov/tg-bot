@@ -6,9 +6,9 @@ services:
     container_name: ha_pg_database
     image: postgres
     environment:
-      - POSTGRES_USER=ha_admin
-      - POSTGRES_DB=telegram_bot
-      - POSTGRES_PASSWORD=ha_admin
+      - POSTGRES_USER=postgress
+      - POSTGRES_DB=postgress
+      - POSTGRES_PASSWORD=postgress
       - TZ=GMT+3
       - POSTGRES_EXTENSIONS=pg_trgm
     ports:

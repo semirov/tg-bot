@@ -1,10 +1,14 @@
 import {Injectable} from '@nestjs/common';
-import {Interval} from '@nestjs/schedule';
-import {PostSchedulerService, ScheduledPostContextInterface} from '../../bot/services/post-scheduler.service';
+import {Cron, Interval} from '@nestjs/schedule';
+import {
+  PostSchedulerService,
+  ScheduledPostContextInterface,
+} from '../../bot/services/post-scheduler.service';
 import {UserPostManagementService} from '../../post-management/user-post-management.service';
-import {ObservatoryService} from "../../observatory/services/observatory.service";
-import {CringeManagementService} from "../../bot/services/cringe-management.service";
-import {PublicationModesEnum} from "../../post-management/constants/publication-modes.enum";
+import {ObservatoryService} from '../../observatory/services/observatory.service';
+import {CringeManagementService} from '../../bot/services/cringe-management.service';
+import {PublicationModesEnum} from '../../post-management/constants/publication-modes.enum';
+import {MonthlyStatService} from './monthly-stat.service';
 
 @Injectable()
 export class CronService {
@@ -12,7 +16,8 @@ export class CronService {
     private postSchedulerService: PostSchedulerService,
     private userPostManagementService: UserPostManagementService,
     private observatoryService: ObservatoryService,
-    private cringeManagementService: CringeManagementService
+    private cringeManagementService: CringeManagementService,
+    private monthlyStatService: MonthlyStatService
   ) {
   }
 
@@ -20,6 +25,11 @@ export class CronService {
   async handleCron() {
     await this.handleNextScheduledPost();
     await this.tryToMoveCringe();
+  }
+
+  @Cron('0 17 9 * *')
+  async onCronTime(): Promise<void> {
+    this.monthlyStatService.publishMonthlyStatistic();
   }
 
   async handleNextScheduledPost(): Promise<void> {
