@@ -512,6 +512,10 @@ export class UserPostManagementService implements OnModuleInit {
   private async publishScheduled(publishContext: ScheduledPostContextInterface): Promise<void> {
     const publishDate = await this.postSchedulerService.addPostToSchedule(publishContext);
 
+    if (!publishDate) {
+      return;
+    }
+
     const dateFormatted = format(
       PostSchedulerService.formatToMsk(publishDate),
       'dd.LL.yy в ~HH:mm'

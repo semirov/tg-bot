@@ -50,6 +50,13 @@ export class PostSchedulerService {
   public async addPostToSchedule(context: ScheduledPostContextInterface): Promise<Date> {
     const publishDate = await this.nextScheduledTimeByMode(context.mode);
 
+    const count = await this.repository.count({
+      where: {requestChannelMessageId: context.requestChannelMessageId},
+    });
+    if (count) {
+      return;
+    }
+
     const scheduledPost = await this.repository.create({
       publishDate: publishDate,
       requestChannelMessageId: context.requestChannelMessageId,
@@ -124,11 +131,11 @@ export class PostSchedulerService {
 
     // ищем максимальный интервал
     const maxInterval = intervalsArray.reduce(function (prev, current) {
-      return (prev.diff > current.diff) ? prev : current
+      return prev.diff > current.diff ? prev : current;
     });
 
     // возвращаем дату публикации посреди максимального интервала времени
-    return (add(maxInterval.left, {minutes: (maxInterval.diff / 2)}));
+    return add(maxInterval.left, {minutes: maxInterval.diff / 2});
   }
 
   async markPostAsPublished(id: number): Promise<any> {

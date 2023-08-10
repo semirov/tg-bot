@@ -46,7 +46,7 @@ export class UserService {
   public getUsersForPostModerate(): Promise<Pick<UserEntity, 'id'>[]> {
     return this.userRepository.find({
       select: {id: true},
-      where: {canBeModeratePosts: true, isBanned: false, isModerator: false, isBot: false},
+      where: {canBeModeratePosts: true, isBanned: false, isBot: false},
       order: {lastActivity: 'DESC'},
     });
   }

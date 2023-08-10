@@ -67,8 +67,10 @@ export class UserModeratedPostService {
     );
     try {
       await ctx.editMessageReplyMarkup({reply_markup: this.endModerateKeyboard});
-      await ctx.reply('Жаль 😞\nЕсли снова захочешь оценивать мемы, то можешь включить это в настройках\n' +
-        '"Меню" -> "Настройки" -> "Не оцениваю мемы"\n');
+      await ctx.reply(
+        'Жаль 😞\nЕсли снова захочешь оценивать мемы, то можешь включить это в настройках\n' +
+        '"Меню" -> "Настройки" -> "Не оцениваю мемы"\n'
+      );
     } catch (e) {
       /**/
     }
@@ -88,6 +90,7 @@ export class UserModeratedPostService {
       caption: publishContext.caption,
       moderatedTo: add(new Date(), {hours: 2}),
       moderatedUsersCount: users.length,
+      hash: publishContext.hash,
     });
     this.processUsersModerate(users, ctx, publishContext);
     return users.length;
@@ -108,14 +111,14 @@ export class UserModeratedPostService {
     user: Pick<UserEntity, 'id'>,
     publishContext: ScheduledPostContextInterface
   ): Promise<void> {
-    await ctx.api.sendMessage(
-      user.id,
-      'Привет!\nОцени пожалуйста этот мем 😌\n' +
-      'Админ не смог определиться смешной он или нет, поэтому просим помощи у тебя\n' +
-      'Если не хочешь чтобы тебя просили оценивать мемы, нажми кнопку "Не хочу оценивать мемы" ' +
-      'и больше таких сообщений не будет'
-    );
     try {
+      await ctx.api.sendMessage(
+        user.id,
+        'Привет!\nОцени пожалуйста этот мем 😌\n' +
+        'Админ не смог определиться смешной он или нет, поэтому просим помощи у тебя\n' +
+        'Если не хочешь чтобы тебя просили оценивать мемы, нажми кнопку "Не хочу оценивать мемы" ' +
+        'и больше таких сообщений не будет'
+      );
       const message = await ctx.api.copyMessage(
         user.id,
         this.baseConfigService.userRequestMemeChannel,
@@ -130,9 +133,9 @@ export class UserModeratedPostService {
       });
     } catch (e) {
       await this.userService.changeUserModeratedMode(ctx.from.id, false);
+    } finally {
+      await firstValueFrom(timer(500));
     }
-
-    await firstValueFrom(timer(500));
   }
 
   private async getModeratedContextByCtx(ctx: BotContext): Promise<UserModeratedPostEntity> {
@@ -165,13 +168,21 @@ export class UserModeratedPostService {
         dislikes,
       }
     );
+    await this.userMessageModeratedPostEntity.update(
+      {
+        userId: ctx.callbackQuery.from.id,
+        requestChannelMessageId: moderatedMessage.requestChannelMessageId,
+      },
+      {voted: true}
+    );
     if (likes > dislikes && votesCount >= +usersCount / 2) {
+      const caption = this.getCaptionByUserModeratedPost(moderatedMessage);
       await this.userModeratedPostEntity.update({id: moderatedMessage.id}, {isApproved: true});
       this.userModeratedPostSubject.next({
         mode: moderatedMessage.mode,
         requestChannelMessageId: moderatedMessage.requestChannelMessageId,
         processedByModerator: moderatedMessage.processedByModerator,
-        caption: moderatedMessage.caption,
+        caption,
         isUserPost: false,
         hash: moderatedMessage.hash,
       });
@@ -198,17 +209,29 @@ export class UserModeratedPostService {
     }
 
     if (+post.likes >= +post.dislikes || +post.dislikes === 0) {
+      const caption = this.getCaptionByUserModeratedPost(post);
       await this.userModeratedPostEntity.update({id: post.id}, {isApproved: true});
       this.userModeratedPostSubject.next({
         mode: post.mode,
         requestChannelMessageId: post.requestChannelMessageId,
         processedByModerator: post.processedByModerator,
-        caption: post.caption,
+        caption,
         isUserPost: false,
         hash: post.hash,
       });
     } else {
       await this.userModeratedPostEntity.update({id: post.id}, {isRejected: true});
     }
+  }
+
+  private getCaptionByUserModeratedPost(post: UserModeratedPostEntity): string {
+    let text = '#одобрено';
+    if (+post.likes) {
+      text += ` ${post.likes} 👍`
+    }
+    if (+post.dislikes) {
+      text += ` ${post.likes} 👎`
+    }
+    return text;
   }
 }

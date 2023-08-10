@@ -13,4 +13,7 @@ export class UserMessageModeratedPostEntity {
 
   @Column('bigint', {default: 0})
   requestChannelMessageId: number;
+
+  @Column('boolean', {default: false})
+  voted: boolean;
 }
