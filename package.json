@@ -7,8 +7,8 @@
     "start:tg-bot": "nx serve tg-bot",
     "build": "nx build",
     "test": "nx test",
-    "docker:build": "docker build -t cr.yandex/crp8g8jm3p8d780a8hk3/telegram-bot:0.5.5 .",
-    "docker:push": "docker push cr.yandex/crp8g8jm3p8d780a8hk3/telegram-bot:0.5.5",
+    "docker:build": "docker build -t cr.yandex/crp8g8jm3p8d780a8hk3/telegram-bot:0.5.6 .",
+    "docker:push": "docker push cr.yandex/crp8g8jm3p8d780a8hk3/telegram-bot:0.5.6",
     "docker:publish": "npm run docker:build && npm run docker:push"
   },
   "private": true,

@@ -177,10 +177,10 @@ export class ObservatoryService implements OnModuleInit {
     let caption = '';
     if (publishContext.mode === PublicationModesEnum.NIGHT_CRINGE) {
       const channelHtmlLink = await this.settingsService.cringeChannelHtmlLink();
-      caption += channelHtmlLink;
+      caption += [publishContext.caption, channelHtmlLink].filter(item => !!item).join('\n');
     } else {
       const channelHtmlLink = await this.settingsService.channelHtmlLinkIfPrivate();
-      caption += channelHtmlLink;
+      caption += [publishContext.caption, channelHtmlLink].filter(item => !!item).join('\n');
     }
 
     const publishedMessage = await this.bot.api.copyMessage(

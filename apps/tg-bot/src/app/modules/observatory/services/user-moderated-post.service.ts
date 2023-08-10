@@ -102,36 +102,36 @@ export class UserModeratedPostService {
     publishContext: ScheduledPostContextInterface
   ) {
     for (const user of users) {
-      await this.processUserModerateMessage(ctx, user, publishContext);
+      await this.processUserModerateMessage(ctx, user.id, publishContext);
     }
   }
 
   private async processUserModerateMessage(
     ctx: BotContext,
-    user: Pick<UserEntity, 'id'>,
+    userId: number,
     publishContext: ScheduledPostContextInterface
   ): Promise<void> {
     try {
       await ctx.api.sendMessage(
-        user.id,
+        userId,
         'Привет!\nОцени пожалуйста этот мем 😌\n' +
         'Если не хочешь чтобы тебя просили оценивать мемы, нажми кнопку "Не хочу оценивать мемы" ' +
         'и больше таких сообщений не будет'
       );
       const message = await ctx.api.copyMessage(
-        user.id,
+        userId,
         this.baseConfigService.userRequestMemeChannel,
         publishContext.requestChannelMessageId,
         {reply_markup: this.moderatePostMenu}
       );
 
       await this.userMessageModeratedPostEntity.insert({
-        userId: user.id,
+        userId,
         userMessageId: message.message_id,
         requestChannelMessageId: publishContext.requestChannelMessageId,
       });
     } catch (e) {
-      await this.userService.changeUserModeratedMode(ctx.from.id, false);
+      await this.userService.changeUserModeratedMode(userId, false);
     } finally {
       await firstValueFrom(timer(500));
     }
@@ -174,8 +174,8 @@ export class UserModeratedPostService {
       },
       {voted: true}
     );
-    if (likes > dislikes && votesCount >= +usersCount / 2) {
-      const caption = this.getCaptionByUserModeratedPost(moderatedMessage);
+    if (likes >= dislikes && votesCount >= +usersCount / 2) {
+      const caption = this.getCaptionByUserModeratedPost(likes, dislikes);
       await this.userModeratedPostEntity.update({id: moderatedMessage.id}, {isApproved: true});
       this.userModeratedPostSubject.next({
         mode: moderatedMessage.mode,
@@ -208,7 +208,7 @@ export class UserModeratedPostService {
     }
 
     if (+post.likes >= +post.dislikes || +post.dislikes === 0) {
-      const caption = this.getCaptionByUserModeratedPost(post);
+      const caption = this.getCaptionByUserModeratedPost(+post.likes, +post.dislikes);
       await this.userModeratedPostEntity.update({id: post.id}, {isApproved: true});
       this.userModeratedPostSubject.next({
         mode: post.mode,
@@ -223,13 +223,13 @@ export class UserModeratedPostService {
     }
   }
 
-  private getCaptionByUserModeratedPost(post: UserModeratedPostEntity): string {
-    let text = '#одобрено';
-    if (+post.likes) {
-      text += ` ${post.likes} 👍`
+  private getCaptionByUserModeratedPost(likes: number, dislikes: number): string {
+    let text = '#одобрено_подписчиками';
+    if (likes) {
+      text += `  👍 ${likes}`
     }
-    if (+post.dislikes) {
-      text += ` ${post.likes} 👎`
+    if (dislikes) {
+      text += `   👎 ${dislikes}`
     }
     return text;
   }
