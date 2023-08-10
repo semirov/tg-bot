@@ -90,6 +90,7 @@ export class UserModeratedPostService {
       caption: publishContext.caption,
       moderatedTo: add(new Date(), {hours: 2}),
       moderatedUsersCount: users.length,
+      hash: publishContext.hash,
     });
     this.processUsersModerate(users, ctx, publishContext);
     return users.length;
@@ -167,13 +168,21 @@ export class UserModeratedPostService {
         dislikes,
       }
     );
+    await this.userMessageModeratedPostEntity.update(
+      {
+        userId: ctx.callbackQuery.from.id,
+        requestChannelMessageId: moderatedMessage.requestChannelMessageId,
+      },
+      {voted: true}
+    );
     if (likes > dislikes && votesCount >= +usersCount / 2) {
+      const caption = this.getCaptionByUserModeratedPost(moderatedMessage);
       await this.userModeratedPostEntity.update({id: moderatedMessage.id}, {isApproved: true});
       this.userModeratedPostSubject.next({
         mode: moderatedMessage.mode,
         requestChannelMessageId: moderatedMessage.requestChannelMessageId,
         processedByModerator: moderatedMessage.processedByModerator,
-        caption: moderatedMessage.caption,
+        caption,
         isUserPost: false,
         hash: moderatedMessage.hash,
       });
@@ -200,17 +209,29 @@ export class UserModeratedPostService {
     }
 
     if (+post.likes >= +post.dislikes || +post.dislikes === 0) {
+      const caption = this.getCaptionByUserModeratedPost(post);
       await this.userModeratedPostEntity.update({id: post.id}, {isApproved: true});
       this.userModeratedPostSubject.next({
         mode: post.mode,
         requestChannelMessageId: post.requestChannelMessageId,
         processedByModerator: post.processedByModerator,
-        caption: post.caption,
+        caption,
         isUserPost: false,
         hash: post.hash,
       });
     } else {
       await this.userModeratedPostEntity.update({id: post.id}, {isRejected: true});
     }
+  }
+
+  private getCaptionByUserModeratedPost(post: UserModeratedPostEntity): string {
+    let text = '#одобрено';
+    if (+post.likes) {
+      text += ` ${post.likes} 👍`
+    }
+    if (+post.dislikes) {
+      text += ` ${post.likes} 👎`
+    }
+    return text;
   }
 }

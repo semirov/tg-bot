@@ -241,6 +241,9 @@ export class ObservatoryService implements OnModuleInit {
 
   private async publishScheduled(publishContext: ScheduledPostContextInterface): Promise<void> {
     const publishDate = await this.postSchedulerService.addPostToSchedule(publishContext);
+    if (!publishDate) {
+      return;
+    }
     const user = await this.userService.repository.findOne({
       where: {id: publishContext.processedByModerator},
     });
@@ -296,7 +299,6 @@ export class ObservatoryService implements OnModuleInit {
       mode,
       requestChannelMessageId: ctx.callbackQuery.message.message_id,
       processedByModerator: ctx.callbackQuery.from.id,
-      caption: ctx.callbackQuery?.message?.caption,
       isUserPost: false,
       hash: imageHash,
     };
