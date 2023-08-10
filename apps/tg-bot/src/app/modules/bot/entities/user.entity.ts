@@ -62,6 +62,9 @@ export class UserEntity {
   @Column('timestamp', {default: 'NOW'})
   createdAt: Date;
 
+  @Column('boolean', {default: true})
+  canBeModeratePosts: boolean;
+
   @OneToMany(() => UserRequestEntity, (postRequest) => postRequest.user)
   postRequests: UserRequestEntity[];
 

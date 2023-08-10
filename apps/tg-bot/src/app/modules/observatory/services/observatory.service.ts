@@ -21,6 +21,7 @@ import {format} from 'date-fns';
 import {SettingsService} from '../../bot/services/settings.service';
 import {CringeManagementService} from '../../bot/services/cringe-management.service';
 import {DeduplicationService} from '../../bot/services/deduplication.service';
+import {UserModeratedPostService} from './user-moderated-post.service';
 
 @Injectable()
 export class ObservatoryService implements OnModuleInit {
@@ -35,7 +36,8 @@ export class ObservatoryService implements OnModuleInit {
     private postSchedulerService: PostSchedulerService,
     private settingsService: SettingsService,
     private cringeManagementService: CringeManagementService,
-    private deduplicationService: DeduplicationService
+    private deduplicationService: DeduplicationService,
+    private userModeratedPostService: UserModeratedPostService
   ) {
   }
 
@@ -45,9 +47,17 @@ export class ObservatoryService implements OnModuleInit {
   private observatoryPostMenu: Menu<BotContext>;
 
   public onModuleInit(): void {
+    this.bot.use(this.userModeratedPostService.buildUserModeratePost());
     this.onNewObservatoryPost();
+    this.onNewUserModeratedPost();
     this.waitDeleteObserverPost();
     this.buildObservatoryPostMenu();
+  }
+
+  private onNewUserModeratedPost() {
+    this.userModeratedPostService.userModeratedPost$.subscribe(async (ctx) => {
+      await this.publishWithContext(ctx.mode, ctx);
+    });
   }
 
   private onNewObservatoryPost() {
@@ -55,7 +65,7 @@ export class ObservatoryService implements OnModuleInit {
       const imageHash = await this.deduplicationService.getPostImageHash(ctx?.channelPost?.photo);
       const duplicates = await this.deduplicationService.checkDuplicate(imageHash);
       // если есть дубликат с похожестью больше 0.5 - выкидываем пост
-      if (duplicates.some(duplicate => duplicate.distance >= 0.5)) {
+      if (duplicates.some((duplicate) => duplicate.distance >= 0.5)) {
         return;
       }
       const message = await ctx.api.copyMessage(
@@ -88,46 +98,53 @@ export class ObservatoryService implements OnModuleInit {
           await this.rejectObserverPost(ctx);
         }
       })
+      .row()
+      .text('На модерацию пользователям', async (ctx) => {
+        if (this.userService.checkPermission(ctx, UserPermissionEnum.IS_BASE_MODERATOR)) {
+          ctx.menu.nav(ObservatoryPostMenusEnum.USER_MODERATE_POST);
+        }
+      })
       .row();
 
     const publishSubmenu = new Menu<BotContext>(ObservatoryPostMenusEnum.OBSERVATORY_PUBLICATION, {
       autoAnswer: false,
     })
-      .text('Кринж', async (ctx) =>
-        this.publishObservatoryPost(ctx, PublicationModesEnum.NIGHT_CRINGE)
-      )
-      .text('Сейчас', async (ctx) =>
-        this.publishObservatoryPost(ctx, PublicationModesEnum.NOW_SILENT)
-      )
+      .text('Кринж', async (ctx) => this.publishPost(ctx, PublicationModesEnum.NIGHT_CRINGE))
+      .text('Сейчас', async (ctx) => this.publishPost(ctx, PublicationModesEnum.NOW_SILENT))
       .row()
-      .text('Ночью', async (ctx) =>
-        this.publishObservatoryPost(ctx, PublicationModesEnum.NEXT_NIGHT)
-      )
-      .text('Утром', async (ctx) =>
-        this.publishObservatoryPost(ctx, PublicationModesEnum.NEXT_MORNING)
-      )
-      .text('Днем', async (ctx) =>
-        this.publishObservatoryPost(ctx, PublicationModesEnum.NEXT_MIDDAY)
-      )
-      .text('Вечером', async (ctx) =>
-        this.publishObservatoryPost(ctx, PublicationModesEnum.NEXT_EVENING)
-      )
+      .text('Ночью', async (ctx) => this.publishPost(ctx, PublicationModesEnum.NEXT_NIGHT))
+      .text('Утром', async (ctx) => this.publishPost(ctx, PublicationModesEnum.NEXT_MORNING))
+      .text('Днем', async (ctx) => this.publishPost(ctx, PublicationModesEnum.NEXT_MIDDAY))
+      .text('Вечером', async (ctx) => this.publishPost(ctx, PublicationModesEnum.NEXT_EVENING))
+      .row()
+      .text('Назад', (ctx) => ctx.menu.nav(ObservatoryPostMenusEnum.POST_MENU));
+
+    const userModeratePost = new Menu<BotContext>(ObservatoryPostMenusEnum.USER_MODERATE_POST, {
+      autoAnswer: false,
+    })
+      .text('Сейчас', async (ctx) => this.moderateViaUsers(ctx, PublicationModesEnum.NOW_SILENT))
+      .row()
+      .text('Ночью', async (ctx) => this.moderateViaUsers(ctx, PublicationModesEnum.NEXT_NIGHT))
+      .text('Утром', async (ctx) => this.moderateViaUsers(ctx, PublicationModesEnum.NEXT_MORNING))
+      .text('Днем', async (ctx) => this.moderateViaUsers(ctx, PublicationModesEnum.NEXT_MIDDAY))
+      .text('Вечером', async (ctx) => this.moderateViaUsers(ctx, PublicationModesEnum.NEXT_EVENING))
       .row()
       .text('Назад', (ctx) => ctx.menu.nav(ObservatoryPostMenusEnum.POST_MENU));
 
     this.observatoryPostMenu.register(publishSubmenu);
+    this.observatoryPostMenu.register(userModeratePost);
 
     this.bot.use(this.observatoryPostMenu);
   }
 
-  private async publishObservatoryPost(ctx: BotContext, mode: PublicationModesEnum): Promise<void> {
+  private async publishPost(ctx: BotContext, mode: PublicationModesEnum): Promise<void> {
     if (!this.userService.checkPermission(ctx, UserPermissionEnum.ALLOW_PUBLISH_TO_CHANNEL)) {
       return;
     }
 
-    const imageHash = await this.deduplicationService.getPostImageHash(ctx?.callbackQuery?.message?.photo);
-    const duplicates = await this.deduplicationService.checkDuplicate(imageHash);
-
+    const imageHash = await this.deduplicationService.getPostImageHash(
+      ctx?.callbackQuery?.message?.photo
+    );
     const publishContext: ScheduledPostContextInterface = {
       mode,
       requestChannelMessageId: ctx.callbackQuery.message.message_id,
@@ -136,7 +153,13 @@ export class ObservatoryService implements OnModuleInit {
       isUserPost: false,
       hash: imageHash,
     };
+    return this.publishWithContext(mode, publishContext);
+  }
 
+  private publishWithContext(
+    mode: PublicationModesEnum,
+    publishContext: ScheduledPostContextInterface
+  ) {
     switch (mode) {
       case PublicationModesEnum.NOW_SILENT:
         return this.onPublishNow(publishContext);
@@ -263,5 +286,29 @@ export class ObservatoryService implements OnModuleInit {
         await ctx.deleteMessage();
       }
     });
+  }
+
+  private async moderateViaUsers(ctx: BotContext, mode: PublicationModesEnum): Promise<void> {
+    const imageHash = await this.deduplicationService.getPostImageHash(
+      ctx?.callbackQuery?.message?.photo
+    );
+    const publishContext: ScheduledPostContextInterface = {
+      mode,
+      requestChannelMessageId: ctx.callbackQuery.message.message_id,
+      processedByModerator: ctx.callbackQuery.from.id,
+      caption: ctx.callbackQuery?.message?.caption,
+      isUserPost: false,
+      hash: imageHash,
+    };
+
+    const count = await this.userModeratedPostService.moderateViaUsers(ctx, publishContext);
+    const inlineKeyboard = new InlineKeyboard().text(`👷 Модерируют пользователи (${count})`).row();
+
+    await this.bot.api.editMessageReplyMarkup(
+      this.baseConfigService.userRequestMemeChannel,
+      publishContext.requestChannelMessageId,
+      {reply_markup: inlineKeyboard}
+    );
+
   }
 }
