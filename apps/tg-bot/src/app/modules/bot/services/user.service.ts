@@ -17,12 +17,16 @@ export class UserService {
     return this.userRepository;
   }
 
+  public async changeUserModeratedMode(id: number, canBeModeratePosts: boolean): Promise<void> {
+    await this.userRepository.update({id}, {canBeModeratePosts});
+  }
+
   public findById(id: number): Promise<UserEntity | undefined> {
     return this.userRepository.findOne({where: {id}});
   }
 
   public getModerators(): Promise<UserEntity[]> {
-    return this.userRepository.find({where: {isModerator: true, isBanned: false}})
+    return this.userRepository.find({where: {isModerator: true, isBanned: false}});
   }
 
   public updateUserLastActivity(ctx: BotContext): Promise<InsertResult> {
@@ -39,10 +43,15 @@ export class UserService {
     );
   }
 
-  public checkPermission(
-    ctx: BotContext,
-    permission: UserPermissionEnum
-  ): boolean {
+  public getUsersForPostModerate(): Promise<Pick<UserEntity, 'id'>[]> {
+    return this.userRepository.find({
+      select: {id: true},
+      where: {canBeModeratePosts: true, isBanned: false, isModerator: false, isBot: false},
+      order: {lastActivity: 'DESC'},
+    });
+  }
+
+  public checkPermission(ctx: BotContext, permission: UserPermissionEnum): boolean {
     if (ctx.config.isOwner) {
       return true;
     }
@@ -76,5 +85,4 @@ export class UserService {
         return false;
     }
   }
-
 }

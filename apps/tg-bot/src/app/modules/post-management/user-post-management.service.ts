@@ -158,7 +158,11 @@ export class UserPostManagementService implements OnModuleInit {
       ctx.message.message_id,
       {reply_markup: this.moderatedPostMenu, disable_notification: true}
     );
-
+    await this.bot.api.pinChatMessage(
+      this.baseConfigService.userRequestMemeChannel,
+      message.message_id,
+      {disable_notification: true}
+    );
     await this.userRequestService.repository.insert({
       user: user,
       isAnonymousPublishing: ctx.session.anonymousPublishing,
@@ -195,7 +199,7 @@ export class UserPostManagementService implements OnModuleInit {
             where: {userRequestChannelMessageId: ctx.callbackQuery.message.message_id},
             relations: {processedByModerator: true},
           });
-          return `✅ Одобрен (${message.processedByModerator.username})`;
+          return `✅ Опубликовать (${message.processedByModerator.username})`;
         },
         async (ctx) => {
           if (this.userService.checkPermission(ctx, UserPermissionEnum.ALLOW_PUBLISH_TO_CHANNEL)) {
@@ -241,6 +245,7 @@ export class UserPostManagementService implements OnModuleInit {
             where: {userRequestChannelMessageId: ctx.callbackQuery.message.message_id},
             relations: {processedByModerator: true},
           });
+          await ctx.unpinChatMessage(ctx.callbackQuery.message.message_id);
           return `👨 Отклонен ❌ (${message.processedByModerator.username})`;
         },
         async (ctx) => {
@@ -373,6 +378,7 @@ export class UserPostManagementService implements OnModuleInit {
       return;
     }
 
+    await ctx.unpinChatMessage(ctx.callbackQuery.message.message_id);
     const imageHash = await this.deduplicationService.getPostImageHash(
       ctx?.callbackQuery?.message?.photo
     );
@@ -416,6 +422,10 @@ export class UserPostManagementService implements OnModuleInit {
       const chatInfo = await this.bot.api.getChat(message.user.id);
       if (chatInfo['username']) {
         caption += `#предложка @${chatInfo['username']}\n`;
+      } else {
+        caption += `#предложка ${[chatInfo['first_name'], chatInfo['last_name']]
+          .filter((item) => !!item)
+          .join(' ')}\n`;
       }
     } else {
       caption += `#предложка\n`;

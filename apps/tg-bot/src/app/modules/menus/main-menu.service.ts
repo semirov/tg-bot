@@ -6,14 +6,16 @@ import {Bot, CommandContext} from 'grammy';
 import {BotContext} from '../bot/interfaces/bot-context.interface';
 import {AdminMenuService} from './admin-menu.service';
 import {ModeratorMenuService} from './moderator-menu.service';
-import {ConversationsEnum} from "../post-management/constants/conversations.enum";
+import {ConversationsEnum} from '../post-management/constants/conversations.enum';
+import {UserService} from '../bot/services/user.service';
 
 @Injectable()
 export class MainMenuService {
   constructor(
     @Inject(BOT) private bot: Bot<BotContext>,
     private adminMenuService: AdminMenuService,
-    private moderatorStartMenuService: ModeratorMenuService
+    private moderatorStartMenuService: ModeratorMenuService,
+    private userService: UserService
   ) {
   }
 
@@ -45,6 +47,16 @@ export class MainMenuService {
         }
       )
       .row()
+      .text(
+        (ctx) =>
+          ctx.session.canBeModeratePosts ? '👮 Оцениваю мемы' : '🙅 Не оцениваю мемы',
+        async (ctx) => {
+          ctx.session.canBeModeratePosts = !ctx.session.canBeModeratePosts;
+          await this.userService.changeUserModeratedMode(ctx.from.id, ctx.session.canBeModeratePosts);
+          ctx.menu.update();
+        }
+      )
+      .row()
       .back('Назад');
 
     menu.register(settings);
@@ -65,7 +77,9 @@ export class MainMenuService {
 
   public initStartMenu(): void {
     this.userStartMenu = this.buildStartUserMenu();
-    this.moderatorStartMenu = this.moderatorStartMenuService.buildStartModeratorMenu(this.userStartMenu);
+    this.moderatorStartMenu = this.moderatorStartMenuService.buildStartModeratorMenu(
+      this.userStartMenu
+    );
     this.adminStartMenu = this.adminMenuService.buildStartAdminMenu(
       this.userStartMenu,
       this.moderatorStartMenu

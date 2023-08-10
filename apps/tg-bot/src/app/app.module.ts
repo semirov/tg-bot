@@ -20,6 +20,8 @@ import {ScheduleModule} from '@nestjs/schedule';
 import {SettingsEntity} from './modules/bot/entities/settings.entity';
 import {CringePostEntity} from './modules/bot/entities/cringe-post.entity';
 import {PublishedPostHashesEntity} from "./modules/bot/entities/published-post-hashes.entity";
+import {UserModeratedPostEntity} from "./modules/observatory/entities/user-moderated-post.entity";
+import {UserMessageModeratedPostEntity} from "./modules/observatory/entities/user-message-moderated-post.entity";
 
 @Module({
   imports: [
@@ -46,6 +48,8 @@ import {PublishedPostHashesEntity} from "./modules/bot/entities/published-post-h
           SettingsEntity,
           CringePostEntity,
           PublishedPostHashesEntity,
+          UserModeratedPostEntity,
+          UserMessageModeratedPostEntity
         ],
         synchronize: true,
         extra: configService.useSSL

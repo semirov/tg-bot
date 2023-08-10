@@ -6,6 +6,7 @@ export type BotConfig = { config: { user: UserEntity; isOwner: boolean } };
 
 export interface SessionDataInterface {
   anonymousPublishing: boolean;
+  canBeModeratePosts: boolean;
   lastChangedModeratorId?: number;
   lastPublishedAt?: number;
 
