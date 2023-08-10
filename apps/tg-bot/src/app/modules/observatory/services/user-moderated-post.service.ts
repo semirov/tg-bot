@@ -115,19 +115,24 @@ export class UserModeratedPostService {
       'Если не хочешь чтобы тебя просили оценивать мемы, нажми кнопку "Не хочу оценивать мемы" ' +
       'и больше таких сообщений не будет'
     );
-    const message = await ctx.api.copyMessage(
-      user.id,
-      this.baseConfigService.userRequestMemeChannel,
-      publishContext.requestChannelMessageId,
-      {reply_markup: this.moderatePostMenu}
-    );
+    try {
+      const message = await ctx.api.copyMessage(
+        user.id,
+        this.baseConfigService.userRequestMemeChannel,
+        publishContext.requestChannelMessageId,
+        {reply_markup: this.moderatePostMenu}
+      );
 
-    await this.userMessageModeratedPostEntity.insert({
-      userId: user.id,
-      userMessageId: message.message_id,
-      requestChannelMessageId: publishContext.requestChannelMessageId,
-    });
-    await firstValueFrom(timer(5000));
+      await this.userMessageModeratedPostEntity.insert({
+        userId: user.id,
+        userMessageId: message.message_id,
+        requestChannelMessageId: publishContext.requestChannelMessageId,
+      });
+    } catch (e) {
+      await this.userService.changeUserModeratedMode(ctx.from.id, false);
+    }
+
+    await firstValueFrom(timer(500));
   }
 
   private async getModeratedContextByCtx(ctx: BotContext): Promise<UserModeratedPostEntity> {
