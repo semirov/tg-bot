@@ -67,8 +67,10 @@ export class UserModeratedPostService {
     );
     try {
       await ctx.editMessageReplyMarkup({reply_markup: this.endModerateKeyboard});
-      await ctx.reply('Жаль 😞\nЕсли снова захочешь оценивать мемы, то можешь включить это в настройках\n' +
-        '"Меню" -> "Настройки" -> "Не оцениваю мемы"\n');
+      await ctx.reply(
+        'Жаль 😞\nЕсли снова захочешь оценивать мемы, то можешь включить это в настройках\n' +
+        '"Меню" -> "Настройки" -> "Не оцениваю мемы"\n'
+      );
     } catch (e) {
       /**/
     }
@@ -108,14 +110,14 @@ export class UserModeratedPostService {
     user: Pick<UserEntity, 'id'>,
     publishContext: ScheduledPostContextInterface
   ): Promise<void> {
-    await ctx.api.sendMessage(
-      user.id,
-      'Привет!\nОцени пожалуйста этот мем 😌\n' +
-      'Админ не смог определиться смешной он или нет, поэтому просим помощи у тебя\n' +
-      'Если не хочешь чтобы тебя просили оценивать мемы, нажми кнопку "Не хочу оценивать мемы" ' +
-      'и больше таких сообщений не будет'
-    );
     try {
+      await ctx.api.sendMessage(
+        user.id,
+        'Привет!\nОцени пожалуйста этот мем 😌\n' +
+        'Админ не смог определиться смешной он или нет, поэтому просим помощи у тебя\n' +
+        'Если не хочешь чтобы тебя просили оценивать мемы, нажми кнопку "Не хочу оценивать мемы" ' +
+        'и больше таких сообщений не будет'
+      );
       const message = await ctx.api.copyMessage(
         user.id,
         this.baseConfigService.userRequestMemeChannel,
@@ -130,9 +132,9 @@ export class UserModeratedPostService {
       });
     } catch (e) {
       await this.userService.changeUserModeratedMode(ctx.from.id, false);
+    } finally {
+      await firstValueFrom(timer(500));
     }
-
-    await firstValueFrom(timer(500));
   }
 
   private async getModeratedContextByCtx(ctx: BotContext): Promise<UserModeratedPostEntity> {
