@@ -2,6 +2,7 @@
   "$schema": "./node_modules/nx/schemas/workspace-schema.json",
   "version": 2,
   "projects": {
-    "tg-bot": "apps/tg-bot"
+    "memes-bot": "apps/memes-bot",
+    "question-bot": "apps/question-bot"
   }
 }
