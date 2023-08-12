@@ -81,7 +81,11 @@ export class MainMenuService {
         const channelInfo = await ctx.api.getChat(channel.id);
         range
           .text(channelInfo['title'], async (ctx) => {
-            await ctx.api.copyMessage(channel.id, ctx.callbackQuery.from.id, ctx.callbackQuery.message.message_id);
+            await ctx.api.copyMessage(
+              channel.id,
+              ctx.callbackQuery.from.id,
+              ctx.callbackQuery.message.message_id
+            );
             await ctx.deleteMessage();
           })
           .row();
@@ -175,18 +179,34 @@ export class MainMenuService {
     ctx: BotContext
   ): Promise<void> {
     await ctx.reply(
-      'Напиши свой вопрос, он будет задан анонимно. Когда на него ответят, бот пришлет тебе ответ'
+      'Напиши свой вопрос, он будет задан анонимно. Когда на него ответят, бот пришлет тебе ответ\n' +
+      'Если передумал задавать вопрос, нажми /cancel'
     );
 
     let replyCtx: BotContext = null;
     while (!replyCtx?.message?.text) {
       replyCtx = await conversation.wait();
-      if (!replyCtx?.message?.text) {
-        await ctx.reply('Вопрос может содержать только текст');
+      if (replyCtx?.message?.text === '/cancel') {
+        await ctx.reply(
+          'Окей, вопрос не будет отправлен, можешь нажать /menu чтобы показать основное меню бота'
+        );
+        replyCtx = null;
+        return;
+      }
+      if (replyCtx?.message?.text?.includes('/start')) {
+        await ctx.reply(
+          'Перед тем как задавать новый вопрос, напиши предыдущий, если передумал задавать вопрос, нажми /cancel'
+        );
+        replyCtx = null;
+      } else if (!replyCtx?.message?.text) {
+        await ctx.reply(
+          'Вопрос может содержать только текст, если передумал задавать вопрос, нажми /cancel'
+        );
+        replyCtx = null;
       }
     }
 
-    await ctx.reply('Спасибо, твое сообщение будет передано!');
+    await ctx.reply('Спасибо, твой вопрос будет передан анонимно!');
 
     await conversation.external(async () => {
       await ctx.api.sendMessage(ctx.session.sendMessageToId, `Новое анонимное сообщение:`);
@@ -210,13 +230,28 @@ export class MainMenuService {
     conversation: Conversation<BotContext>,
     ctx: BotContext
   ): Promise<void> {
-    await ctx.reply('Напиши ответ на вопрос, он будет передан тому кто его задал');
+    await ctx.reply(
+      'Напиши ответ на вопрос, он будет передан тому кто его задал, если передумал отвечать, нажми\n/cancel'
+    );
 
     let replyCtx: BotContext = null;
     while (!replyCtx?.message?.text) {
       replyCtx = await conversation.wait();
-      if (!replyCtx?.message?.text) {
-        await ctx.reply('Ответ может содержать только текст');
+      if (replyCtx?.message?.text === '/cancel') {
+        await ctx.reply('Окей, не будем отвечать на вопрос');
+        replyCtx = null;
+        return;
+      }
+      if (replyCtx?.message?.text?.includes('/start')) {
+        await ctx.reply(
+          'Перед тем как задавать новый вопрос, ответь на предыдущий вопрос, если передумал отвечать, нажми\n/cancel'
+        );
+        replyCtx = null;
+      } else if (!replyCtx?.message?.text) {
+        await ctx.reply(
+          'Ответ может содержать только текст, если передумал отвечать на вопрос, нажми\n/cancel'
+        );
+        replyCtx = null;
       }
     }
 
@@ -260,10 +295,6 @@ export class MainMenuService {
         },
       });
 
-      if (!channelCount) {
-        return;
-      }
-
       const bot = await this.bot.api.getMe();
 
       let text = `<b>Анонимный вопрос:</b>\n`;
@@ -271,8 +302,11 @@ export class MainMenuService {
       text += '\n\n';
       text += '<b>Ответ:</b>\n';
       text += replyCtx.message.text;
-      text += `\n\n<a href="https://t.me/${bot.username}">${bot.first_name}</a>`
-      await ctx.reply(text, {parse_mode: 'HTML', reply_markup: this.publishAnswerMenu});
+      text += `\n\n<a href="https://t.me/${bot.username}">${bot.first_name}</a>`;
+      await ctx.reply(text, {
+        parse_mode: 'HTML',
+        reply_markup: channelCount ? this.publishAnswerMenu : null,
+      });
     });
   }
 }
