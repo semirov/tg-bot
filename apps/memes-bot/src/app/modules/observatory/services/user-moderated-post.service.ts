@@ -1,19 +1,19 @@
-import { Inject, Injectable } from '@nestjs/common';
-import { ScheduledPostContextInterface } from '../../bot/services/post-scheduler.service';
-import { UserService } from '../../bot/services/user.service';
-import { Menu, MenuFlavor } from '@grammyjs/menu';
-import { BotContext } from '../../bot/interfaces/bot-context.interface';
-import { BOT } from '../../bot/providers/bot.provider';
-import { Bot, InlineKeyboard } from 'grammy';
-import { InjectRepository } from '@nestjs/typeorm';
-import { UserModeratedPostEntity } from '../entities/user-moderated-post.entity';
-import { LessThanOrEqual, Repository } from 'typeorm';
-import { UserMessageModeratedPostEntity } from '../entities/user-message-moderated-post.entity';
-import { BaseConfigService } from '../../config/base-config.service';
-import { UserEntity } from '../../bot/entities/user.entity';
-import { add } from 'date-fns';
-import { firstValueFrom, Observable, Subject, timer } from 'rxjs';
-import { Interval } from '@nestjs/schedule';
+import {Inject, Injectable} from '@nestjs/common';
+import {ScheduledPostContextInterface} from '../../bot/services/post-scheduler.service';
+import {UserService} from '../../bot/services/user.service';
+import {Menu, MenuFlavor} from '@grammyjs/menu';
+import {BotContext} from '../../bot/interfaces/bot-context.interface';
+import {BOT} from '../../bot/providers/bot.provider';
+import {Bot, InlineKeyboard} from 'grammy';
+import {InjectRepository} from '@nestjs/typeorm';
+import {UserModeratedPostEntity} from '../entities/user-moderated-post.entity';
+import {LessThanOrEqual, Repository} from 'typeorm';
+import {UserMessageModeratedPostEntity} from '../entities/user-message-moderated-post.entity';
+import {BaseConfigService} from '../../config/base-config.service';
+import {UserEntity} from '../../bot/entities/user.entity';
+import {add} from 'date-fns';
+import {firstValueFrom, Observable, Subject, timer} from 'rxjs';
+import {Interval} from '@nestjs/schedule';
 
 @Injectable()
 export class UserModeratedPostService {
@@ -25,7 +25,8 @@ export class UserModeratedPostService {
     private userService: UserService,
     @Inject(BOT) private bot: Bot<BotContext>,
     private baseConfigService: BaseConfigService
-  ) {}
+  ) {
+  }
 
   @Interval(60000)
   async handleCron() {
@@ -61,14 +62,14 @@ export class UserModeratedPostService {
     await this.userService.changeUserModeratedMode(ctx.from.id, false);
     const moderatedMessage = await this.getModeratedContextByCtx(ctx);
     await this.userModeratedPostEntity.update(
-      { id: moderatedMessage.id },
-      { moderatedUsersCount: moderatedMessage.moderatedUsersCount - 1 }
+      {id: moderatedMessage.id},
+      {moderatedUsersCount: moderatedMessage.moderatedUsersCount - 1}
     );
     try {
-      await ctx.editMessageReplyMarkup({ reply_markup: this.endModerateKeyboard });
+      await ctx.editMessageReplyMarkup({reply_markup: this.endModerateKeyboard});
       await ctx.reply(
         'Жаль 😞\nЕсли снова захочешь оценивать мемы, то можешь включить это в настройках\n' +
-          '"Меню" -> "Настройки" -> "Не оцениваю мемы"\n'
+        '"Меню" -> "Настройки" -> "Не оцениваю мемы"\n'
       );
     } catch (e) {
       /**/
@@ -87,7 +88,7 @@ export class UserModeratedPostService {
       isApproved: false,
       processedByModerator: publishContext.processedByModerator,
       caption: publishContext.caption,
-      moderatedTo: add(new Date(), { hours: 2 }),
+      moderatedTo: add(new Date(), {hours: 2}),
       moderatedUsersCount: users.length,
       hash: publishContext.hash,
     });
@@ -114,14 +115,14 @@ export class UserModeratedPostService {
       await ctx.api.sendMessage(
         userId,
         'Привет!\nОцени пожалуйста этот мем 😌\n' +
-          'Если не хочешь чтобы тебя просили оценивать мемы, нажми кнопку "Не хочу оценивать мемы" ' +
-          'и больше таких сообщений не будет'
+        'Если не хочешь чтобы тебя просили оценивать мемы, нажми кнопку "Не хочу оценивать мемы" ' +
+        'и больше таких сообщений не будет'
       );
       const message = await ctx.api.copyMessage(
         userId,
         this.baseConfigService.userRequestMemeChannel,
         publishContext.requestChannelMessageId,
-        { reply_markup: this.moderatePostMenu }
+        {reply_markup: this.moderatePostMenu}
       );
 
       await this.userMessageModeratedPostEntity.insert({
@@ -138,10 +139,10 @@ export class UserModeratedPostService {
 
   private async getModeratedContextByCtx(ctx: BotContext): Promise<UserModeratedPostEntity> {
     const userRequestMessageId = await this.userMessageModeratedPostEntity.findOne({
-      where: { userMessageId: ctx.callbackQuery.message.message_id },
+      where: {userMessageId: ctx.callbackQuery.message.message_id},
     });
     return this.userModeratedPostEntity.findOne({
-      where: { requestChannelMessageId: userRequestMessageId.requestChannelMessageId },
+      where: {requestChannelMessageId: userRequestMessageId.requestChannelMessageId},
     });
   }
 
@@ -149,7 +150,7 @@ export class UserModeratedPostService {
     const moderatedMessage = await this.getModeratedContextByCtx(ctx);
     if (moderatedMessage.isRejected || moderatedMessage.isApproved) {
       try {
-        await ctx.editMessageReplyMarkup({ reply_markup: this.endModerateKeyboard });
+        await ctx.editMessageReplyMarkup({reply_markup: this.endModerateKeyboard});
       } catch (e) {
         /**/
       }
@@ -160,7 +161,7 @@ export class UserModeratedPostService {
     const votesCount = likes + dislikes;
 
     await this.userModeratedPostEntity.update(
-      { id: moderatedMessage.id },
+      {id: moderatedMessage.id},
       {
         likes,
         dislikes,
@@ -171,11 +172,11 @@ export class UserModeratedPostService {
         userId: ctx.callbackQuery.from.id,
         requestChannelMessageId: moderatedMessage.requestChannelMessageId,
       },
-      { voted: true }
+      {voted: true}
     );
     if (likes >= dislikes && votesCount >= +usersCount / 2) {
       const caption = this.getCaptionByUserModeratedPost(likes, dislikes);
-      await this.userModeratedPostEntity.update({ id: moderatedMessage.id }, { isApproved: true });
+      await this.userModeratedPostEntity.update({id: moderatedMessage.id}, {isApproved: true});
       this.userModeratedPostSubject.next({
         mode: moderatedMessage.mode,
         requestChannelMessageId: moderatedMessage.requestChannelMessageId,
@@ -186,7 +187,7 @@ export class UserModeratedPostService {
       });
     }
     try {
-      await ctx.editMessageReplyMarkup({ reply_markup: this.endModerateKeyboard });
+      await ctx.editMessageReplyMarkup({reply_markup: this.endModerateKeyboard});
     } catch (e) {
       /**/
     }
@@ -199,7 +200,7 @@ export class UserModeratedPostService {
         isRejected: false,
         moderatedTo: LessThanOrEqual(new Date()),
       },
-      order: { moderatedTo: 'ASC' },
+      order: {moderatedTo: 'ASC'},
     });
 
     if (!post) {
@@ -208,7 +209,7 @@ export class UserModeratedPostService {
 
     if (+post.likes >= +post.dislikes || +post.dislikes === 0) {
       const caption = this.getCaptionByUserModeratedPost(+post.likes, +post.dislikes);
-      await this.userModeratedPostEntity.update({ id: post.id }, { isApproved: true });
+      await this.userModeratedPostEntity.update({id: post.id}, {isApproved: true});
       this.userModeratedPostSubject.next({
         mode: post.mode,
         requestChannelMessageId: post.requestChannelMessageId,
@@ -218,12 +219,12 @@ export class UserModeratedPostService {
         hash: post.hash,
       });
     } else {
-      await this.userModeratedPostEntity.update({ id: post.id }, { isRejected: true });
+      await this.userModeratedPostEntity.update({id: post.id}, {isRejected: true});
     }
   }
 
   private getCaptionByUserModeratedPost(likes: number, dislikes: number): string {
-    let text = '#одобрено_подписчиками';
+    let text = '#одобрено';
     if (likes) {
       text += `  👍 ${likes}`;
     }
