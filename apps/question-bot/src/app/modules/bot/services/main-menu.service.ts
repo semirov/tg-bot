@@ -34,6 +34,9 @@ export class MainMenuService {
     );
     this.buildAnswerMenu();
     this.bot.use(createConversation(this.askQuestionConversation.bind(this), 'askCV'));
+    this.bot.use(
+      createConversation(this.createAnonymousPostConversation.bind(this), 'createAskBtnCv')
+    );
     this.buildMainMenu();
     this.onStartCommand();
     this.onChatMember();
@@ -81,10 +84,14 @@ export class MainMenuService {
         const channelInfo = await ctx.api.getChat(channel.id);
         range
           .text(channelInfo['title'], async (ctx) => {
+            const bot = await this.bot.api.getMe();
+            const link = `https://t.me/${bot.username}?start=${ctx.callbackQuery.from.id}`;
+            const menu = new InlineKeyboard().url('Задать анонимный вопрос', link);
             await ctx.api.copyMessage(
               channel.id,
               ctx.callbackQuery.from.id,
-              ctx.callbackQuery.message.message_id
+              ctx.callbackQuery.message.message_id,
+              {reply_markup: menu}
             );
             await ctx.deleteMessage();
           })
@@ -103,7 +110,10 @@ export class MainMenuService {
   private buildMainMenu(): void {
     const mainMenu = new Menu<BotContext>('menu_main')
       .text('Как разместить анонимный вопрос', (ctx) => this.replyHowToMessage(ctx))
-      .row();
+      .row()
+      .text('Создать кнопку анонимного вопроса', (ctx) =>
+        ctx.conversation.enter('createAskBtnCv')
+      );
 
     this.bot.use(mainMenu);
 
@@ -125,29 +135,35 @@ export class MainMenuService {
       'Администраторы -> Добавить администратора\n' +
       `Найди в списке @${bot.username}\n` +
       `Выдай разрешение на публикацию, редактирование и удаление сообщений\n\n` +
-      `👉 Призови в сообщении бота @${bot.username} - через пробел можешь указать текст сообщения\n` +
-      'Нажми на всплывающую кнопку и бот разместит сообщение со сбором анонимных вопросов';
+      `Призови в сообщении бота @${bot.username} - через пробел можешь указать текст сообщения\n` +
+      'Нажми на всплывающую кнопку и бот разместит сообщение со сбором анонимных вопросов\n\n' +
+      `👉 Создай кнопку через бота\n\n` +
+      'Нажми меню /menu выбери пункт "Создать кнопку анонимного вопроса"' +
+      '\nНапиши текст вопроса, бот создаст кнопку, ты можешь переслать куда нужно'
     await ctx.reply(text);
   }
 
-  private onInlineQueryMessage() {
+  private async answerInlineQuery(ctx: BotContext): Promise<InlineQueryResultArticle> {
+    const bot = await this.bot.api.getMe();
+    const link = `https://t.me/${bot.username}?start=${ctx.inlineQuery.from.id}`;
+    const menu = new InlineKeyboard().url('Анонимный вопрос', link);
+
+    return {
+      id: 'anonymous_query',
+      type: 'article',
+      title: 'Анонимный вопрос',
+      reply_markup: menu,
+      description: ctx.inlineQuery.query,
+      input_message_content: {
+        message_text: ctx.inlineQuery.query || 'Задай вопрос анонимно',
+      },
+    };
+  }
+
+  private async onInlineQueryMessage() {
     this.bot.on(['inline_query'], async (ctx) => {
       try {
-        const bot = await this.bot.api.getMe();
-        const link = `https://t.me/${bot.username}?start=${ctx.inlineQuery.from.id}`;
-        const menu = new InlineKeyboard().url('Задать вопрос', link);
-        const queryResult: InlineQueryResultArticle[] = [
-          {
-            id: 'anonymous_query',
-            type: 'article',
-            title: 'Анонимный вопрос',
-            reply_markup: menu,
-            description: ctx.inlineQuery.query,
-            input_message_content: {
-              message_text: ctx.inlineQuery.query || 'Задай вопрос анонимно',
-            },
-          },
-        ];
+        const queryResult: InlineQueryResultArticle[] = [await this.answerInlineQuery(ctx)];
         await ctx.answerInlineQuery(queryResult);
       } catch (e) {
         Logger.error(e.message, e);
@@ -296,17 +312,61 @@ export class MainMenuService {
       });
 
       const bot = await this.bot.api.getMe();
+      const link = `https://t.me/${bot.username}?start=${ctx.callbackQuery.from.id}`;
+      const menu = new InlineKeyboard().url('Задать анонимный вопрос', link);
 
       let text = `<b>Анонимный вопрос:</b>\n`;
       text += message.questionText;
       text += '\n\n';
       text += '<b>Ответ:</b>\n';
       text += replyCtx.message.text;
-      text += `\n\n<a href="https://t.me/${bot.username}">${bot.first_name}</a>`;
       await ctx.reply(text, {
         parse_mode: 'HTML',
-        reply_markup: channelCount ? this.publishAnswerMenu : null,
+        reply_markup: channelCount ? this.publishAnswerMenu : menu,
       });
     });
+  }
+
+  private async createAnonymousPostConversation(
+    conversation: Conversation<BotContext>,
+    ctx: BotContext
+  ): Promise<void> {
+    await ctx.reply(
+      'Напиши текст который будет в сообщении с кнопкой анонимного вопроса.\nЯ создам сообщение с кнопкой, ' +
+      'через которую можно будет задать анонимный вопрос, который будет адресован тебе. ' +
+      'Ты можешь переслать это сообщение куда захочешь.' +
+      '\n\nЕсли хочешь текст по умолчанию, нажми /default' +
+      '\n\nЕсли передумал нажми /cancel'
+    );
+
+    const bot = await this.bot.api.getMe();
+    const link = `https://t.me/${bot.username}?start=${ctx.callbackQuery.from.id}`;
+    const menu = new InlineKeyboard().url('Задать анонимный вопрос', link);
+
+    let replyCtx: BotContext = null;
+    while (!replyCtx?.message?.text) {
+      replyCtx = await conversation.wait();
+      if (replyCtx?.message?.text === '/cancel') {
+        await ctx.reply('Окей, не будем создавать');
+        replyCtx = null;
+        return;
+      }
+      if (replyCtx?.message?.text?.includes('/start')) {
+        await ctx.reply(
+          'Перед тем как задавать новый вопрос, закончи создавать кнопку или нажми\n/cancel'
+        );
+        replyCtx = null;
+      } else if (replyCtx?.message?.text?.includes('/default')) {
+        await ctx.reply('Задай мне анонимный вопрос', {reply_markup: menu});
+        return;
+      } else if (!replyCtx?.message?.text) {
+        await ctx.reply(
+          'Сообщение может содержать только текст, если передумал отвечать на вопрос, нажми\n/cancel'
+        );
+        replyCtx = null;
+      }
+    }
+
+    await ctx.reply(replyCtx.message.text, {reply_markup: menu});
   }
 }
