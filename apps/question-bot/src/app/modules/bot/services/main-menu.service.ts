@@ -30,6 +30,9 @@ export class MainMenuService {
     this.onInlineQueryMessage();
     this.buildPublishAnswerMenu();
     this.bot.use(
+      createConversation(this.createMassMessageConversation.bind(this), 'createMessageSendCv')
+    );
+    this.bot.use(
       createConversation(this.answerQuestionConversation.bind(this), 'answer_conversation')
     );
     this.buildAnswerMenu();
@@ -111,14 +114,19 @@ export class MainMenuService {
     const mainMenu = new Menu<BotContext>('menu_main')
       .text('Как разместить анонимный вопрос', (ctx) => this.replyHowToMessage(ctx))
       .row()
-      .text('Создать кнопку анонимного вопроса', (ctx) =>
-        ctx.conversation.enter('createAskBtnCv')
-      );
+      .text('Создать кнопку анонимного вопроса', (ctx) => ctx.conversation.enter('createAskBtnCv'));
 
     this.bot.use(mainMenu);
 
     this.bot.command(['menu'], async (ctx) => {
       await ctx.reply('Основное меню', {reply_markup: mainMenu});
+    });
+
+    this.bot.command(['spam'], async (ctx) => {
+      if (!ctx.config.isOwner) {
+        return;
+      }
+      await ctx.conversation.enter('createMessageSendCv');
     });
   }
 
@@ -139,7 +147,7 @@ export class MainMenuService {
       'Нажми на всплывающую кнопку и бот разместит сообщение со сбором анонимных вопросов\n\n' +
       `👉 Создай кнопку через бота\n\n` +
       'Нажми меню /menu выбери пункт "Создать кнопку анонимного вопроса"' +
-      '\nНапиши текст вопроса, бот создаст кнопку, ты можешь переслать куда нужно'
+      '\nНапиши текст вопроса, бот создаст кнопку, ты можешь переслать куда нужно';
     await ctx.reply(text);
   }
 
@@ -368,5 +376,44 @@ export class MainMenuService {
     }
 
     await ctx.reply(replyCtx.message.text, {reply_markup: menu});
+  }
+
+  private async createMassMessageConversation(
+    conversation: Conversation<BotContext>,
+    ctx: BotContext
+  ): Promise<void> {
+    await ctx.reply(
+      'Напиши сообщение для рассылки через бота' + '\n\nЕсли передумал нажми /cancel'
+    );
+
+    let replyCtx: BotContext = null;
+    while (!replyCtx?.message?.text) {
+      replyCtx = await conversation.wait();
+      if (replyCtx?.message?.text === '/cancel') {
+        await ctx.reply('Окей, не будем ничего слать');
+        replyCtx = null;
+        return;
+      }
+      if (!replyCtx?.message?.text) {
+        await ctx.reply(
+          'Сообщение может содержать только текст, если передумал отвечать на вопрос, нажми\n/cancel'
+        );
+        replyCtx = null;
+      }
+    }
+
+    await conversation.external(async () => {
+      const users = await this.userService.getUsers();
+
+      await ctx.reply('Сообщение будет отправлено пользователям: ' + users.length);
+
+      for (const user of users) {
+        try {
+          await ctx.api.copyMessage(user.id, replyCtx.message.from.id, replyCtx.message.message_id);
+        } catch (e) {
+          await this.userService.disableSendMessageForUser(user.id);
+        }
+      }
+    });
   }
 }
