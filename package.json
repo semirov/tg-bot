@@ -10,8 +10,8 @@
     "docker:memes-bot:publish": "npm run docker:memes-bot:build && npm run docker:memes-bot:push",
     "start:question-bot": "nx serve question-bot",
     "build:question-bot": "nx build question-bot",
-    "docker:question-bot:build": "docker build -f ./apps/question-bot/Dockerfile -t  cr.yandex/crp8g8jm3p8d780a8hk3/question-bot:0.0.3 .",
-    "docker:question-bot:push": "docker push cr.yandex/crp8g8jm3p8d780a8hk3/question-bot:0.0.3",
+    "docker:question-bot:build": "docker build -f ./apps/question-bot/Dockerfile -t  cr.yandex/crp8g8jm3p8d780a8hk3/question-bot:0.0.4 .",
+    "docker:question-bot:push": "docker push cr.yandex/crp8g8jm3p8d780a8hk3/question-bot:0.0.4",
     "docker:question-bot:publish": "npm run docker:question-bot:build && npm run docker:question-bot:push"
   },
   "private": true,
