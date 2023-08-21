@@ -10,6 +10,7 @@ import {InlineQueryResultArticle} from '@grammyjs/types/inline';
 import {Conversation, createConversation} from '@grammyjs/conversations';
 import {MessagesEntity} from '../entities/messages.entity';
 import {Menu, MenuRange} from '@grammyjs/menu';
+import {PredictionFunService} from './prediction-fun.service';
 
 @Injectable()
 export class MainMenuService {
@@ -19,7 +20,8 @@ export class MainMenuService {
     @InjectRepository(ChannelsEntity)
     private channelsEntity: Repository<ChannelsEntity>,
     @InjectRepository(MessagesEntity)
-    private messagesEntity: Repository<MessagesEntity>
+    private messagesEntity: Repository<MessagesEntity>,
+    private predictionFunService: PredictionFunService
   ) {
   }
 
@@ -40,22 +42,77 @@ export class MainMenuService {
     this.bot.use(
       createConversation(this.createAnonymousPostConversation.bind(this), 'createAskBtnCv')
     );
+    this.predictionFunService.init();
     this.buildMainMenu();
-    this.onStartCommand();
-    this.onChatMember();
     this.onStartHandler();
   }
 
-  private onStartCommand() {
-    this.bot.command(['how_to'], (ctx) => this.replyHowToMessage(ctx));
+  public buildMainMenu(): void {
+    const mainMenu = new Menu<BotContext>('menu_main')
+      .text('Как разместить анонимный вопрос', (ctx) => this.replyHowToMessage(ctx))
+      .row()
+      .text('Создать кнопку анонимного вопроса', (ctx) => ctx.conversation.enter('createAskBtnCv'))
+      .row()
+      .text('Добавить предсказание', (ctx) => ctx.conversation.enter('addPredictionCv'))
+      .row()
+      .text('Получить предсказание', async (ctx) => {
+        let name;
+        if (ctx.callbackQuery.from.username) {
+          name = `@${ctx.callbackQuery.from.username}`;
+        } else {
+          name = [ctx.callbackQuery.from.first_name, ctx.callbackQuery.from.last_name]
+            .filter(Boolean)
+            .join(' ');
+        }
+
+        const prediction = await this.predictionFunService.getPredictionForUserId(
+          ctx.callbackQuery.from.id
+        );
+
+        const text = `Предсказание для ${name}\n\n<i>${prediction}</i>`;
+
+        await ctx.reply(text, {parse_mode: 'HTML'});
+      });
+
+    this.bot.use(mainMenu);
+
+    this.bot.command(['menu'], async (ctx) => {
+      await ctx.reply('Основное меню', {reply_markup: mainMenu});
+    });
+
+    this.bot.command(['spam'], async (ctx) => {
+      if (!ctx.config.isOwner) {
+        return;
+      }
+      await ctx.conversation.enter('createMessageSendCv');
+    });
   }
 
-  private onChatMember(): void {
+  private onStartHandler() {
     this.bot.on(['my_chat_member'], async (ctx) => {
       const {chat, from} = ctx.myChatMember;
       await this.channelsEntity.upsert({id: chat.id, type: chat.type, mainOwner: from.id}, [
         'id',
       ]);
+    });
+
+    this.bot.command(['how_to'], (ctx) => this.replyHowToMessage(ctx));
+
+    this.bot.command(['start'], async (ctx) => {
+      const [, /**/ userId] = ctx.message.text.split(' ');
+      ctx.session.sendMessageToId = +userId;
+      if (!userId) {
+        const text =
+          'Привет, с моей помощью можно размещать сбор анонимных вопросов в каналах и где угодно\n\n' +
+          '- Как разместить анонимный вопрос\n/how_to\n\n' +
+          '- Основное меню\n/menu\n\n' +
+          'По всем вопросам: @semirov';
+        await ctx.reply(text);
+      } else {
+        await ctx.conversation.enter('askCV');
+      }
+
+      await this.userService.updateUserLastActivity(ctx);
     });
   }
 
@@ -110,26 +167,6 @@ export class MainMenuService {
     this.bot.use(this.publishAnswerMenu);
   }
 
-  private buildMainMenu(): void {
-    const mainMenu = new Menu<BotContext>('menu_main')
-      .text('Как разместить анонимный вопрос', (ctx) => this.replyHowToMessage(ctx))
-      .row()
-      .text('Создать кнопку анонимного вопроса', (ctx) => ctx.conversation.enter('createAskBtnCv'));
-
-    this.bot.use(mainMenu);
-
-    this.bot.command(['menu'], async (ctx) => {
-      await ctx.reply('Основное меню', {reply_markup: mainMenu});
-    });
-
-    this.bot.command(['spam'], async (ctx) => {
-      if (!ctx.config.isOwner) {
-        return;
-      }
-      await ctx.conversation.enter('createMessageSendCv');
-    });
-  }
-
   private async replyHowToMessage(ctx: BotContext): Promise<void> {
     const bot = await this.bot.api.getMe();
     const text =
@@ -171,30 +208,14 @@ export class MainMenuService {
   private async onInlineQueryMessage() {
     this.bot.on(['inline_query'], async (ctx) => {
       try {
-        const queryResult: InlineQueryResultArticle[] = [await this.answerInlineQuery(ctx)];
+        const queryResult: InlineQueryResultArticle[] = [
+          await this.predictionFunService.answerPredictionInlineQuery(ctx),
+          await this.answerInlineQuery(ctx),
+        ];
         await ctx.answerInlineQuery(queryResult);
       } catch (e) {
         Logger.error(e.message, e);
       }
-    });
-  }
-
-  private onStartHandler() {
-    this.bot.command(['start'], async (ctx) => {
-      const [, /**/ userId] = ctx.message.text.split(' ');
-      ctx.session.sendMessageToId = +userId;
-      if (!userId) {
-        const text =
-          'Привет, с моей помощью можно размещать сбор анонимных вопросов в каналах и где угодно\n\n' +
-          '- Как разместить анонимный вопрос\n/how_to\n\n' +
-          '- Основное меню\n/menu\n\n' +
-          'По всем вопросам: @semirov';
-        await ctx.reply(text);
-      } else {
-        await ctx.conversation.enter('askCV');
-      }
-
-      await this.userService.updateUserLastActivity(ctx);
     });
   }
 

@@ -6,6 +6,10 @@ export type BotConfig = { config: { user: UserEntity; isOwner: boolean } };
 
 export interface SessionDataInterface {
   sendMessageToId?: number;
+
+  actualPredictionId?: number;
+
+  lastPredictionDate?: string;
 }
 
 export type BotContext = Context &

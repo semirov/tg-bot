@@ -1,14 +1,16 @@
-import { Module } from '@nestjs/common';
+import {Module} from '@nestjs/common';
 
-import { AppController } from './app.controller';
-import { AppConfigModule } from './modules/config/app-config.module';
-import { TypeOrmModule } from '@nestjs/typeorm';
-import { BaseConfigService } from './modules/config/base-config.service';
-import { SessionEntity } from './modules/bot/session/SessionEntity';
-import { BotModule } from './modules/bot/bot.module';
-import { ChannelsEntity } from './modules/bot/entities/channels.entity';
-import { UserEntity } from './modules/bot/entities/user.entity';
-import { MessagesEntity } from './modules/bot/entities/messages.entity';
+import {AppController} from './app.controller';
+import {AppConfigModule} from './modules/config/app-config.module';
+import {TypeOrmModule} from '@nestjs/typeorm';
+import {BaseConfigService} from './modules/config/base-config.service';
+import {SessionEntity} from './modules/bot/session/SessionEntity';
+import {BotModule} from './modules/bot/bot.module';
+import {ChannelsEntity} from './modules/bot/entities/channels.entity';
+import {UserEntity} from './modules/bot/entities/user.entity';
+import {MessagesEntity} from './modules/bot/entities/messages.entity';
+import {PredictionsEntity} from './modules/bot/entities/predictions.entity';
+import {UserPredictionEntity} from "./modules/bot/entities/user-prediction.entity";
 
 @Module({
   imports: [
@@ -22,14 +24,14 @@ import { MessagesEntity } from './modules/bot/entities/messages.entity';
         username: configService.databaseUsername,
         password: configService.databasePassword,
         database: configService.databaseName,
-        entities: [SessionEntity, UserEntity, ChannelsEntity, MessagesEntity],
+        entities: [SessionEntity, UserEntity, ChannelsEntity, MessagesEntity, PredictionsEntity, UserPredictionEntity],
         synchronize: true,
         extra: configService.useSSL
           ? {
-              ssl: {
-                rejectUnauthorized: false,
-              },
-            }
+            ssl: {
+              rejectUnauthorized: false,
+            },
+          }
           : undefined,
       }),
       inject: [BaseConfigService],
@@ -38,4 +40,5 @@ import { MessagesEntity } from './modules/bot/entities/messages.entity';
   controllers: [AppController],
   providers: [],
 })
-export class AppModule {}
+export class AppModule {
+}
