@@ -11,6 +11,8 @@ import {Conversation, createConversation} from '@grammyjs/conversations';
 import {MessagesEntity} from '../entities/messages.entity';
 import {Menu, MenuRange} from '@grammyjs/menu';
 import {PredictionFunService} from './prediction-fun.service';
+import {User} from '@grammyjs/types/manage';
+import {BaseConfigService} from "../../config/base-config.service";
 
 @Injectable()
 export class MainMenuService {
@@ -21,7 +23,8 @@ export class MainMenuService {
     private channelsEntity: Repository<ChannelsEntity>,
     @InjectRepository(MessagesEntity)
     private messagesEntity: Repository<MessagesEntity>,
-    private predictionFunService: PredictionFunService
+    private predictionFunService: PredictionFunService,
+    private baseConfigService: BaseConfigService,
   ) {
   }
 
@@ -55,26 +58,13 @@ export class MainMenuService {
       .row()
       .text('Добавить предсказание', (ctx) => ctx.conversation.enter('addPredictionCv'))
       .row()
-      .text('Получить предсказание', async (ctx) => {
-        let name;
-        if (ctx.callbackQuery.from.username) {
-          name = `@${ctx.callbackQuery.from.username}`;
-        } else {
-          name = [ctx.callbackQuery.from.first_name, ctx.callbackQuery.from.last_name]
-            .filter(Boolean)
-            .join(' ');
-        }
-
-        const prediction = await this.predictionFunService.getPredictionForUserId(
-          ctx.callbackQuery.from.id
-        );
-
-        const text = `Предсказание для ${name}\n\n<i>${prediction}</i>`;
-
-        await ctx.reply(text, {parse_mode: 'HTML'});
-      });
+      .text('Получить предсказание', async (ctx) =>
+        this.generatePrediction(ctx.callbackQuery.from, ctx)
+      );
 
     this.bot.use(mainMenu);
+
+    this.bot.command(['prediction'], async (ctx) => this.generatePrediction(ctx.message.from, ctx));
 
     this.bot.command(['menu'], async (ctx) => {
       await ctx.reply('Основное меню', {reply_markup: mainMenu});
@@ -86,6 +76,21 @@ export class MainMenuService {
       }
       await ctx.conversation.enter('createMessageSendCv');
     });
+  }
+
+  private async generatePrediction(user: User, ctx: BotContext): Promise<void> {
+    let name;
+    if (user.username) {
+      name = `@${user.username}`;
+    } else {
+      name = [user.first_name, user.last_name].filter(Boolean).join(' ');
+    }
+
+    const prediction = await this.predictionFunService.getPredictionForUserId(user.id);
+
+    const text = `Предсказание для ${name}\n\n<i>${prediction}</i>`;
+
+    await ctx.reply(text, {parse_mode: 'HTML'});
   }
 
   private onStartHandler() {
@@ -102,12 +107,16 @@ export class MainMenuService {
       const [, /**/ userId] = ctx.message.text.split(' ');
       ctx.session.sendMessageToId = +userId;
       if (!userId) {
+        const bot = await this.bot.api.getMe();
+        const link = `https://t.me/${bot.username}?start=${this.baseConfigService.ownerId}`;
+        const menu = new InlineKeyboard().url('Задать вопрос админу', link);
+
         const text =
-          'Привет, с моей помощью можно размещать сбор анонимных вопросов в каналах и где угодно\n\n' +
+          'Привет, я вопросный бот\n\n' +
           '- Как разместить анонимный вопрос\n/how_to\n\n' +
-          '- Основное меню\n/menu\n\n' +
-          'По всем вопросам: @semirov';
-        await ctx.reply(text);
+          '- Получить предсказание\n/prediction\n\n' +
+          '- Основное меню\n/menu\n\n';
+        await ctx.reply(text, {reply_markup: menu});
       } else {
         await ctx.conversation.enter('askCV');
       }
@@ -238,7 +247,7 @@ export class MainMenuService {
         replyCtx = null;
         return;
       }
-      if (replyCtx?.message?.text?.includes('/start')) {
+      if (replyCtx?.message?.text?.includes('/')) {
         await ctx.reply(
           'Перед тем как задавать новый вопрос, напиши предыдущий, если передумал задавать вопрос, нажми /cancel'
         );
@@ -287,7 +296,7 @@ export class MainMenuService {
         replyCtx = null;
         return;
       }
-      if (replyCtx?.message?.text?.includes('/start')) {
+      if (replyCtx?.message?.text?.includes('/')) {
         await ctx.reply(
           'Перед тем как задавать новый вопрос, ответь на предыдущий вопрос, если передумал отвечать, нажми\n/cancel'
         );
@@ -380,7 +389,7 @@ export class MainMenuService {
         replyCtx = null;
         return;
       }
-      if (replyCtx?.message?.text?.includes('/start')) {
+      if (replyCtx?.message?.text?.includes('/')) {
         await ctx.reply(
           'Перед тем как задавать новый вопрос, закончи создавать кнопку или нажми\n/cancel'
         );
