@@ -212,7 +212,7 @@ export class MainMenuService {
           await this.predictionFunService.answerPredictionInlineQuery(ctx),
           await this.answerInlineQuery(ctx),
         ];
-        await ctx.answerInlineQuery(queryResult);
+        await ctx.answerInlineQuery(queryResult, {cache_time: 0});
       } catch (e) {
         Logger.error(e.message, e);
       }

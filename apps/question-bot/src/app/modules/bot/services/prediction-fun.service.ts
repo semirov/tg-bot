@@ -78,7 +78,7 @@ export class PredictionFunService {
     const prediction = `Твое предсказание на сегодня:\n\n<i>${text}</i>`;
 
     return {
-      id: 'prediction_query',
+      id: `prediction_query`,
       type: 'article',
       title: 'Предсказание',
       description: 'Получи свое предсказание на сегодня',
