@@ -396,14 +396,15 @@ export class MainMenuService {
         replyCtx = null;
         return;
       }
+      if (replyCtx?.message?.text?.includes('/default')) {
+        await ctx.reply('Задай мне анонимный вопрос', {reply_markup: menu});
+        return;
+      }
       if (replyCtx?.message?.text?.includes('/')) {
         await ctx.reply(
           'Перед тем как задавать новый вопрос, закончи создавать кнопку или нажми\n/cancel'
         );
         replyCtx = null;
-      } else if (replyCtx?.message?.text?.includes('/default')) {
-        await ctx.reply('Задай мне анонимный вопрос', {reply_markup: menu});
-        return;
       } else if (!replyCtx?.message?.text) {
         await ctx.reply(
           'Сообщение может содержать только текст, если передумал отвечать на вопрос, нажми\n/cancel'
