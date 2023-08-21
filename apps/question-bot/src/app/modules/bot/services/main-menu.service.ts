@@ -12,7 +12,7 @@ import {MessagesEntity} from '../entities/messages.entity';
 import {Menu, MenuRange} from '@grammyjs/menu';
 import {PredictionFunService} from './prediction-fun.service';
 import {User} from '@grammyjs/types/manage';
-import {BaseConfigService} from "../../config/base-config.service";
+import {BaseConfigService} from '../../config/base-config.service';
 
 @Injectable()
 export class MainMenuService {
@@ -24,7 +24,7 @@ export class MainMenuService {
     @InjectRepository(MessagesEntity)
     private messagesEntity: Repository<MessagesEntity>,
     private predictionFunService: PredictionFunService,
-    private baseConfigService: BaseConfigService,
+    private baseConfigService: BaseConfigService
   ) {
   }
 
@@ -60,7 +60,12 @@ export class MainMenuService {
       .row()
       .text('Получить предсказание', async (ctx) =>
         this.generatePrediction(ctx.callbackQuery.from, ctx)
-      );
+      )
+      .row()
+      .text('Задать вопрос админу', async (ctx) => {
+        ctx.session.sendMessageToId = this.baseConfigService.ownerId;
+        await ctx.conversation.enter('askCV');
+      });
 
     this.bot.use(mainMenu);
 
@@ -262,18 +267,20 @@ export class MainMenuService {
 
     await ctx.reply('Спасибо, твой вопрос будет передан анонимно!');
 
+    const from = ctx?.message?.from || ctx?.callbackQuery?.from;
+
     await conversation.external(async () => {
       await ctx.api.sendMessage(ctx.session.sendMessageToId, `Новое анонимное сообщение:`);
       const messageInUser = await ctx.api.copyMessage(
         ctx.session.sendMessageToId,
-        ctx.message.from.id,
+        from.id,
         replyCtx.message.message_id,
         {reply_markup: this.answerMenu}
       );
       await this.messagesEntity.insert({
         anonymousOriginalMessageId: replyCtx.message.message_id,
         anonymousMessageForUerId: ctx.session.sendMessageToId,
-        anonymousMessageFromUserId: replyCtx.message.from.id,
+        anonymousMessageFromUserId: from.id,
         anonymousMessageCopyId: messageInUser.message_id,
         questionText: replyCtx.message.text,
       });
