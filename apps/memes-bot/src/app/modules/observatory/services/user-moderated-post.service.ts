@@ -115,6 +115,7 @@ export class UserModeratedPostService {
       await ctx.api.sendMessage(
         userId,
         'Привет!\nОцени пожалуйста этот мем 😌\n' +
+        'Голосование продлится 2 часа, после чего мем будет либо отклонен, либо опубликован\n' +
         'Если не хочешь чтобы тебя просили оценивать мемы, нажми кнопку "Не хочу оценивать мемы" ' +
         'и больше таких сообщений не будет'
       );
@@ -157,8 +158,6 @@ export class UserModeratedPostService {
     }
     const likes = isLike ? +moderatedMessage.likes + 1 : +moderatedMessage.likes;
     const dislikes = !isLike ? +moderatedMessage.dislikes + 1 : +moderatedMessage.dislikes;
-    const usersCount = +moderatedMessage.moderatedUsersCount;
-    const votesCount = likes + dislikes;
 
     await this.userModeratedPostEntity.update(
       {id: moderatedMessage.id},
@@ -174,18 +173,6 @@ export class UserModeratedPostService {
       },
       {voted: true}
     );
-    if (likes >= dislikes && votesCount >= +usersCount / 2) {
-      const caption = this.getCaptionByUserModeratedPost(likes, dislikes);
-      await this.userModeratedPostEntity.update({id: moderatedMessage.id}, {isApproved: true});
-      this.userModeratedPostSubject.next({
-        mode: moderatedMessage.mode,
-        requestChannelMessageId: moderatedMessage.requestChannelMessageId,
-        processedByModerator: moderatedMessage.processedByModerator,
-        caption,
-        isUserPost: false,
-        hash: moderatedMessage.hash,
-      });
-    }
     try {
       await ctx.editMessageReplyMarkup({reply_markup: this.endModerateKeyboard});
     } catch (e) {
@@ -207,7 +194,10 @@ export class UserModeratedPostService {
       return;
     }
 
+    let isApprovedPost: boolean;
+
     if (+post.likes >= +post.dislikes || +post.dislikes === 0) {
+      isApprovedPost = true;
       const caption = this.getCaptionByUserModeratedPost(+post.likes, +post.dislikes);
       await this.userModeratedPostEntity.update({id: post.id}, {isApproved: true});
       this.userModeratedPostSubject.next({
@@ -219,7 +209,33 @@ export class UserModeratedPostService {
         hash: post.hash,
       });
     } else {
+      isApprovedPost = false;
       await this.userModeratedPostEntity.update({id: post.id}, {isRejected: true});
+    }
+
+    const userMessages = await this.userMessageModeratedPostEntity.find({
+      where: {requestChannelMessageId: post.requestChannelMessageId},
+    });
+
+    let text = '';
+    if (post.likes) {
+      text += ` 👍 ${post.likes}`;
+    }
+    if (post.dislikes) {
+      text += `   👎 ${post.dislikes}`;
+    }
+
+    for (const user of userMessages) {
+      try {
+        const menu = new InlineKeyboard().text(
+          (isApprovedPost ? 'Мем будет опубликован' : 'Мем не будет опубликован') + text
+        );
+        await this.bot.api.editMessageReplyMarkup(user.userId, user.userMessageId, {
+          reply_markup: menu,
+        });
+      } catch (e) {
+        //
+      }
     }
   }
 
