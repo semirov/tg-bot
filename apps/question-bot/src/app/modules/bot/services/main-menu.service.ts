@@ -69,9 +69,13 @@ export class MainMenuService {
 
     this.bot.use(mainMenu);
 
-    this.bot.command(['prediction'], async (ctx) => this.generatePrediction(ctx.message.from, ctx));
+    this.bot.command(['future'], async (ctx) => {
+      await this.userService.updateUserLastActivity(ctx);
+      await this.generatePrediction(ctx.message.from, ctx)
+    });
 
     this.bot.command(['menu'], async (ctx) => {
+      await this.userService.updateUserLastActivity(ctx);
       await ctx.reply('Основное меню', {reply_markup: mainMenu});
     });
 
@@ -95,7 +99,11 @@ export class MainMenuService {
 
     const text = `Предсказание для ${name}\n\n<i>${prediction}</i>`;
 
-    await ctx.reply(text, {parse_mode: 'HTML'});
+    const bot = await this.bot.api.getMe();
+    const link = `https://t.me/${bot.username}?start=future`;
+    const menu = new InlineKeyboard().url('Получить предсказание', link);
+
+    await ctx.reply(text, {parse_mode: 'HTML', reply_markup: menu});
   }
 
   private onStartHandler() {
@@ -109,9 +117,15 @@ export class MainMenuService {
     this.bot.command(['how_to'], (ctx) => this.replyHowToMessage(ctx));
 
     this.bot.command(['start'], async (ctx) => {
-      const [, /**/ userId] = ctx.message.text.split(' ');
-      ctx.session.sendMessageToId = +userId;
-      if (!userId) {
+      await this.userService.updateUserLastActivity(ctx);
+      const [, /**/ queryParam] = ctx.message.text.split(' ');
+
+      if (queryParam === 'future') {
+        return void this.generatePrediction(ctx.message.from, ctx);
+      }
+
+      ctx.session.sendMessageToId = +queryParam;
+      if (!queryParam) {
         const bot = await this.bot.api.getMe();
         const link = `https://t.me/${bot.username}?start=${this.baseConfigService.ownerId}`;
         const menu = new InlineKeyboard().url('Задать вопрос админу', link);
@@ -119,14 +133,13 @@ export class MainMenuService {
         const text =
           'Привет, я вопросный бот\n\n' +
           '- Как разместить анонимный вопрос\n/how_to\n\n' +
-          '- Получить предсказание\n/prediction\n\n' +
+          '- Получить предсказание\n/future\n\n' +
           '- Основное меню\n/menu\n\n';
         await ctx.reply(text, {reply_markup: menu});
       } else {
         await ctx.conversation.enter('askCV');
       }
 
-      await this.userService.updateUserLastActivity(ctx);
     });
   }
 

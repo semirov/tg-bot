@@ -1,5 +1,5 @@
 import {Inject, Injectable} from '@nestjs/common';
-import {Bot} from 'grammy';
+import {Bot, InlineKeyboard} from 'grammy';
 import {BotContext} from '../interfaces/bot-context.interface';
 import {BOT} from '../providers/bot.provider';
 import {Conversation, createConversation} from '@grammyjs/conversations';
@@ -56,9 +56,8 @@ export class PredictionFunService {
     if (userPrediction?.predictionId && userPrediction?.actualPredictionDate === actualDate) {
       predictionId = userPrediction.predictionId;
     } else {
-      const predictionIds = await this.predictionsEntity.find({select: ['id']});
-      const randomElement = predictionIds[Math.floor(Math.random() * predictionIds.length)]
-      predictionId = randomElement.id;
+      const predictionsCount = await this.predictionsEntity.count();
+      predictionId = Math.floor(Math.random() * predictionsCount) + 1;
       await this.userPredictionEntity.upsert(
         {
           userId: userId,
@@ -74,14 +73,18 @@ export class PredictionFunService {
   }
 
   public async answerPredictionInlineQuery(ctx: BotContext): Promise<InlineQueryResultArticle> {
-    const text = await this.getPredictionForUserId(ctx.inlineQuery.from.id);
+    const text = await this.getPredictionForUserId(ctx.from.id);
     const prediction = `Твое предсказание на сегодня:\n\n<i>${text}</i>`;
+    const bot = await this.bot.api.getMe();
+    const link = `https://t.me/${bot.username}?start=future`;
+    const menu = new InlineKeyboard().url('Получить предсказание', link);
 
     return {
       id: `prediction_query`,
       type: 'article',
       title: 'Предсказание',
       description: 'Получи свое предсказание на сегодня',
+      reply_markup: menu,
       input_message_content: {
         message_text: prediction,
         parse_mode: 'HTML',
