@@ -5,14 +5,9 @@
   "scripts": {
     "start:memes-bot": "nx serve memes-bot",
     "build:memes-bot": "nx build memes-bot",
-    "docker:memes-bot:build": "docker build -f ./apps/memes-bot/Dockerfile -t  cr.yandex/crp8g8jm3p8d780a8hk3/telegram-bot:0.5.8 .",
-    "docker:memes-bot:push": "docker push cr.yandex/crp8g8jm3p8d780a8hk3/telegram-bot:0.5.8",
-    "docker:memes-bot:publish": "npm run docker:memes-bot:build && npm run docker:memes-bot:push",
-    "start:question-bot": "nx serve question-bot",
-    "build:question-bot": "nx build question-bot",
-    "docker:question-bot:build": "docker build -f ./apps/question-bot/Dockerfile -t  cr.yandex/crp8g8jm3p8d780a8hk3/question-bot:0.1.2 .",
-    "docker:question-bot:push": "docker push cr.yandex/crp8g8jm3p8d780a8hk3/question-bot:0.1.2",
-    "docker:question-bot:publish": "npm run docker:question-bot:build && npm run docker:question-bot:push"
+    "docker:memes-bot:build": "docker build -f ./apps/memes-bot/Dockerfile -t  cr.yandex/crp8g8jm3p8d780a8hk3/telegram-bot:0.6.0 .",
+    "docker:memes-bot:push": "docker push cr.yandex/crp8g8jm3p8d780a8hk3/telegram-bot:0.6.0",
+    "docker:memes-bot:publish": "npm run docker:memes-bot:build && npm run docker:memes-bot:push"
   },
   "private": true,
   "dependencies": {
