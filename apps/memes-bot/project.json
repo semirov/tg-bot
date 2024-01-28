@@ -1,16 +1,19 @@
 {
+  "name": "memes-bot",
   "$schema": "../../node_modules/nx/schemas/project-schema.json",
   "sourceRoot": "apps/memes-bot/src",
   "projectType": "application",
   "targets": {
     "build": {
-      "executor": "@nrwl/node:webpack",
+      "executor": "@nx/webpack:webpack",
       "outputs": ["{options.outputPath}"],
       "options": {
         "outputPath": "dist/apps/memes-bot",
         "main": "apps/memes-bot/src/main.ts",
         "tsConfig": "apps/memes-bot/tsconfig.app.json",
-        "assets": ["apps/memes-bot/src/assets"]
+        "assets": ["apps/memes-bot/src/assets"],
+        "compiler": "tsc",
+        "target": "node"
       },
       "configurations": {
         "production": {
@@ -27,7 +30,7 @@
       }
     },
     "serve": {
-      "executor": "@nrwl/node:node",
+      "executor": "@nx/js:node",
       "options": {
         "buildTarget": "memes-bot:build"
       },
@@ -38,18 +41,14 @@
       }
     },
     "lint": {
-      "executor": "@nrwl/linter:eslint",
-      "outputs": ["{options.outputFile}"],
-      "options": {
-        "lintFilePatterns": ["apps/memes-bot/**/*.ts"]
-      }
+      "executor": "@nx/eslint:lint",
+      "outputs": ["{options.outputFile}"]
     },
     "test": {
-      "executor": "@nrwl/jest:jest",
-      "outputs": ["coverage/apps/memes-bot"],
+      "executor": "@nx/jest:jest",
+      "outputs": ["{workspaceRoot}/coverage/apps/memes-bot"],
       "options": {
-        "jestConfig": "apps/memes-bot/jest.config.ts",
-        "passWithNoTests": true
+        "jestConfig": "apps/memes-bot/jest.config.ts"
       }
     }
   },

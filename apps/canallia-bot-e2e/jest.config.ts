@@ -1,8 +1,10 @@
 /* eslint-disable */
 export default {
-  displayName: 'memes-bot',
+  displayName: 'canallia-bot-e2e',
   preset: '../../jest.preset.js',
-  globals: {},
+  globalSetup: '<rootDir>/src/support/global-setup.ts',
+  globalTeardown: '<rootDir>/src/support/global-teardown.ts',
+  setupFiles: ['<rootDir>/src/support/test-setup.ts'],
   testEnvironment: 'node',
   transform: {
     '^.+\\.[tj]s$': [
@@ -13,5 +15,5 @@ export default {
     ],
   },
   moduleFileExtensions: ['ts', 'js', 'html'],
-  coverageDirectory: '../../coverage/apps/memes-bot',
+  coverageDirectory: '../../coverage/canallia-bot-e2e',
 };
