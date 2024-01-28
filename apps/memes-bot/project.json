@@ -6,12 +6,17 @@
   "targets": {
     "build": {
       "executor": "@nx/webpack:webpack",
-      "outputs": ["{options.outputPath}"],
+      "outputs": [
+        "{options.outputPath}"
+      ],
       "options": {
         "outputPath": "dist/apps/memes-bot",
         "main": "apps/memes-bot/src/main.ts",
         "tsConfig": "apps/memes-bot/tsconfig.app.json",
-        "assets": ["apps/memes-bot/src/assets"],
+        "webpackConfig": "apps/memes-bot/webpack.config.js",
+        "assets": [
+          "apps/memes-bot/src/assets"
+        ],
         "compiler": "tsc",
         "target": "node"
       },
@@ -31,6 +36,7 @@
     },
     "serve": {
       "executor": "@nx/js:node",
+      "webpackConfig": "apps/memes-bot/webpack.config.js",
       "options": {
         "buildTarget": "memes-bot:build"
       },
@@ -42,11 +48,15 @@
     },
     "lint": {
       "executor": "@nx/eslint:lint",
-      "outputs": ["{options.outputFile}"]
+      "outputs": [
+        "{options.outputFile}"
+      ]
     },
     "test": {
       "executor": "@nx/jest:jest",
-      "outputs": ["{workspaceRoot}/coverage/apps/memes-bot"],
+      "outputs": [
+        "{workspaceRoot}/coverage/apps/memes-bot"
+      ],
       "options": {
         "jestConfig": "apps/memes-bot/jest.config.ts"
       }

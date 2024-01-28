@@ -1,0 +1,61 @@
+{
+  "name": "chanellia-bot",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "apps/chanellia-bot/src",
+  "projectType": "application",
+  "targets": {
+    "build": {
+      "executor": "@nx/webpack:webpack",
+      "outputs": [
+        "{options.outputPath}"
+      ],
+      "defaultConfiguration": "production",
+      "options": {
+        "target": "node",
+        "compiler": "tsc",
+        "outputPath": "dist/apps/chanellia-bot",
+        "main": "apps/chanellia-bot/src/main.ts",
+        "tsConfig": "apps/chanellia-bot/tsconfig.app.json",
+        "assets": [
+          "apps/chanellia-bot/src/assets"
+        ],
+        "webpackConfig": "apps/chanellia-bot/webpack.config.js"
+      },
+      "configurations": {
+        "development": {},
+        "production": {}
+      }
+    },
+    "serve": {
+      "executor": "@nx/js:node",
+      "defaultConfiguration": "development",
+      "options": {
+        "buildTarget": "chanellia-bot:build"
+      },
+      "configurations": {
+        "development": {
+          "buildTarget": "chanellia-bot:build:development"
+        },
+        "production": {
+          "buildTarget": "chanellia-bot:build:production"
+        }
+      }
+    },
+    "lint": {
+      "executor": "@nx/eslint:lint",
+      "outputs": [
+        "{options.outputFile}"
+      ]
+    },
+    "test": {
+      "executor": "@nx/jest:jest",
+      "outputs": [
+        "{workspaceRoot}/coverage/{projectRoot}"
+      ],
+      "options": {
+        "jestConfig": "apps/chanellia-bot/jest.config.ts"
+      }
+    }
+  },
+  "tags": []
+}
