@@ -1,8 +1,9 @@
 import {Processor, WorkerHost} from '@nestjs/bullmq';
 import {Job} from 'bullmq';
-import {ClientEntity} from '../../bot/entities/client.entity';
 import {ContextIdFactory, ModuleRef} from '@nestjs/core';
 import {BotsFactory} from "../factory/bots.factory";
+import {ClientEntityInterface} from "common";
+import {Logger} from "@nestjs/common";
 
 @Processor('bots', {concurrency: 100, stalledInterval: 2000})
 export class BotsConsumer extends WorkerHost {
@@ -15,11 +16,10 @@ export class BotsConsumer extends WorkerHost {
     return super.onApplicationShutdown(signal);
   }
 
-  public async process(job: Job<ClientEntity>): Promise<void> {
+  public async process(job: Job<ClientEntityInterface>): Promise<void> {
     const contextId = ContextIdFactory.create();
     const botsManagerFactory = await this.moduleRef.resolve(BotsFactory, contextId);
-    const bot = await botsManagerFactory.createBot(job.data);
-
-    console.log((await bot.api.getMe()).username);
+    await botsManagerFactory.createBot(job.data);
+    Logger.debug(`Init bot ${job.data.botId}`, BotsConsumer.name);
   }
 }

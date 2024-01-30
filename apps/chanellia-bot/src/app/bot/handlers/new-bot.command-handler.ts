@@ -6,7 +6,7 @@ import {Conversation, createConversation} from '@grammyjs/conversations';
 import {InjectRepository} from '@nestjs/typeorm';
 import {ClientEntity} from '../entities/client.entity';
 import {Repository} from 'typeorm';
-import {BotsQueueService} from '../../bots-queue/services/bots-queue.service';
+import {BotsQueueService} from "common";
 
 @Injectable()
 export class NewBotCommandHandler implements OnModuleInit {

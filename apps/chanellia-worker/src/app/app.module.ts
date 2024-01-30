@@ -1,21 +1,16 @@
 import {Module} from '@nestjs/common';
+import {TypeOrmModule} from "@nestjs/typeorm";
+import {BullModule} from "@nestjs/bullmq";
+import {AppConfigModule} from "./config/app-config.module";
+import {BaseConfigService} from "./config/base-config.service";
+import {BotsSessionEntity} from "./bots-manager/entities/bots-session.entity";
+import {BotsUsersEntity} from "./bots-manager/entities/bots-users.entity";
+import {BotsManagerModule} from "./bots-manager/bots-manager.module";
 
-import {AppConfigModule} from './config/app-config.module';
-import {TypeOrmModule} from '@nestjs/typeorm';
-import {ClientEntity} from './bot/entities/client.entity';
-import {SessionEntity} from './bot/entities/session.entity';
-import {BaseConfigService} from './config/base-config.service';
-import {BotModule} from './bot/bot.module';
-import {BullModule} from '@nestjs/bullmq';
-import {BullBoardModule} from '@bull-board/nestjs';
-import {ExpressAdapter} from '@bull-board/express';
-import {ScheduleModule} from "@nestjs/schedule";
 
 @Module({
   imports: [
-    AppConfigModule,
-    BotModule,
-    ScheduleModule.forRoot(),
+    BotsManagerModule,
     TypeOrmModule.forRootAsync({
       imports: [AppConfigModule],
       useFactory: (configService: BaseConfigService) => ({
@@ -25,7 +20,7 @@ import {ScheduleModule} from "@nestjs/schedule";
         username: configService.databaseUsername,
         password: configService.databasePassword,
         database: configService.databaseName,
-        entities: [SessionEntity, ClientEntity],
+        entities: [BotsSessionEntity, BotsUsersEntity],
         synchronize: true,
         extra: configService.useSSL
           ? {
@@ -47,10 +42,6 @@ import {ScheduleModule} from "@nestjs/schedule";
         },
       }),
       inject: [BaseConfigService],
-    }),
-    BullBoardModule.forRoot({
-      route: '/queues',
-      adapter: ExpressAdapter,
     }),
   ],
 })

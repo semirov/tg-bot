@@ -7,8 +7,8 @@ import {TypeOrmModule} from "@nestjs/typeorm";
 import {BotsSessionEntity} from "./entities/bots-session.entity";
 import {BotsFactory} from "./factory/bots.factory";
 import {BotsUsersEntity} from "./entities/bots-users.entity";
-import {BotsQueueModule} from "../bots-queue/bots-queue.module";
 import {MessageHandler} from "./services/message.handler";
+import {BotsQueueModule} from "common";
 
 @Module({
   imports: [

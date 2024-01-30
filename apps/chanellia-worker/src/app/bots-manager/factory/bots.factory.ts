@@ -1,11 +1,10 @@
 import {Injectable, Logger, Scope} from '@nestjs/common';
-import {Bot, BotError, GrammyError, HttpError, session, Api} from 'grammy';
+import {Bot, BotError, GrammyError, HttpError, session} from 'grammy';
 import {run, sequentialize} from '@grammyjs/runner';
 import {TypeormAdapter} from '@grammyjs/storage-typeorm';
 import {conversations} from '@grammyjs/conversations';
 import {Middleware, NextFunction} from 'grammy/out/composer';
 import {ManagedBotContext} from '../interfaces/managed-bot-context.interface';
-import {ClientEntity} from '../../bot/entities/client.entity';
 import {InjectRepository} from '@nestjs/typeorm';
 import {BotsSessionEntity} from '../entities/bots-session.entity';
 import {Repository} from 'typeorm';
@@ -15,6 +14,7 @@ import {Queue} from 'bullmq';
 import {interval} from 'rxjs';
 import {RunnerHandle} from '@grammyjs/runner/out/runner';
 import {MessageHandler} from "../services/message.handler";
+import {ClientEntityInterface} from "common";
 
 /**
  * Создает каждого отдельного бота
@@ -26,7 +26,7 @@ export class BotsFactory {
     private botsSessionRepository: Repository<BotsSessionEntity>,
     @InjectRepository(BotsUsersEntity)
     private botsUsersEntity: Repository<BotsUsersEntity>,
-    @InjectQueue('bots_liveliness') private botsLivelinessQueue: Queue<Partial<ClientEntity>>,
+    @InjectQueue('bots_liveliness') private botsLivelinessQueue: Queue<Partial<ClientEntityInterface>>,
     private messageHandler: MessageHandler,
   ) {
   }
@@ -34,9 +34,9 @@ export class BotsFactory {
   private botInstance: Bot<ManagedBotContext>;
   private me: ManagedBotContext['me'];
   private runnerHandle: RunnerHandle;
-  private clientEntity: ClientEntity;
+  private clientEntity: ClientEntityInterface;
 
-  public async createBot(clientEntity: ClientEntity): Promise<Bot<ManagedBotContext>> {
+  public async createBot(clientEntity: ClientEntityInterface): Promise<Bot<ManagedBotContext>> {
     const bot = new Bot<ManagedBotContext>(clientEntity.botToken);
 
     await bot.use(this.prepareSequentialize());
@@ -118,7 +118,7 @@ export class BotsFactory {
   }
 
   private initLiveliness(): void {
-    interval(60 * 1000).subscribe(() => {
+    interval(3000).subscribe(() => {
       const id = `bot_${this.clientEntity.botId}`;
       this.botsLivelinessQueue.add(id, this.clientEntity, {
         jobId: id,

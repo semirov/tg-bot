@@ -9,8 +9,11 @@ import {ClientEntity} from './entities/client.entity';
 import {NewBotCommandHandler} from './handlers/new-bot.command-handler';
 import {AppConfigModule} from '../config/app-config.module';
 import {InitialQueueCheckService} from './services/initial-queue-check.service';
-import {BotsQueueModule} from '../bots-queue/bots-queue.module';
 import {ManagedBotLivelinessConsumer} from './services/managed-bot-liveliness.consumer';
+import {QueueController} from "./controllers/queue.controller";
+import {BotsQueueModule} from "common";
+import {BullBoardModule} from "@bull-board/nestjs";
+import {BullMQAdapter} from "@bull-board/api/bullMQAdapter";
 
 @Module({
   imports: [
@@ -18,6 +21,16 @@ import {ManagedBotLivelinessConsumer} from './services/managed-bot-liveliness.co
     TypeOrmModule.forFeature([SessionEntity, ClientEntity]),
     AppConfigModule,
     BotsQueueModule,
+    BullBoardModule.forFeature(
+      {
+        name: 'bots',
+        adapter: BullMQAdapter,
+      },
+      {
+        name: 'bots_liveliness',
+        adapter: BullMQAdapter,
+      }
+    ),
   ],
   providers: [
     LIGHT_HOUSE_BOT_PROVIDER,
@@ -28,6 +41,7 @@ import {ManagedBotLivelinessConsumer} from './services/managed-bot-liveliness.co
     ManagedBotLivelinessConsumer,
   ],
   exports: [LIGHT_HOUSE_BOT_PROVIDER],
+  controllers: [QueueController],
 })
 export class BotModule {
 }
