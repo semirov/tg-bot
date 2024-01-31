@@ -3,19 +3,26 @@
  * This is only a minimal backend to get started.
  */
 
-import {Logger} from '@nestjs/common';
 import {NestFactory} from '@nestjs/core';
 
 import {AppModule} from './app/app.module';
+import {Transport} from "@nestjs/microservices";
+import {AppConfigModule} from "./app/config/app-config.module";
+import {BaseConfigService} from "./app/config/base-config.service";
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
-  const globalPrefix = '';
-  app.setGlobalPrefix(globalPrefix);
+  const configApp = await NestFactory.create(AppConfigModule);
+  const configService = configApp.get(BaseConfigService);
+  const app = await NestFactory.createMicroservice(AppModule, {
+    transport: Transport.REDIS,
+    options: {
+      host: configService.redisHost,
+      port: configService.redisPort,
+      password: configService.redisPassword,
+    },
+  });
   app.enableShutdownHooks();
-  const port = process.env.PORT || 3334;
-  await app.listen(port);
-  Logger.log(`🚀 Application is running on: http://localhost:${port}/${globalPrefix}`);
+  await app.listen();
 }
 
 bootstrap();

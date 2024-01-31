@@ -1,12 +1,11 @@
 import {Module} from '@nestjs/common';
-import {TypeOrmModule} from "@nestjs/typeorm";
-import {BullModule} from "@nestjs/bullmq";
-import {AppConfigModule} from "./config/app-config.module";
-import {BaseConfigService} from "./config/base-config.service";
-import {BotsSessionEntity} from "./bots-manager/entities/bots-session.entity";
-import {BotsUsersEntity} from "./bots-manager/entities/bots-users.entity";
-import {BotsManagerModule} from "./bots-manager/bots-manager.module";
-
+import {TypeOrmModule} from '@nestjs/typeorm';
+import {BullModule} from '@nestjs/bullmq';
+import {AppConfigModule} from './config/app-config.module';
+import {BaseConfigService} from './config/base-config.service';
+import {BotsSessionEntity} from './bots-manager/entities/bots-session.entity';
+import {BotsUsersEntity} from './bots-manager/entities/bots-users.entity';
+import {BotsManagerModule} from './bots-manager/bots-manager.module';
 
 @Module({
   imports: [

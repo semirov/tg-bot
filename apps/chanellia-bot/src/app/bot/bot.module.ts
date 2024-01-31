@@ -8,12 +8,11 @@ import {SessionManagerService} from './services/session-manager.service';
 import {ClientEntity} from './entities/client.entity';
 import {NewBotCommandHandler} from './handlers/new-bot.command-handler';
 import {AppConfigModule} from '../config/app-config.module';
-import {InitialQueueCheckService} from './services/initial-queue-check.service';
-import {ManagedBotLivelinessConsumer} from './services/managed-bot-liveliness.consumer';
+import {ManagedBotLivelinessService} from './services/managed-bot-liveliness.service';
 import {QueueController} from "./controllers/queue.controller";
-import {BotsQueueModule} from "common";
+import {BotsQueueModule, QueuesEnum} from "@chanellia/common";
 import {BullBoardModule} from "@bull-board/nestjs";
-import {BullMQAdapter} from "@bull-board/api/bullMQAdapter";
+import {BullAdapter} from "@bull-board/api/bullAdapter";
 
 @Module({
   imports: [
@@ -23,12 +22,16 @@ import {BullMQAdapter} from "@bull-board/api/bullMQAdapter";
     BotsQueueModule,
     BullBoardModule.forFeature(
       {
-        name: 'bots',
-        adapter: BullMQAdapter,
+        name: QueuesEnum.INIT_NEW_BOT,
+        adapter: BullAdapter,
       },
       {
-        name: 'bots_liveliness',
-        adapter: BullMQAdapter,
+        name: QueuesEnum.TEST,
+        adapter: BullAdapter,
+      },
+      {
+        name: QueuesEnum.BOTS_LIVELINESS,
+        adapter: BullAdapter,
       }
     ),
   ],
@@ -37,8 +40,7 @@ import {BullMQAdapter} from "@bull-board/api/bullMQAdapter";
     BotConfigMiddleware,
     SessionManagerService,
     NewBotCommandHandler,
-    InitialQueueCheckService,
-    ManagedBotLivelinessConsumer,
+    ManagedBotLivelinessService,
   ],
   exports: [LIGHT_HOUSE_BOT_PROVIDER],
   controllers: [QueueController],

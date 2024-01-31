@@ -1,0 +1,5 @@
+export enum QueuesEnum {
+  BOTS_LIVELINESS = 'BOTS_LIVELINESS',
+  INIT_NEW_BOT = 'INIT_NEW_BOT',
+  TEST = 'TEST'
+}

@@ -9,12 +9,9 @@ import {InjectRepository} from '@nestjs/typeorm';
 import {BotsSessionEntity} from '../entities/bots-session.entity';
 import {Repository} from 'typeorm';
 import {BotsUsersEntity} from '../entities/bots-users.entity';
-import {InjectQueue} from '@nestjs/bullmq';
-import {Queue} from 'bullmq';
-import {interval} from 'rxjs';
 import {RunnerHandle} from '@grammyjs/runner/out/runner';
 import {MessageHandler} from "../services/message.handler";
-import {ClientEntityInterface} from "common";
+import {ClientEntityInterface} from "@chanellia/common";
 
 /**
  * Создает каждого отдельного бота
@@ -26,7 +23,6 @@ export class BotsFactory {
     private botsSessionRepository: Repository<BotsSessionEntity>,
     @InjectRepository(BotsUsersEntity)
     private botsUsersEntity: Repository<BotsUsersEntity>,
-    @InjectQueue('bots_liveliness') private botsLivelinessQueue: Queue<Partial<ClientEntityInterface>>,
     private messageHandler: MessageHandler,
   ) {
   }
@@ -70,7 +66,6 @@ export class BotsFactory {
     this.botInstance = bot;
     this.clientEntity = clientEntity;
     this.me = await this.botInstance.api.getMe();
-    this.initLiveliness();
     this.initHandlers();
 
     return bot;
@@ -115,17 +110,6 @@ export class BotsFactory {
       };
       await next();
     };
-  }
-
-  private initLiveliness(): void {
-    interval(3000).subscribe(() => {
-      const id = `bot_${this.clientEntity.botId}`;
-      this.botsLivelinessQueue.add(id, this.clientEntity, {
-        jobId: id,
-        removeOnComplete: true,
-        removeOnFail: true,
-      });
-    });
   }
 
   private initHandlers(): void {

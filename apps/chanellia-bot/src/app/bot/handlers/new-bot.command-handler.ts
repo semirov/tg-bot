@@ -6,7 +6,7 @@ import {Conversation, createConversation} from '@grammyjs/conversations';
 import {InjectRepository} from '@nestjs/typeorm';
 import {ClientEntity} from '../entities/client.entity';
 import {Repository} from 'typeorm';
-import {BotsQueueService} from "common";
+import {BotsQueueService} from "@chanellia/common";
 
 @Injectable()
 export class NewBotCommandHandler implements OnModuleInit {
@@ -93,7 +93,7 @@ export class NewBotCommandHandler implements OnModuleInit {
 
 
       await ctx.reply(`Добавили бота: ${botInfo.first_name} (@${botInfo.username})`);
-      await this.botsQueueService.addClientIntoQueue(clientEntity);
+      await this.botsQueueService.addBotToRunQueue(clientEntity);
       ctx.reply(
         `Бот будет считать тебя администратором, чтобы продолжить настройку напиши боту @${botInfo.username}`
       );

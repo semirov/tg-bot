@@ -9,13 +9,33 @@ import {BotModule} from './bot/bot.module';
 import {BullModule} from '@nestjs/bullmq';
 import {BullBoardModule} from '@bull-board/nestjs';
 import {ExpressAdapter} from '@bull-board/express';
-import {ScheduleModule} from "@nestjs/schedule";
+import {ScheduleModule} from '@nestjs/schedule';
+import {ClientsModule, Transport} from '@nestjs/microservices';
+import {MicroservicesEnum} from '@chanellia/common';
 
 @Module({
   imports: [
     AppConfigModule,
     BotModule,
     ScheduleModule.forRoot(),
+    ClientsModule.registerAsync({
+      clients: [
+        {
+          name: MicroservicesEnum.WORKER,
+          imports: [AppConfigModule],
+          useFactory: (configService: BaseConfigService) => ({
+            transport: Transport.REDIS,
+            options: {
+              host: configService.redisHost,
+              port: configService.redisPort,
+              password: configService.redisPassword,
+            },
+          }),
+          inject: [BaseConfigService],
+        },
+      ],
+      isGlobal: true,
+    }),
     TypeOrmModule.forRootAsync({
       imports: [AppConfigModule],
       useFactory: (configService: BaseConfigService) => ({

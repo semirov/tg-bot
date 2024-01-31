@@ -1,5 +1,5 @@
 import {Column, Entity, Index, PrimaryGeneratedColumn} from 'typeorm';
-import {ClientEntityInterface} from "common";
+import {ClientEntityInterface} from "@chanellia/common";
 
 @Entity({name: 'clients'})
 export class ClientEntity implements ClientEntityInterface {
