@@ -39,6 +39,7 @@ import {BotsManagerModule} from './bots-manager/bots-manager.module';
           port: configService.redisPort,
           password: configService.redisPassword,
         },
+        defaultJobOptions: {attempts: 1000, backoff: {type: 'fixed', delay: 1000}},
       }),
       inject: [BaseConfigService],
     }),

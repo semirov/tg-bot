@@ -26,10 +26,6 @@ import {BullAdapter} from "@bull-board/api/bullAdapter";
         adapter: BullAdapter,
       },
       {
-        name: QueuesEnum.TEST,
-        adapter: BullAdapter,
-      },
-      {
         name: QueuesEnum.BOTS_LIVELINESS,
         adapter: BullAdapter,
       }

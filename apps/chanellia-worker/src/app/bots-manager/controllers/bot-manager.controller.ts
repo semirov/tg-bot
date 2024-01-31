@@ -16,8 +16,6 @@ export class BotManagerController {
     private botRegistryService: BotRegistryService,
     @InjectQueue(QueuesEnum.BOTS_LIVELINESS)
     private botsLivelinessQueue: Queue<Partial<LivelinessMessageInterface>>,
-    @InjectQueue(QueuesEnum.TEST)
-    private testQueue: Queue<Partial<{ test: boolean }>>
   ) {
   }
 
@@ -32,7 +30,6 @@ export class BotManagerController {
 
   @EventPattern(botManagerEventsMap.PING)
   public async onHandlePIngEvent(): Promise<void> {
-    Logger.debug('Handle PING event', BotManagerController.name);
     for (const id of this.botRegistryService.activeBotIds()) {
       this.botsLivelinessQueue.add(`bot_${id}`, {id, date: new Date()});
     }

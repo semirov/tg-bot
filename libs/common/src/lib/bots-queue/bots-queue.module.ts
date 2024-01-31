@@ -13,9 +13,6 @@ import {QueuesEnum} from '../constants';
       },
       {
         name: QueuesEnum.BOTS_LIVELINESS,
-      },
-      {
-        name: QueuesEnum.TEST,
       }
     ),
   ],
