@@ -21,3 +21,11 @@ services:
       - REDIS_DATABASES=1
     ports:
       - "6379:6379"
+  redis-ui:
+    image: patrikx3/p3x-redis-ui:latest
+    ports:
+      - 7843:7843
+    depends_on:
+      - redis-server
+    volumes:
+      - ./redis-sentinel/redis-ui:/settings

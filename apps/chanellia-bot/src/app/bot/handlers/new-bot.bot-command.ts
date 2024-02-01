@@ -1,26 +1,24 @@
 import {Inject, Injectable, OnModuleInit} from '@nestjs/common';
 import {Bot} from 'grammy';
 import {BotContext} from '../interfaces/bot-context.interface';
-import {LIGHT_HOUSE_BOT} from '../providers/bot.provider';
+import {CHANELLIA_BOT_INSTANCE} from '../providers/bot.provider';
 import {Conversation, createConversation} from '@grammyjs/conversations';
-import {InjectRepository} from '@nestjs/typeorm';
-import {ClientEntity} from '../entities/client.entity';
-import {Repository} from 'typeorm';
-import {BotsQueueService} from "@chanellia/common";
+import {BotsQueueService} from '@chanellia/common';
+import {ClientsRepositoryService} from '../services/clients-repository.service';
 
 @Injectable()
-export class NewBotCommandHandler implements OnModuleInit {
+export class NewBotBotCommand implements OnModuleInit {
   constructor(
-    @Inject(LIGHT_HOUSE_BOT) private bot: Bot<BotContext>,
-    @InjectRepository(ClientEntity) private clientRepository: Repository<ClientEntity>,
-    private botsQueueService: BotsQueueService
+    @Inject(CHANELLIA_BOT_INSTANCE) private bot: Bot<BotContext>,
+    private botsQueueService: BotsQueueService,
+    private clientsRepositoryService: ClientsRepositoryService
   ) {
   }
 
   public onModuleInit(): void {
     this.bot.use(createConversation(this.addBotConversation.bind(this), 'addBotConversation'));
 
-    this.bot.command('add_bot', async (ctx: BotContext) => {
+    this.bot.command('newbot', async (ctx: BotContext) => {
       await ctx.conversation.enter('addBotConversation');
     });
   }
@@ -33,6 +31,7 @@ export class NewBotCommandHandler implements OnModuleInit {
       'Для того, чтобы подключить бота пришли его токен, создать бота можно c помощью @BotFather\n\nЕсли передумал, нажми /cancel'
     );
 
+    // eslint-disable-next-line no-constant-condition
     while (true) {
       const answerCtx = await conversation.wait();
 
@@ -72,7 +71,7 @@ export class NewBotCommandHandler implements OnModuleInit {
       }
 
       const existedBot = await conversation.external(async () => {
-        return await this.clientRepository.findOne({where: {botId: botInfo.id}});
+        return await this.clientsRepositoryService.findClientByBotId(botInfo.id);
       });
 
       if (existedBot) {
@@ -83,14 +82,12 @@ export class NewBotCommandHandler implements OnModuleInit {
       }
 
       const clientEntity = await conversation.external(async () => {
-        const client = this.clientRepository.create({
+        return this.clientsRepositoryService.createClient({
           adminUserId: answerCtx.from.id,
           botId: botInfo.id,
           botToken: botTokenCandidate,
         });
-        return await this.clientRepository.save(client);
       });
-
 
       await ctx.reply(`Добавили бота: ${botInfo.first_name} (@${botInfo.username})`);
       await this.botsQueueService.addBotToRunQueue(clientEntity);

@@ -2,7 +2,7 @@ import {Module} from '@nestjs/common';
 
 import {HttpModule} from '@nestjs/axios';
 
-import {BotsConsumer} from './consumers/bots.consumer';
+import {InitBotConsumer} from './consumers/init-bot.consumer';
 import {TypeOrmModule} from '@nestjs/typeorm';
 import {BotsSessionEntity} from './entities/bots-session.entity';
 import {BotsFactory} from './factory/bots.factory';
@@ -18,7 +18,7 @@ import {BotRegistryService} from './services/bot-registry.service';
     BotsQueueModule,
     TypeOrmModule.forFeature([BotsSessionEntity, BotsUsersEntity]),
   ],
-  providers: [BotsConsumer, BotsFactory, MessageHandler, BotRegistryService],
+  providers: [InitBotConsumer, BotsFactory, MessageHandler, BotRegistryService],
   controllers: [BotManagerController],
 })
 export class BotsManagerModule {

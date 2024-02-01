@@ -6,13 +6,17 @@ import {HttpModule} from '@nestjs/axios';
 import {SessionEntity} from './entities/session.entity';
 import {SessionManagerService} from './services/session-manager.service';
 import {ClientEntity} from './entities/client.entity';
-import {NewBotCommandHandler} from './handlers/new-bot.command-handler';
+import {NewBotBotCommand} from './handlers/new-bot.bot-command';
 import {AppConfigModule} from '../config/app-config.module';
 import {ManagedBotLivelinessService} from './services/managed-bot-liveliness.service';
-import {QueueController} from "./controllers/queue.controller";
-import {BotsQueueModule, QueuesEnum} from "@chanellia/common";
-import {BullBoardModule} from "@bull-board/nestjs";
-import {BullAdapter} from "@bull-board/api/bullAdapter";
+import {QueueController} from './controllers/queue.controller';
+import {BotsQueueModule, QueuesEnum} from '@chanellia/common';
+import {BullBoardModule} from '@bull-board/nestjs';
+import {BullAdapter} from '@bull-board/api/bullAdapter';
+import {ManagedBotService} from './services/managed-bot.service';
+import {ClientsRepositoryService} from './services/clients-repository.service';
+import {MyBotsBotCommand} from './handlers/my-bots.bot-command';
+import {ManagedBotEventsService} from './services/managed-bot-events.service';
 
 @Module({
   imports: [
@@ -35,8 +39,12 @@ import {BullAdapter} from "@bull-board/api/bullAdapter";
     LIGHT_HOUSE_BOT_PROVIDER,
     BotConfigMiddleware,
     SessionManagerService,
-    NewBotCommandHandler,
+    NewBotBotCommand,
     ManagedBotLivelinessService,
+    ManagedBotService,
+    ClientsRepositoryService,
+    MyBotsBotCommand,
+    ManagedBotEventsService,
   ],
   exports: [LIGHT_HOUSE_BOT_PROVIDER],
   controllers: [QueueController],

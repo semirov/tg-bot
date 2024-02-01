@@ -8,14 +8,14 @@ import {Logger} from '@nestjs/common';
 import {run, sequentialize} from '@grammyjs/runner';
 import {SessionManagerService} from '../services/session-manager.service';
 
-export const LIGHT_HOUSE_BOT = 'APP_LIGHT_HOUSE_BOT_TOKEN';
+export const CHANELLIA_BOT_INSTANCE = 'APP_LIGHT_HOUSE_BOT_TOKEN';
 
 const initialSessionData: SessionDataInterface = {
   test: true,
 };
 
 export const LIGHT_HOUSE_BOT_PROVIDER = {
-  provide: LIGHT_HOUSE_BOT,
+  provide: CHANELLIA_BOT_INSTANCE,
   useFactory: async (
     config: BaseConfigService,
     configMiddleware: BotConfigMiddleware,
@@ -53,11 +53,11 @@ export const LIGHT_HOUSE_BOT_PROVIDER = {
     await bot.use(conversations());
     await bot.api.setMyCommands([
       {
-        command: '/bots',
+        command: '/mybots',
         description: 'Мои боты',
       },
       {
-        command: '/add_bot',
+        command: '/newbot',
         description: 'Подключить бота',
       },
     ]);

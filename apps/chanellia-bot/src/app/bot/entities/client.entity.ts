@@ -13,6 +13,10 @@ export class ClientEntity implements ClientEntityInterface {
   @Column('bigint')
   botId: number;
 
+
+  @Column('text', {nullable: true})
+  botUsername: string;
+
   @Column('text')
   botToken: string;
 

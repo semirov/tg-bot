@@ -6,6 +6,7 @@ import {ClientEntityInterface} from '@chanellia/common';
 interface RegistryContextInterface {
   bot: Bot<ManagedBotContext>;
   client: ClientEntityInterface;
+  botInfo: ManagedBotContext['me'];
 }
 
 @Injectable()
@@ -26,5 +27,9 @@ export class BotRegistryService {
 
   public hasBot(id: number): boolean {
     return this.botRegistry.has(id);
+  }
+
+  public getMetadataById(botId: number): RegistryContextInterface | null {
+    return this.botRegistry.get(botId) || null;
   }
 }

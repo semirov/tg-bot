@@ -7,7 +7,7 @@ import {QueuesEnum} from '../../constants';
 @Injectable()
 export class BotsQueueService {
   constructor(
-    @InjectQueue(QueuesEnum.INIT_NEW_BOT) private botsQueue: Queue<ClientEntityInterface>
+    @InjectQueue(QueuesEnum.INIT_NEW_BOT) public botsQueue: Queue<ClientEntityInterface>
   ) {
   }
 
