@@ -18,41 +18,29 @@ export class ManagedBotLivelinessService extends WorkerHost implements OnModuleI
   }
 
   public onModuleInit(): void {
-    this.checkAndTryToRunBots();
+    this.managedBotService.pingWorkers();
   }
 
-
-  // @Interval(5000)
-  public async checkActiveTask() {
-    const actives = await this.botsQueueService.botsQueue.getActive();
-    for (const active of actives) {
-      console.log(active);
-    }
-  }
-
-  @Interval(10000)
+  @Interval(2500)
   public sendPingEvent(): void {
     this.managedBotService
       .pingWorkers()
-      .pipe(delay(5000))
+      .pipe(delay(2500))
       .subscribe(() => this.checkAndTryToRunBots());
   }
 
   private async checkAndTryToRunBots(): Promise<void> {
-    const clients = await this.clientsRepositoryService.findClientUpdateMoreThanSomeSecAgo(20);
+    const clients = await this.clientsRepositoryService.findClientUpdateMoreThanSomeSecAgo(10);
 
     for (const client of clients) {
-      const hasBot = await firstValueFrom(this.managedBotService.hasBotInWork(client.botId));
-      if (hasBot) {
-        continue;
-      }
       Logger.debug(`Try to run bot: ${client.botId}`, ManagedBotLivelinessService.name);
       this.botsQueueService.addBotToRunQueue(client);
     }
   }
 
-  public async process(job: Job<Partial<LivelinessMessageInterface>>): Promise<void> {
+  public async process(job: Job<Partial<LivelinessMessageInterface>>): Promise<string> {
     const data = job.data;
     await this.clientsRepositoryService.updatePartialById(data.id, {lastPing: new Date()});
+    return 'done';
   }
 }

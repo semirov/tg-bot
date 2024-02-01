@@ -51,4 +51,9 @@ export class ClientsRepositoryService {
     }
     return await void this.clientRepository.update({botId}, {botUsername});
   }
+
+  async botsCountByAdminId(adminId: number): Promise<number> {
+    return this.clientRepository.count({where: {adminUserId: adminId}});
+
+  }
 }

@@ -1,23 +1,22 @@
-import {InjectQueue, Processor, WorkerHost} from '@nestjs/bullmq';
-import {Job, Queue} from 'bullmq';
+import {Processor, WorkerHost} from '@nestjs/bullmq';
+import {Job} from 'bullmq';
 import {ContextIdFactory, ModuleRef} from '@nestjs/core';
 import {BotsFactory} from '../factory/bots.factory';
 import {
   BotsQueueService,
   ClientEntityInterface,
-  LivelinessMessageInterface,
   QueuesEnum,
 } from '@chanellia/common';
 import {Logger} from '@nestjs/common';
 import {BotRegistryService} from '../services/bot-registry.service';
+import {BotLivelinessService} from "../services/bot-liveliness.service";
 
-@Processor(QueuesEnum.INIT_NEW_BOT, {concurrency: 1, maxStalledCount: 10000})
+@Processor(QueuesEnum.INIT_NEW_BOT, {concurrency: 100})
 export class InitBotConsumer extends WorkerHost {
   constructor(
     private moduleRef: ModuleRef,
     private botRegistryService: BotRegistryService,
-    @InjectQueue(QueuesEnum.BOTS_LIVELINESS)
-    private botsLivelinessQueue: Queue<Partial<LivelinessMessageInterface>>,
+    private botLivelinessService: BotLivelinessService,
     private botsQueueService: BotsQueueService
   ) {
     super();
@@ -26,10 +25,8 @@ export class InitBotConsumer extends WorkerHost {
   async onApplicationShutdown(signal?: string): Promise<void> {
     await this.worker.close();
     Logger.debug(`Prepare to shutdown ${signal || ''}`, InitBotConsumer.name);
-
     for (const botWithContext of this.botRegistryService.activeBotsWithContext()) {
       await botWithContext.bot.stop();
-      Logger.debug(`Stopped bot: ${botWithContext.client.botId}`, InitBotConsumer.name);
       await this.botsQueueService.addBotToRunQueue(botWithContext.client);
     }
 
@@ -43,11 +40,8 @@ export class InitBotConsumer extends WorkerHost {
     const bot = await botsManagerFactory.createBot(job.data);
     const botInfo = await bot.api.getMe();
     this.botRegistryService.addBot(job.data.botId, {bot, client: job.data, botInfo});
-    this.botsLivelinessQueue.add(
-      `bot_${id}`,
-      {id, date: new Date()},
-      {removeOnComplete: true, removeOnFail: true}
-    );
-    Logger.debug(`Run bot: ${job.data.botId}`, InitBotConsumer.name);
+    this.botLivelinessService.updateBotLiveliness(id);
+    bot.on('message', (ctx) => ctx.reply('ok'));
+    Logger.debug(`Run bot: ${botInfo.username} (${botInfo.id})`, InitBotConsumer.name);
   }
 }

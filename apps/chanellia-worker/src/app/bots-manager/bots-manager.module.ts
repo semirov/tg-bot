@@ -11,6 +11,7 @@ import {MessageHandler} from './services/message.handler';
 import {BotsQueueModule} from '@chanellia/common';
 import {BotManagerController} from './controllers/bot-manager.controller';
 import {BotRegistryService} from './services/bot-registry.service';
+import {BotLivelinessService} from "./services/bot-liveliness.service";
 
 @Module({
   imports: [
@@ -18,7 +19,7 @@ import {BotRegistryService} from './services/bot-registry.service';
     BotsQueueModule,
     TypeOrmModule.forFeature([BotsSessionEntity, BotsUsersEntity]),
   ],
-  providers: [InitBotConsumer, BotsFactory, MessageHandler, BotRegistryService],
+  providers: [InitBotConsumer, BotsFactory, MessageHandler, BotRegistryService, BotLivelinessService],
   controllers: [BotManagerController],
 })
 export class BotsManagerModule {

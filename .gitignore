@@ -42,3 +42,4 @@ testem.log
 Thumbs.db
 
 .nx/cache
+/redis-sentinel/redis-ui/.p3xrs-conns.json

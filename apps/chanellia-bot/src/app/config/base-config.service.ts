@@ -7,7 +7,7 @@ export class BaseConfigService {
   }
 
   get botToken(): string {
-    return this.configService.getOrThrow('BOT_TOKEN');
+    return this.configService.getOrThrow('MASTER_BOT_TOKEN');
   }
 
   get ownerId(): number {

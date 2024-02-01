@@ -23,12 +23,18 @@ export class MyBotsBotCommand implements OnModuleInit {
       const adminId = ctx.from.id;
       await this.managedBotService.actualizeBotNamesByAdminId(adminId);
 
-      ctx.reply('er', {reply_markup: this.myBotsMainMenu});
+      const botsCount = await this.clientsRepositoryService.botsCountByAdminId(adminId);
+
+      if (!botsCount) {
+        return void ctx.reply('Активных ботов нет');
+      }
+
+      ctx.reply('Вот список активных ботов', {reply_markup: this.myBotsMainMenu});
     });
   }
 
   private prepareMenu() {
-    const menu = new Menu('mybotsMenu');
+    const menu = new Menu('mybots_Menu');
 
     menu.dynamic(async (ctx: BotContext) => {
       const adminId = ctx.from.id;
@@ -45,6 +51,8 @@ export class MyBotsBotCommand implements OnModuleInit {
       }
       return range;
     });
+
+    const botSettingsMenu = new Menu('mybots_botSettingsMenu');
 
     this.bot.use(menu);
     this.myBotsMainMenu = menu;

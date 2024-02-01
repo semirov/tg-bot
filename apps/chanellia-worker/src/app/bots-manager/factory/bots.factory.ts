@@ -95,8 +95,8 @@ export class BotsFactory {
     return async (ctx: ManagedBotContext, next: NextFunction) => {
       const user = await this.botsUsersEntity.upsert(
         {
-          botId: ctx.me.id,
-          userId: ctx.from.id,
+          botId: ctx.me?.id,
+          userId: ctx.from?.id,
           lastActivity: new Date(),
         },
         ['botId', 'userId']

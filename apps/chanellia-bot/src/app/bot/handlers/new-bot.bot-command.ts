@@ -19,6 +19,11 @@ export class NewBotBotCommand implements OnModuleInit {
     this.bot.use(createConversation(this.addBotConversation.bind(this), 'addBotConversation'));
 
     this.bot.command('newbot', async (ctx: BotContext) => {
+      const botsCount = await this.clientsRepositoryService.botsCountByAdminId(ctx.from.id);
+      if (botsCount >= 2) {
+        return ctx.reply('Добавлено максимальное количество ботов');
+      }
+
       await ctx.conversation.enter('addBotConversation');
     });
   }
@@ -85,6 +90,7 @@ export class NewBotBotCommand implements OnModuleInit {
         return this.clientsRepositoryService.createClient({
           adminUserId: answerCtx.from.id,
           botId: botInfo.id,
+          botUsername: botInfo.username,
           botToken: botTokenCandidate,
         });
       });

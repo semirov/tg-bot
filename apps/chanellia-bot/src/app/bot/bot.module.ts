@@ -17,6 +17,7 @@ import {ManagedBotService} from './services/managed-bot.service';
 import {ClientsRepositoryService} from './services/clients-repository.service';
 import {MyBotsBotCommand} from './handlers/my-bots.bot-command';
 import {ManagedBotEventsService} from './services/managed-bot-events.service';
+import {BotInfoConsumer} from "./services/bot-info.consumer";
 
 @Module({
   imports: [
@@ -45,6 +46,7 @@ import {ManagedBotEventsService} from './services/managed-bot-events.service';
     ClientsRepositoryService,
     MyBotsBotCommand,
     ManagedBotEventsService,
+    BotInfoConsumer,
   ],
   exports: [LIGHT_HOUSE_BOT_PROVIDER],
   controllers: [QueueController],

@@ -6,14 +6,6 @@ export class BaseConfigService {
   constructor(private configService: ConfigService) {
   }
 
-  get botToken(): string {
-    return this.configService.getOrThrow('BOT_TOKEN');
-  }
-
-  get ownerId(): number {
-    return +this.configService.getOrThrow<string>('BOT_OWNER_ID');
-  }
-
   get databaseHost(): string {
     return this.configService.getOrThrow<string>('DATABASE_HOST');
   }
@@ -50,7 +42,4 @@ export class BaseConfigService {
     return this.configService.getOrThrow<string>('REDIS_PASSWORD');
   }
 
-  get runMode(): 'core' | 'consumer' {
-    return this.configService.get('APP_MODE', 'core');
-  }
 }

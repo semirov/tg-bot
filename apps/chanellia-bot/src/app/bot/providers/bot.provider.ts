@@ -21,11 +21,6 @@ export const LIGHT_HOUSE_BOT_PROVIDER = {
     configMiddleware: BotConfigMiddleware,
     sessionManagerService: SessionManagerService
   ) => {
-    if (config.runMode !== 'core') {
-      return;
-    }
-
-
     const bot = new Bot(config.botToken);
 
     bot.use(
