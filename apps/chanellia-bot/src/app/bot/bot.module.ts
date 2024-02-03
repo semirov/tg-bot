@@ -3,8 +3,6 @@ import {LIGHT_HOUSE_BOT_PROVIDER} from './providers/bot.provider';
 import {BotConfigMiddleware} from './providers/bot-config.middleware';
 import {TypeOrmModule} from '@nestjs/typeorm';
 import {HttpModule} from '@nestjs/axios';
-import {SessionEntity} from './entities/session.entity';
-import {BotEntity} from './entities/bot.entity';
 import {NewBotBotCommand} from './handlers/new-bot.bot-command';
 import {AppConfigModule} from '../config/app-config.module';
 import {ManagedBotLivelinessService} from './services/managed-bot-liveliness.service';
@@ -18,13 +16,13 @@ import {MyBotsBotCommand} from './handlers/my-bots.bot-command';
 import {ManagedBotEventsService} from './services/managed-bot-events.service';
 import {BotInfoConsumer} from "./services/bot-info.consumer";
 import {AnyMessageBotHandler} from "./handlers/any-message.bot-handler";
-import {UserEntity} from "./entities/user.entity";
 import {BotInitializationService} from "./handlers/bot-initialization.service";
+import {entities} from "./entities/entities.const";
 
 @Module({
   imports: [
     HttpModule,
-    TypeOrmModule.forFeature([SessionEntity, BotEntity, UserEntity]),
+    TypeOrmModule.forFeature(entities),
     AppConfigModule,
     BotsQueueModule,
     BullBoardModule.forFeature(

@@ -2,8 +2,6 @@ import {Module} from '@nestjs/common';
 
 import {AppConfigModule} from './config/app-config.module';
 import {TypeOrmModule} from '@nestjs/typeorm';
-import {BotEntity} from './bot/entities/bot.entity';
-import {SessionEntity} from './bot/entities/session.entity';
 import {BaseConfigService} from './config/base-config.service';
 import {BotModule} from './bot/bot.module';
 import {BullModule} from '@nestjs/bullmq';
@@ -12,7 +10,7 @@ import {ExpressAdapter} from '@bull-board/express';
 import {ScheduleModule} from '@nestjs/schedule';
 import {ClientsModule, Transport} from '@nestjs/microservices';
 import {MicroservicesEnum} from '@chanellia/common';
-import {UserEntity} from "./bot/entities/user.entity";
+import {entities} from "./bot/entities/entities.const";
 
 @Module({
   imports: [
@@ -46,7 +44,7 @@ import {UserEntity} from "./bot/entities/user.entity";
         username: configService.databaseUsername,
         password: configService.databasePassword,
         database: configService.databaseName,
-        entities: [SessionEntity, BotEntity, UserEntity],
+        entities: entities,
         synchronize: true,
         extra: configService.useSSL
           ? {

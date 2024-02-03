@@ -16,7 +16,4 @@ export class UserEntity implements UserEntityInterface {
 
   @Column('timestamp', {default: 'NOW'})
   lastActivity: Date;
-
-  @DeleteDateColumn()
-  public deletedAt: Date;
 }
