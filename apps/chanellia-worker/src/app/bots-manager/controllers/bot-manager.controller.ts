@@ -1,14 +1,11 @@
-import {Controller} from '@nestjs/common';
+import {Controller, Logger} from '@nestjs/common';
 import {EventPattern} from '@nestjs/microservices';
-import {
-  botManagerEventsMap,
-  QueuesEnum,
-} from '@chanellia/common';
+import {botManagerEventsMap, QueuesEnum} from '@chanellia/common';
 import {BotRegistryService} from '../services/bot-registry.service';
 import {InjectQueue} from '@nestjs/bullmq';
 import {Queue} from 'bullmq';
 import {ManagedBotContext} from '../interfaces/managed-bot-context.interface';
-import {BotLivelinessService} from "../services/bot-liveliness.service";
+import {BotLivelinessService} from '../services/bot-liveliness.service';
 
 @Controller()
 export class BotManagerController {
@@ -16,7 +13,7 @@ export class BotManagerController {
     private botRegistryService: BotRegistryService,
     @InjectQueue(QueuesEnum.BOTS_INFO_REQUEST)
     private botsInfoRequestQueue: Queue<ManagedBotContext['me']>,
-    private botLivelinessService: BotLivelinessService,
+    private botLivelinessService: BotLivelinessService
   ) {
   }
 
@@ -37,6 +34,14 @@ export class BotManagerController {
     }
     const botInfo = await botMetadata.bot.api.getMe();
     this.botsInfoRequestQueue.add('botInfo', botInfo);
+  }
+
+  @EventPattern(botManagerEventsMap.STOP_BOT)
+  public async onStopBot(botId: number): Promise<void> {
+    if (!this.botRegistryService.hasBot(botId)) {
+      return;
+    }
+    await this.botLivelinessService.stopBot(botId);
   }
 
   @EventPattern(botManagerEventsMap.PING)

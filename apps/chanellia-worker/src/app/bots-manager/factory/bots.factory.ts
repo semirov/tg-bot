@@ -1,5 +1,5 @@
 import {Injectable, Logger, Scope} from '@nestjs/common';
-import {Bot, BotError, GrammyError, HttpError, session} from 'grammy';
+import {Bot, BotError, Context, GrammyError, HttpError, session} from 'grammy';
 import {run, sequentialize} from '@grammyjs/runner';
 import {TypeormAdapter} from '@grammyjs/storage-typeorm';
 import {conversations} from '@grammyjs/conversations';
@@ -10,8 +10,9 @@ import {BotsSessionEntity} from '../entities/bots-session.entity';
 import {Repository} from 'typeorm';
 import {BotsUsersEntity} from '../entities/bots-users.entity';
 import {RunnerHandle} from '@grammyjs/runner/out/runner';
-import {MessageHandler} from "../services/message.handler";
-import {ClientEntityInterface} from "@chanellia/common";
+import {MessageHandler} from '../services/message.handler';
+import {BotEntityInterface} from '@chanellia/common';
+import {autoRetry} from '@grammyjs/auto-retry';
 
 /**
  * Создает каждого отдельного бота
@@ -23,21 +24,29 @@ export class BotsFactory {
     private botsSessionRepository: Repository<BotsSessionEntity>,
     @InjectRepository(BotsUsersEntity)
     private botsUsersEntity: Repository<BotsUsersEntity>,
-    private messageHandler: MessageHandler,
+    private messageHandler: MessageHandler
   ) {
   }
 
   private botInstance: Bot<ManagedBotContext>;
   private me: ManagedBotContext['me'];
   private runnerHandle: RunnerHandle;
-  private clientEntity: ClientEntityInterface;
+  private clientEntity: BotEntityInterface;
 
-  public async createBot(clientEntity: ClientEntityInterface): Promise<Bot<ManagedBotContext>> {
-    const bot = new Bot<ManagedBotContext>(clientEntity.botToken);
+  public async removeBot(): Promise<void> {
+    await this.runnerHandle.stop();
+    this.botInstance = null;
+    this.me = null;
+    this.runnerHandle = null;
+    this.clientEntity = null;
+  }
 
-    await bot.use(this.prepareSequentialize());
-    await bot.use(this.configMiddleware(clientEntity.adminUserId));
+  public async createBot(botEntity: BotEntityInterface): Promise<Bot<ManagedBotContext>> {
+    const bot = new Bot<ManagedBotContext>(botEntity.botToken);
     await bot.use(this.prepareSessionManager());
+    await bot.use(this.prepareSequentialize());
+    await bot.use(this.prepareConfigMiddleware(botEntity.user.id));
+    bot.api.config.use(autoRetry({maxDelaySeconds: 5, maxRetryAttempts: 3}));
     await bot.use(conversations());
     await bot.api.setMyCommands([
       {
@@ -46,37 +55,22 @@ export class BotsFactory {
       },
     ]);
 
-    bot.catch((err: BotError<ManagedBotContext>) => {
-      const ctx = err.ctx;
-      const e = err.error;
-      if (e instanceof GrammyError) {
-        Logger.error(
-          `Error in bot @${ctx.me.username} (id: ${ctx.me.id})`,
-          e.description,
-          BotsFactory.name
-        );
-      } else if (e instanceof HttpError) {
-        Logger.error('Could not contact Telegram:', e, BotsFactory.name);
-      } else {
-        Logger.error('Unknown error: ', err, BotsFactory.name);
-      }
-    });
+    bot.catch(this.prepareErrorHandler());
 
     this.runnerHandle = run(bot);
     this.botInstance = bot;
-    this.clientEntity = clientEntity;
+    this.clientEntity = botEntity;
     this.me = await this.botInstance.api.getMe();
     this.initHandlers();
 
     return bot;
   }
 
+
   private prepareSessionManager() {
     return session({
       initial: () => ({}),
-      getSessionKey: (ctx: ManagedBotContext) => {
-        return [ctx?.me?.id, ctx?.from?.id].filter(Boolean).join('_');
-      },
+      getSessionKey: this.sequentializeFn,
       storage: new TypeormAdapter({
         repository: this.botsSessionRepository,
       }),
@@ -84,15 +78,18 @@ export class BotsFactory {
   }
 
   private prepareSequentialize() {
-    return sequentialize((ctx: ManagedBotContext) => {
-      const chat = ctx.chat?.id.toString();
-      const user = ctx.from?.id.toString();
-      return [chat, user].filter((con) => con !== undefined);
-    });
+    return sequentialize(this.sequentializeFn);
   }
 
-  private configMiddleware(ownerId: number): Middleware {
+  private sequentializeFn = (ctx: Context) => {
+    return [ctx?.me?.id, ctx?.chat?.id, ctx?.from?.id].filter(Boolean).join('_');
+  };
+
+  private prepareConfigMiddleware(ownerId: number): Middleware {
     return async (ctx: ManagedBotContext, next: NextFunction) => {
+      if (!ctx?.me?.id || !ctx?.from?.id) {
+        next();
+      }
       const user = await this.botsUsersEntity.upsert(
         {
           botId: ctx.me?.id,
@@ -108,7 +105,26 @@ export class BotsFactory {
         isOwner: ctx?.from?.id === ownerId,
         banned: rawUser.banned || false,
       };
-      await next();
+      next();
+    };
+  }
+
+
+  private prepareErrorHandler() {
+    return (err: BotError<ManagedBotContext>) => {
+      const ctx = err.ctx;
+      const e = err.error;
+      if (e instanceof GrammyError) {
+        Logger.error(
+          `Error in bot @${ctx.me.username} (id: ${ctx?.me?.id})`,
+          e.description,
+          BotsFactory.name
+        );
+      } else if (e instanceof HttpError) {
+        Logger.error('Could not contact Telegram:', e, BotsFactory.name);
+      } else {
+        Logger.error('Unknown error: ', err, BotsFactory.name);
+      }
     };
   }
 

@@ -1,12 +1,16 @@
 import {Injectable} from '@nestjs/common';
 import {Bot} from 'grammy';
 import {ManagedBotContext} from '../interfaces/managed-bot-context.interface';
-import {ClientEntityInterface} from '@chanellia/common';
+import {BotEntityInterface} from '@chanellia/common';
+import {ContextId} from "@nestjs/core";
+import {BotsFactory} from "../factory/bots.factory";
 
 interface RegistryContextInterface {
   bot: Bot<ManagedBotContext>;
-  client: ClientEntityInterface;
+  client: BotEntityInterface;
   botInfo: ManagedBotContext['me'];
+  contextId: ContextId;
+  factory: BotsFactory,
 }
 
 @Injectable()
@@ -31,5 +35,9 @@ export class BotRegistryService {
 
   public getMetadataById(botId: number): RegistryContextInterface | null {
     return this.botRegistry.get(botId) || null;
+  }
+
+  public removeBotMetadata(botId: number): void {
+    this.botRegistry.delete(botId);
   }
 }

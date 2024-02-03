@@ -1,25 +1,26 @@
-import {Inject, Injectable, OnModuleInit} from '@nestjs/common';
+import {Inject, Injectable} from '@nestjs/common';
 import {Bot} from 'grammy';
 import {BotContext} from '../interfaces/bot-context.interface';
 import {CHANELLIA_BOT_INSTANCE} from '../providers/bot.provider';
 import {Conversation, createConversation} from '@grammyjs/conversations';
 import {BotsQueueService} from '@chanellia/common';
-import {ClientsRepositoryService} from '../services/clients-repository.service';
+import {BotsRepositoryService} from '../services/bots-repository.service';
+import {run} from "@grammyjs/runner";
 
 @Injectable()
-export class NewBotBotCommand implements OnModuleInit {
+export class NewBotBotCommand {
   constructor(
     @Inject(CHANELLIA_BOT_INSTANCE) private bot: Bot<BotContext>,
     private botsQueueService: BotsQueueService,
-    private clientsRepositoryService: ClientsRepositoryService
+    private botsRepositoryService: BotsRepositoryService
   ) {
   }
 
-  public onModuleInit(): void {
+  public init(): void {
     this.bot.use(createConversation(this.addBotConversation.bind(this), 'addBotConversation'));
 
     this.bot.command('newbot', async (ctx: BotContext) => {
-      const botsCount = await this.clientsRepositoryService.botsCountByAdminId(ctx.from.id);
+      const botsCount = await this.botsRepositoryService.botsCountByAdminId(ctx.from.id);
       if (botsCount >= 2) {
         return ctx.reply('Добавлено максимальное количество ботов');
       }
@@ -28,7 +29,7 @@ export class NewBotBotCommand implements OnModuleInit {
     });
   }
 
-  public async addBotConversation(
+  private async addBotConversation(
     conversation: Conversation<BotContext>,
     ctx: BotContext
   ): Promise<void> {
@@ -36,10 +37,10 @@ export class NewBotBotCommand implements OnModuleInit {
       'Для того, чтобы подключить бота пришли его токен, создать бота можно c помощью @BotFather\n\nЕсли передумал, нажми /cancel'
     );
 
+
     // eslint-disable-next-line no-constant-condition
     while (true) {
       const answerCtx = await conversation.wait();
-
       const botTokenCandidate = (answerCtx.message?.text || '').trim();
       if (botTokenCandidate === '/cancel') {
         await ctx.reply('Ок, не будем добавлять бота');
@@ -51,17 +52,45 @@ export class NewBotBotCommand implements OnModuleInit {
         continue;
       }
 
+
+      const existingClient = await conversation.external(async () => {
+        try {
+          return await this.botsRepositoryService.findClientByToken(botTokenCandidate);
+        } catch (e) {
+          console.log(e);
+        }
+
+      });
+
+      if (existingClient) {
+        ctx.reply(
+          'Такой бот уже добавлен, попробуй другой токен или нажми /cancel чтобы прекратить'
+        );
+        continue;
+      }
+
+
+      const bot = await conversation.external(async () => {
+        try {
+          return new Bot(botTokenCandidate);
+        } catch (e) {
+          return null;
+        }
+      });
+
+      const botRunner = await conversation.external(() => {
+        return run(bot);
+      });
+
+      if (!bot) {
+        ctx.reply(
+          'Не удалось проверить бота, возможно токен с ошибкой, проверь и попробуй еще раз, или нажми /cancel чтобы прекратить'
+        );
+        continue;
+      }
+
       const botInfo = await conversation.external(async () => {
         try {
-          const bot = new Bot(botTokenCandidate);
-          try {
-            bot.start();
-            bot.catch((error) => {
-              console.error(error);
-            });
-          } catch (e) {
-            return null;
-          }
           return await bot.api.getMe();
         } catch (e) {
           return null;
@@ -75,20 +104,13 @@ export class NewBotBotCommand implements OnModuleInit {
         continue;
       }
 
-      const existedBot = await conversation.external(async () => {
-        return await this.clientsRepositoryService.findClientByBotId(botInfo.id);
+      await conversation.external(async () => {
+        botRunner.isRunning && await botRunner.stop();
       });
 
-      if (existedBot) {
-        ctx.reply(
-          'Такой бот уже добавлен, попробуй другой токен или нажми /cancel чтобы прекратить'
-        );
-        continue;
-      }
-
       const clientEntity = await conversation.external(async () => {
-        return this.clientsRepositoryService.createClient({
-          adminUserId: answerCtx.from.id,
+        return this.botsRepositoryService.createClient({
+          user: {id: answerCtx.from.id},
           botId: botInfo.id,
           botUsername: botInfo.username,
           botToken: botTokenCandidate,

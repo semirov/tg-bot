@@ -1,5 +1,5 @@
 import {QueuesEnum} from '@chanellia/common';
-import {ClientsRepositoryService} from './clients-repository.service';
+import {BotsRepositoryService} from './bots-repository.service';
 import {Processor, WorkerHost} from "@nestjs/bullmq";
 import {Job} from "bullmq";
 import {BotContext} from "../interfaces/bot-context.interface";
@@ -8,7 +8,7 @@ import {BotContext} from "../interfaces/bot-context.interface";
 @Processor(QueuesEnum.BOTS_INFO_REQUEST)
 export class BotInfoConsumer extends WorkerHost {
   constructor(
-    private clientsRepositoryService: ClientsRepositoryService
+    private clientsRepositoryService: BotsRepositoryService
   ) {
     super();
   }

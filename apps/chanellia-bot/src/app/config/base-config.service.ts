@@ -49,8 +49,4 @@ export class BaseConfigService {
   get redisPassword(): string {
     return this.configService.getOrThrow<string>('REDIS_PASSWORD');
   }
-
-  get runMode(): 'core' | 'consumer' {
-    return this.configService.get('APP_MODE', 'core');
-  }
 }

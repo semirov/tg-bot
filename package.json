@@ -13,6 +13,7 @@
   "dependencies": {
     "@bull-board/api": "5.14.0",
     "@bull-board/nestjs": "5.14.0",
+    "@grammyjs/auto-retry": "1.1.1",
     "@grammyjs/conversations": "1.1.0",
     "@grammyjs/menu": "1.1.2",
     "@grammyjs/runner": "1.0.4",
@@ -30,7 +31,7 @@
     "bullmq": "4.17.0",
     "date-fns": "2.29.3",
     "date-fns-tz": "2.0.0",
-    "grammy": "1.13.1",
+    "grammy": "1.20.3",
     "imghash": "0.0.9",
     "ioredis": "5.3.2",
     "lodash-es": "4.17.21",

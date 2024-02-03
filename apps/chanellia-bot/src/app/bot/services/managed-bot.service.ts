@@ -1,14 +1,14 @@
 import {Inject, Injectable} from '@nestjs/common';
-import {botManagerEventsMap, botManagerMessagesMap, MicroservicesEnum} from '@chanellia/common';
+import {botManagerEventsMap, MicroservicesEnum} from '@chanellia/common';
 import {ClientProxy} from '@nestjs/microservices';
-import {map, Observable} from 'rxjs';
-import {ClientsRepositoryService} from './clients-repository.service';
+import {Observable} from 'rxjs';
+import {BotsRepositoryService} from './bots-repository.service';
 
 @Injectable()
 export class ManagedBotService {
   constructor(
     @Inject(MicroservicesEnum.WORKER) private microserviceClient: ClientProxy,
-    private clientsRepositoryService: ClientsRepositoryService
+    private clientsRepositoryService: BotsRepositoryService
   ) {
   }
 
@@ -21,5 +21,9 @@ export class ManagedBotService {
     for (const botId of botIds) {
       this.microserviceClient.emit(botManagerEventsMap.GET_BOT_INFO, botId);
     }
+  }
+
+  public stopBot(botId: number): void {
+    this.microserviceClient.emit(botManagerEventsMap.STOP_BOT, botId);
   }
 }

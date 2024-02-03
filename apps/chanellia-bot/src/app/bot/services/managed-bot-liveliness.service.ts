@@ -2,17 +2,17 @@ import {Processor, WorkerHost} from '@nestjs/bullmq';
 import {Job} from 'bullmq';
 import {Logger, OnModuleInit} from '@nestjs/common';
 import {BotsQueueService, LivelinessMessageInterface, QueuesEnum} from '@chanellia/common';
-import {delay, firstValueFrom} from 'rxjs';
+import {delay} from 'rxjs';
 import {Interval} from '@nestjs/schedule';
 import {ManagedBotService} from './managed-bot.service';
-import {ClientsRepositoryService} from './clients-repository.service';
+import {BotsRepositoryService} from './bots-repository.service';
 
 @Processor(QueuesEnum.BOTS_LIVELINESS)
 export class ManagedBotLivelinessService extends WorkerHost implements OnModuleInit {
   constructor(
     private botsQueueService: BotsQueueService,
     private managedBotService: ManagedBotService,
-    private clientsRepositoryService: ClientsRepositoryService
+    private clientsRepositoryService: BotsRepositoryService
   ) {
     super();
   }

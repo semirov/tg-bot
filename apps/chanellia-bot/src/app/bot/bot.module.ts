@@ -4,8 +4,7 @@ import {BotConfigMiddleware} from './providers/bot-config.middleware';
 import {TypeOrmModule} from '@nestjs/typeorm';
 import {HttpModule} from '@nestjs/axios';
 import {SessionEntity} from './entities/session.entity';
-import {SessionManagerService} from './services/session-manager.service';
-import {ClientEntity} from './entities/client.entity';
+import {BotEntity} from './entities/bot.entity';
 import {NewBotBotCommand} from './handlers/new-bot.bot-command';
 import {AppConfigModule} from '../config/app-config.module';
 import {ManagedBotLivelinessService} from './services/managed-bot-liveliness.service';
@@ -14,15 +13,18 @@ import {BotsQueueModule, QueuesEnum} from '@chanellia/common';
 import {BullBoardModule} from '@bull-board/nestjs';
 import {BullAdapter} from '@bull-board/api/bullAdapter';
 import {ManagedBotService} from './services/managed-bot.service';
-import {ClientsRepositoryService} from './services/clients-repository.service';
+import {BotsRepositoryService} from './services/bots-repository.service';
 import {MyBotsBotCommand} from './handlers/my-bots.bot-command';
 import {ManagedBotEventsService} from './services/managed-bot-events.service';
 import {BotInfoConsumer} from "./services/bot-info.consumer";
+import {AnyMessageBotHandler} from "./handlers/any-message.bot-handler";
+import {UserEntity} from "./entities/user.entity";
+import {BotInitializationService} from "./handlers/bot-initialization.service";
 
 @Module({
   imports: [
     HttpModule,
-    TypeOrmModule.forFeature([SessionEntity, ClientEntity]),
+    TypeOrmModule.forFeature([SessionEntity, BotEntity, UserEntity]),
     AppConfigModule,
     BotsQueueModule,
     BullBoardModule.forFeature(
@@ -39,14 +41,15 @@ import {BotInfoConsumer} from "./services/bot-info.consumer";
   providers: [
     LIGHT_HOUSE_BOT_PROVIDER,
     BotConfigMiddleware,
-    SessionManagerService,
-    NewBotBotCommand,
     ManagedBotLivelinessService,
     ManagedBotService,
-    ClientsRepositoryService,
+    BotsRepositoryService,
+    NewBotBotCommand,
     MyBotsBotCommand,
+    AnyMessageBotHandler,
     ManagedBotEventsService,
     BotInfoConsumer,
+    BotInitializationService,
   ],
   exports: [LIGHT_HOUSE_BOT_PROVIDER],
   controllers: [QueueController],
