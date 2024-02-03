@@ -1,4 +1,4 @@
-import { User } from 'grammy/out/types';
+import {User} from 'grammy/out/types';
 
 export class CommonService {
   public static usernameFromTgUser(user: User): string {
@@ -15,5 +15,9 @@ export class CommonService {
     }
 
     return userMeta.filter(Boolean).join(' ');
+  }
+
+  public static randomIntFromInterval(min: number, max: number): number {
+    return Math.floor(Math.random() * (max - min + 1) + min)
   }
 }

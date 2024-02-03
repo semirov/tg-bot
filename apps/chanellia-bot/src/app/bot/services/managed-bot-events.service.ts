@@ -5,7 +5,5 @@ import {QueuesEnum} from '@chanellia/common';
 export class ManagedBotEventsService extends QueueEventsHost {
   @OnQueueEvent('stalled')
   public onJobStalled(args) {
-    console.log(args);
-    // do some stuff
   }
 }

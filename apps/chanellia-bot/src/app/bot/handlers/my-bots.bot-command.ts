@@ -47,7 +47,7 @@ export class MyBotsBotCommand {
           'mybots_botSettingsMenu',
           async (ctx) => {
             await ctx.editMessageText(`Бот @${client.botUsername}`);
-            ctx.session.currentClient = client;
+            ctx.session.currentBot = client;
           }
         );
 
@@ -60,7 +60,7 @@ export class MyBotsBotCommand {
 
     const botSettingsMenu = new Menu<BotContext>('mybots_botSettingsMenu')
       .submenu('Удалить', 'mybots_deleteBotConfirm', async (ctx) => {
-        const client = ctx.session.currentClient;
+        const client = ctx.session.currentBot;
         await ctx.editMessageText(
           `<b>Точно удалить бота @${client.botUsername}</b>?\nСразу после удаления он перестанет выполнять свои функции`,
           {parse_mode: 'HTML'}
@@ -68,23 +68,23 @@ export class MyBotsBotCommand {
       })
       .row()
       .back('Назад', async (ctx) => {
-        ctx.session.currentClient = null;
+        ctx.session.currentBot = null;
         await ctx.editMessageText('Список активных ботов');
       });
 
     const deleteBotConfirmation = new Menu<BotContext>('mybots_deleteBotConfirm')
       .text('Да, удалить', async (ctx) => {
-        const client = ctx.session.currentClient;
+        const client = ctx.session.currentBot;
         await this.clientsRepositoryService.deleteClient(client.id);
         await this.managedBotService.stopBot(client.botId);
         Logger.debug(`Stopping bot @${client.botUsername} (${client.botId})`, MyBotsBotCommand.name)
         await ctx.editMessageText(`Бот @${client.botUsername} остановлен и удален`);
-        ctx.session.currentClient = null;
+        ctx.session.currentBot = null;
         ctx.menu.close();
       })
       .row()
       .back('Назад', async (ctx) => {
-        ctx.session.currentClient = null;
+        ctx.session.currentBot = null;
         await ctx.editMessageText('Список активных ботов');
       });
 

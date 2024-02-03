@@ -1,4 +1,4 @@
-import {Column, DeleteDateColumn, Entity, OneToMany, PrimaryColumn} from 'typeorm';
+import {Column, Entity, OneToMany, PrimaryColumn} from 'typeorm';
 import {UserEntityInterface} from '@chanellia/common';
 import {BotEntity} from './bot.entity';
 
@@ -10,9 +10,11 @@ export class UserEntity implements UserEntityInterface {
   @Column('boolean', {default: false})
   banned: boolean;
 
+  @Column('boolean', {default: false})
+  captcha: boolean;
+
   @OneToMany(() => BotEntity, (client) => client.user, {nullable: true})
   bots: BotEntity[];
-
 
   @Column('timestamp', {default: 'NOW'})
   lastActivity: Date;

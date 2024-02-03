@@ -1,13 +1,13 @@
-import { Inject, Injectable, OnModuleInit } from '@nestjs/common';
-import { MainMenuService } from './modules/menus/main-menu.service';
-import { BOT } from './modules/bot/providers/bot.provider';
-import { Bot, CommandContext, InlineKeyboard } from 'grammy';
-import { BotContext } from './modules/bot/interfaces/bot-context.interface';
-import { BaseConfigService } from './modules/config/base-config.service';
-import { UserService } from './modules/bot/services/user.service';
-import { UserPostManagementService } from './modules/post-management/user-post-management.service';
-import { ConversationsEnum } from './modules/post-management/constants/conversations.enum';
-import { SettingsService } from './modules/bot/services/settings.service';
+import {Inject, Injectable, OnModuleInit} from '@nestjs/common';
+import {MainMenuService} from './modules/menus/main-menu.service';
+import {BOT} from './modules/bot/providers/bot.provider';
+import {Bot, CommandContext, InlineKeyboard} from 'grammy';
+import {BotContext} from './modules/bot/interfaces/bot-context.interface';
+import {BaseConfigService} from './modules/config/base-config.service';
+import {UserService} from './modules/bot/services/user.service';
+import {UserPostManagementService} from './modules/post-management/user-post-management.service';
+import {ConversationsEnum} from './modules/post-management/constants/conversations.enum';
+import {SettingsService} from './modules/bot/services/settings.service';
 
 @Injectable()
 export class AppService implements OnModuleInit {
@@ -18,7 +18,8 @@ export class AppService implements OnModuleInit {
     private userPostManagementService: UserPostManagementService,
     private userService: UserService,
     private settingsService: SettingsService
-  ) {}
+  ) {
+  }
 
   public onModuleInit(): void {
     this.mainMenuService.initStartMenu();
@@ -57,7 +58,7 @@ export class AppService implements OnModuleInit {
           ctx.session.anonymousPublishing ? 'публично' : 'анонимно'
         },` +
         ' то это можно включить в настройках в меню бота';
-      await ctx.reply(text, { parse_mode: 'HTML' });
+      await ctx.reply(text, {parse_mode: 'HTML'});
       await this.userService.updateUserLastActivity(ctx);
     });
   }
@@ -74,7 +75,7 @@ export class AppService implements OnModuleInit {
         await this.userService.updateUserLastActivity(ctx);
         await ctx.reply(
           'К публикации принимаются только картинки и видео\n\nЕсли тебе нужно что-то другое нажми /menu' +
-            '\n\nЕсли хочешь связаться с админом, нажми /ask_admin'
+          '\n\nЕсли хочешь связаться с админом, нажми /ask_admin'
         );
       }
     );
@@ -91,7 +92,7 @@ export class AppService implements OnModuleInit {
         reply_markup: menu,
         parse_mode: 'HTML',
       });
-      const { first_name, last_name, username, is_bot, is_premium } = ctx.chatJoinRequest.from;
+      const {first_name, last_name, username, is_bot, is_premium} = ctx.chatJoinRequest.from;
 
       const text = [
         'Новый подписчик:\n',
@@ -108,6 +109,5 @@ export class AppService implements OnModuleInit {
       await this.bot.api.sendMessage(this.baseConfigService.ownerId, text);
     });
 
-    // this.bot.on('channel_post', (ctx) => console.log(ctx.channelPost.chat.id));
   }
 }

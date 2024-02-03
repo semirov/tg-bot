@@ -58,7 +58,9 @@ export class BotConfigMiddleware {
 
       ctx.config = {
         isOwner: ctx?.from?.id === this.baseConfigService.ownerId,
-        banned: rawUser.banned || false,
+        banned: rawUser.banned,
+        captchaMode: rawUser.captcha,
+
       };
       if (ctx.config.banned) {
         return;
