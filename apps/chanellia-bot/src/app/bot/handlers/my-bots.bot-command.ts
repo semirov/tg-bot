@@ -11,7 +11,7 @@ export class MyBotsBotCommand {
   constructor(
     @Inject(CHANELLIA_BOT_INSTANCE) private bot: Bot<BotContext>,
     private managedBotService: ManagedBotService,
-    private clientsRepositoryService: BotsRepositoryService
+    private botsRepositoryService: BotsRepositoryService
   ) {
   }
 
@@ -23,7 +23,7 @@ export class MyBotsBotCommand {
       const adminId = ctx.from.id;
       await this.managedBotService.actualizeBotNamesByAdminId(adminId);
 
-      const botsCount = await this.clientsRepositoryService.botsCountByAdminId(adminId);
+      const botsCount = await this.botsRepositoryService.botsCountByAdminId(adminId);
 
       if (!botsCount) {
         return void ctx.reply('Активных ботов нет');
@@ -38,10 +38,10 @@ export class MyBotsBotCommand {
 
     menu.dynamic(async (ctx) => {
       const adminId = ctx.from.id;
-      const clients = await this.clientsRepositoryService.getClientsByAdminId(adminId);
+      const bots = await this.botsRepositoryService.getClientsByAdminId(adminId);
       const range = new MenuRange<BotContext>();
-      for (let i = 0; i < clients.length; i++) {
-        const client = clients[i];
+      for (let i = 0; i < bots.length; i++) {
+        const client = bots[i];
         const menuRange = range.submenu(
           `@${client.botUsername}`,
           'mybots_botSettingsMenu',
@@ -75,7 +75,7 @@ export class MyBotsBotCommand {
     const deleteBotConfirmation = new Menu<BotContext>('mybots_deleteBotConfirm')
       .text('Да, удалить', async (ctx) => {
         const client = ctx.session.currentBot;
-        await this.clientsRepositoryService.deleteClient(client.id);
+        await this.botsRepositoryService.deleteClient(client.id);
         await this.managedBotService.stopBot(client.botId);
         Logger.debug(`Stopping bot @${client.botUsername} (${client.botId})`, MyBotsBotCommand.name)
         await ctx.editMessageText(`Бот @${client.botUsername} остановлен и удален`);

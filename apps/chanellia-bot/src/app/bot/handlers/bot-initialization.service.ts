@@ -6,6 +6,7 @@ import {CHANELLIA_BOT_INSTANCE} from '../providers/bot.provider';
 import {Bot} from 'grammy';
 import {BotContext} from '../interfaces/bot-context.interface';
 import {run} from '@grammyjs/runner';
+import {StartBotCommand} from "./start.bot-command";
 
 @Injectable()
 export class BotInitializationService implements OnModuleInit {
@@ -13,6 +14,7 @@ export class BotInitializationService implements OnModuleInit {
     private anyMessageBotHandler: AnyMessageBotHandler,
     private myBotsBotCommand: MyBotsBotCommand,
     private newBotBotCommand: NewBotBotCommand,
+    private startBotCommand: StartBotCommand,
     @Inject(CHANELLIA_BOT_INSTANCE) private bot: Bot<BotContext>
   ) {
   }
@@ -21,6 +23,7 @@ export class BotInitializationService implements OnModuleInit {
     this.myBotsBotCommand.init();
     this.newBotBotCommand.init();
     this.anyMessageBotHandler.init();
+    this.startBotCommand.init();
 
     run(this.bot);
   }

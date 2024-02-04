@@ -18,6 +18,7 @@ import {BotInfoConsumer} from "./services/bot-info.consumer";
 import {AnyMessageBotHandler} from "./handlers/any-message.bot-handler";
 import {BotInitializationService} from "./handlers/bot-initialization.service";
 import {entities} from "./entities/entities.const";
+import {StartBotCommand} from "./handlers/start.bot-command";
 
 @Module({
   imports: [
@@ -44,10 +45,12 @@ import {entities} from "./entities/entities.const";
     BotsRepositoryService,
     NewBotBotCommand,
     MyBotsBotCommand,
+    StartBotCommand,
     AnyMessageBotHandler,
     ManagedBotEventsService,
     BotInfoConsumer,
     BotInitializationService,
+
   ],
   exports: [LIGHT_HOUSE_BOT_PROVIDER],
   controllers: [QueueController],

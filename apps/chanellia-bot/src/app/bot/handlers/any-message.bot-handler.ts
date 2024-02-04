@@ -20,7 +20,8 @@ export class AnyMessageBotHandler {
     private clientsRepositoryService: BotsRepositoryService,
     private config: BaseConfigService,
     @InjectRepository(MessageEntity) private messagesRepository: Repository<MessageEntity>,
-    @InjectRepository(UserEntity) private userRepository: Repository<UserEntity>
+    @InjectRepository(UserEntity) private userRepository: Repository<UserEntity>,
+    private botsRepositoryService: BotsRepositoryService
   ) {
   }
 
@@ -99,6 +100,8 @@ export class AnyMessageBotHandler {
         return this.banUser(ctx, messageMetadata);
       case 'капча':
         return this.enableCaptcha(ctx, messageMetadata);
+      case 'боты':
+        return this.showUserBots(ctx, messageMetadata);
       default:
         return false;
     }
@@ -109,15 +112,19 @@ export class AnyMessageBotHandler {
       messageMetadata.userChatId,
       'Тебе ограничен доступ к боту, больше он не будет реагировать на сообщения'
     );
-    ctx.reply('Пользователь заблокирован', {reply_to_message_id: ctx.message.message_id});
+    ctx.reply('Пользователь заблокирован', {reply_to_message_id: messageMetadata.botMessageId});
     await this.userRepository.update({id: messageMetadata.userChatId}, {banned: true});
     return true;
   }
 
   private async enableCaptcha(ctx: BotContext, messageMetadata: MessageEntity): Promise<boolean> {
     await this.userRepository.update({id: messageMetadata.userChatId}, {captcha: true});
-    ctx.reply('Пользователю включена капча', {reply_to_message_id: ctx.message.message_id});
+    ctx.reply('Пользователю включена капча', {reply_to_message_id: messageMetadata.botMessageId});
     return true;
+  }
+
+  private async disableCaptcha(userId: number): Promise<void> {
+    await this.userRepository.update({id: userId}, {captcha: false});
   }
 
   private async sendCaptcha(ctx: BotContext): Promise<void> {
@@ -144,6 +151,7 @@ export class AnyMessageBotHandler {
         await answerCtx.deleteMessage();
         await answerCtx.api.deleteMessage(captchaMessage.chat.id, captchaMessage.message_id);
         conversation.session.captchaValues = null;
+        await this.disableCaptcha(answerCtx.from.id);
         await this.forwardUserMessageToBot(ctx);
         return;
       }
@@ -177,5 +185,16 @@ export class AnyMessageBotHandler {
         break;
     }
     return {first, second, operand, result};
+  }
+
+  private async showUserBots(ctx: BotContext, messageMetadata: MessageEntity): Promise<boolean> {
+    const bots = await this.botsRepositoryService.getClientsByAdminId(messageMetadata.userChatId);
+    if (!bots.length) {
+      ctx.reply('У пользователя нет ботов');
+    } else {
+      const botsMessage = bots.map(bot => `@${bot.botUsername}`).join('\n');
+      ctx.reply(`У пользователя запущены боты:\n${botsMessage}`, {reply_to_message_id: messageMetadata.botMessageId});
+    }
+    return true;
   }
 }
