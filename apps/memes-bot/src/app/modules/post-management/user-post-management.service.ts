@@ -2,7 +2,7 @@ import { Conversation, createConversation } from '@grammyjs/conversations';
 import { BotContext } from '../bot/interfaces/bot-context.interface';
 import { Inject, Logger, OnModuleInit } from '@nestjs/common';
 import { BOT } from '../bot/providers/bot.provider';
-import { Bot, InlineKeyboard } from 'grammy';
+import { Bot, Composer, InlineKeyboard } from 'grammy';
 import { ConversationsEnum } from './constants/conversations.enum';
 import { Menu } from '@grammyjs/menu';
 import { BaseConfigService } from '../config/base-config.service';
@@ -19,6 +19,7 @@ import {
 import { SettingsService } from '../bot/services/settings.service';
 import { CringeManagementService } from '../bot/services/cringe-management.service';
 import { DeduplicationService } from '../bot/services/deduplication.service';
+import * as console from 'node:console';
 
 export class UserPostManagementService implements OnModuleInit {
   constructor(
@@ -36,11 +37,12 @@ export class UserPostManagementService implements OnModuleInit {
    * Меню публикации одобренного поста
    */
   private moderatedPostMenu: Menu<BotContext>;
+  private replyToBotContext: Composer<BotContext>;
 
   public readonly MEME_RULES =
     '<b>Для публикации принимаются:</b>\n' +
-    '- Смешные картинки\n' +
-    '- Смешные видео\n\n' +
+    '- Смищное\n' +
+    '- Видео\n\n' +
     '<b>Мы можем изменить предложеный мем:</b>\n' +
     '- Подпись к картинкам или видео будет удалена\n' +
     '- Публикация может быть отклонена, если админу мем покажется не смешным\n' +
@@ -52,6 +54,8 @@ export class UserPostManagementService implements OnModuleInit {
 
   public onModuleInit(): void {
     this.buildModeratedPostMenu();
+    this.prepareReplyToBotContext();
+    this.handleAdminUserResponse();
     this.bot.errorBoundary(
       (err) => Logger.log(err),
       createConversation(this.conversation.bind(this), ConversationsEnum.SEND_MEME_CONVERSATION)
@@ -108,11 +112,14 @@ export class UserPostManagementService implements OnModuleInit {
   }
 
   public async handleUserMemeRequest(ctx: BotContext): Promise<void> {
-    const isLastRequestMoreThanMinuteAgo = await this.isLastRequestMoreThanMinuteAgo(ctx);
-
-    if (!isLastRequestMoreThanMinuteAgo) {
-      await ctx.reply('Предлагать мемы можно не чаще чем раз в минуту ⏳');
-      return;
+    try {
+      await ctx.react('👍');
+    } catch (e) {
+      await ctx.reply('Мы все получили и скоро ответим');
+      Logger.warn(
+        `Cannot set message reaction for user message in bot ${ctx.me.id}`,
+        UserPostManagementService.name
+      );
     }
 
     const hash = await this.deduplicationService.getPostImageHash(ctx?.message?.photo);
@@ -120,9 +127,7 @@ export class UserPostManagementService implements OnModuleInit {
     if (duplicates.some((duplicate) => duplicate.distance >= 0.5)) {
       const [duplicate] = duplicates;
       await ctx.reply(
-        'Жаль, но такой мем уже публиковался 😏\n\n' +
-          'Он смешной, но мы не можем его опубликовать еще раз, попробуй предложить что-нибудь другое 😉\n\n\n' +
-          'Если ты считаешь что произошло чудовищное недоразумение\nнажми /ask_admin и напиши об этом'
+        'Такая публикация уже была'
       );
       await this.bot.api.forwardMessage(
         ctx.from.id,
@@ -168,7 +173,6 @@ export class UserPostManagementService implements OnModuleInit {
       originalMessageId: ctx.message.message_id,
       userRequestChannelMessageId: message.message_id,
     });
-    await ctx.reply('Мем отправлен на одобрение 😎');
     await this.userService.updateUserLastActivity(ctx);
   }
 
@@ -364,8 +368,7 @@ export class UserPostManagementService implements OnModuleInit {
       .catch();
     await this.bot.api.sendMessage(
       message.user.id,
-      'Жаль, но твой мем отклонили и он не будет опубликован 😔\n\n' +
-        'Не расстраивайся, ты всегда можешь предложить другой мем 😉'
+      'Мы не можем такое опубликовать, твой пост отклонен'
     );
   }
 
@@ -391,6 +394,8 @@ export class UserPostManagementService implements OnModuleInit {
       hash: imageHash,
     };
 
+
+
     switch (mode) {
       case PublicationModesEnum.NOW_SILENT:
         return this.onPublishNow(publishContext);
@@ -403,6 +408,37 @@ export class UserPostManagementService implements OnModuleInit {
         return this.publishNightCringeScheduled(publishContext);
     }
   }
+
+  private handleAdminUserResponse(): void {
+    this.replyToBotContext.on(['message', 'channel_post'], async (ctx) => {
+      const adminMessageId = ctx?.channelPost?.message_id || ctx?.message?.message_id;
+      const message = await this.userRequestService.repository.findOne({
+        where: { userRequestChannelMessageId: ctx.channelPost.reply_to_message.message_id },
+        relations: { user: true },
+      });
+
+
+      try {
+        // убираем реакцию у пользователя
+        await this.bot.api.setMessageReaction(
+          message.user.id,
+          message.originalMessageId,
+          []
+        );
+      } catch (e) {
+        Logger.warn(
+          `Cannot remove reaction message for user message for bot ${ctx.me.id}`,
+          UserPostManagementService.name
+        );
+      }
+
+      // копируем ответ пользователю
+      await this.bot.api.copyMessage(message.user.id, ctx.chat.id, adminMessageId, {
+        reply_to_message_id: message.originalMessageId,
+      });
+    });
+  }
+
 
   public async onPublishNow(publishContext: ScheduledPostContextInterface) {
     const message = await this.userRequestService.repository.findOne({
@@ -462,9 +498,9 @@ export class UserPostManagementService implements OnModuleInit {
 
     await this.bot.api.forwardMessage(message.user.id, channelInfo.id, publishedMessage.message_id);
 
-    let userFeedbackMessage = 'Твой мем опубликован 👍\n';
+    let userFeedbackMessage = 'Твой пост опубликован \n';
     if (publishContext.mode !== PublicationModesEnum.NIGHT_CRINGE) {
-      userFeedbackMessage += 'Спасибо что делишься смешными мемами, присылай еще! ❤️\n';
+      userFeedbackMessage += 'Присылай еще!\n';
     } else {
       const cringeChannelLink = await this.settingsService.cringeChannelHtmlLink();
       userFeedbackMessage += `Утром пост будет перемещен в канал ${cringeChannelLink}`;
@@ -639,5 +675,18 @@ export class UserPostManagementService implements OnModuleInit {
       return true;
     }
     return false;
+  }
+
+  private prepareReplyToBotContext(): void {
+    this.replyToBotContext = this.bot.filter(async (ctx: BotContext) => {
+      if ( !ctx?.channelPost?.reply_to_message && !ctx?.message?.reply_to_message) {
+        return false;
+      }
+      const message = await this.userRequestService.repository.findOne({
+        where: { userRequestChannelMessageId: ctx?.channelPost?.reply_to_message?.message_id || ctx?.message?.reply_to_message?.message_id },
+      });
+      return !!message;
+
+    });
   }
 }

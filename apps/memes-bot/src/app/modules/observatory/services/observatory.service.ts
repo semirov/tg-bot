@@ -29,7 +29,6 @@ export class ObservatoryService implements OnModuleInit {
     @Inject(BOT) private bot: Bot<BotContext>,
     private baseConfigService: BaseConfigService,
     private userService: UserService,
-    private userRequestService: UserRequestService,
     private clientBaseService: ClientBaseService,
     @InjectRepository(ObservatoryPostEntity)
     private observatoryPostRepository: Repository<ObservatoryPostEntity>,
