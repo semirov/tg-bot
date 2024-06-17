@@ -23,7 +23,7 @@ export const BOT_PROVIDER = {
     configMiddleware: BotConfigMiddleware,
     sessionManagerService: SessionManagerService
   ) => {
-    const bot = new Bot(config.botToken);
+    const bot = new Bot(config.botToken, { client: { environment: config.tgEnv } });
 
     bot.catch((err: BotError<BotContext>) => {
       const ctx = err.ctx;

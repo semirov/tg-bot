@@ -14,4 +14,5 @@ export default () => ({
   DATABASE_NAME: process.env.DATABASE_NAME,
   APP_API_ID: process.env.APP_API_ID,
   APP_API_HASH: process.env.APP_API_HASH,
+  TG_ENV: process.env.TG_ENV || 'prod'
 });

@@ -2,12 +2,13 @@ import { Inject, Injectable, OnModuleInit } from '@nestjs/common';
 import { MainMenuService } from './modules/menus/main-menu.service';
 import { BOT } from './modules/bot/providers/bot.provider';
 import { Bot, CommandContext, InlineKeyboard } from 'grammy';
-import { BotContext } from './modules/bot/interfaces/bot-context.interface';
+import { BotContext, CaptchaValuesInterface } from './modules/bot/interfaces/bot-context.interface';
 import { BaseConfigService } from './modules/config/base-config.service';
 import { UserService } from './modules/bot/services/user.service';
 import { UserPostManagementService } from './modules/post-management/user-post-management.service';
 import { ConversationsEnum } from './modules/post-management/constants/conversations.enum';
 import { SettingsService } from './modules/bot/services/settings.service';
+import { Conversation, createConversation } from '@grammyjs/conversations';
 
 @Injectable()
 export class AppService implements OnModuleInit {
@@ -21,11 +22,14 @@ export class AppService implements OnModuleInit {
   ) {}
 
   public onModuleInit(): void {
+    this.bot.use(
+      createConversation(this.prepareCaptchaConversation.bind(this), 'privateBotCaptcha')
+    );
     this.mainMenuService.initStartMenu();
     this.onAskAdmin();
     this.onStartCommand();
     this.onMenuCommand();
-    this.onMemeFromMain();
+    this.onUserMessage();
     this.onNewMember();
   }
 
@@ -62,22 +66,47 @@ export class AppService implements OnModuleInit {
     });
   }
 
-  private onMemeFromMain() {
-    this.bot.on(['message:photo', 'message:video'], async (ctx) => {
+  private onUserMessage() {
+    this.bot.on(['message'], async (ctx: BotContext) => {
+      if (!ctx.session.captchaSolved) {
+        return this.sendCaptcha(ctx);
+      }
       await this.userService.updateUserLastActivity(ctx);
       await this.userPostManagementService.handleUserMemeRequest(ctx);
     });
+  }
 
-    this.bot.on(
-      ['message:text', 'message:document', 'message:voice', 'message:sticker'],
-      async (ctx) => {
-        await this.userService.updateUserLastActivity(ctx);
-        await ctx.reply(
-          'К публикации принимаются только картинки и видео\n\nЕсли тебе нужно что-то другое нажми /menu' +
-            '\n\nЕсли хочешь связаться с админом, нажми /ask_admin'
-        );
-      }
-    );
+  public randomIntFromInterval(min: number, max: number): number {
+    return Math.floor(Math.random() * (max - min + 1) + min)
+  }
+
+  public prepareCaptchaValues(): CaptchaValuesInterface {
+    const values = [
+      this.randomIntFromInterval(1, 25),
+      this.randomIntFromInterval(1, 25),
+    ].sort((a, b) => b - a);
+    const [first, second] = values;
+
+    const operandCase = this.randomIntFromInterval(0, 1);
+    let operand = '-';
+    let result = 0;
+    switch (operandCase) {
+      case 0:
+        result = first + second;
+        operand = '+';
+        break;
+      case 1:
+        result = first - second;
+        operand = '-';
+        break;
+    }
+    return {operand, result, first, second};
+  }
+
+
+  private async sendCaptcha(ctx: BotContext): Promise<void> {
+    ctx.session.captchaValues = this.prepareCaptchaValues();
+    await ctx.conversation.enter('privateBotCaptcha');
   }
 
   private onNewMember() {
@@ -107,7 +136,33 @@ export class AppService implements OnModuleInit {
       await ctx.approveChatJoinRequest(ctx.chatJoinRequest.from.id);
       await this.bot.api.sendMessage(this.baseConfigService.ownerId, text);
     });
+  }
 
-    // this.bot.on('channel_post', (ctx) => console.log(ctx.channelPost.chat.id));
+  private async prepareCaptchaConversation(
+    conversation: Conversation<BotContext>,
+    ctx: BotContext
+  ): Promise<void> {
+    const {first, second, operand, result} = conversation.session.captchaValues;
+    let message = `Для того чтобы сообщение было доставлено, нужно решить задачу.\n`;
+    message += `Пока ты не решишь, бот не будет отвечать\n\n`;
+    message += `Чему равно <b>${first} ${operand} ${second}?</b>\n\n`;
+    message += `Ответ пришли одним числом`;
+    const captchaMessage = await ctx.reply(message, {parse_mode: 'HTML'});
+
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      const answerCtx = await conversation.wait();
+
+      if (Number(answerCtx?.message?.text?.trim()) === result) {
+        await answerCtx.deleteMessage();
+        await answerCtx.api.deleteMessage(captchaMessage.chat.id, captchaMessage.message_id);
+        conversation.session.captchaValues = null;
+        conversation.session.captchaSolved = true;
+        await this.userService.updateUserLastActivity(ctx);
+        await this.userPostManagementService.handleUserMemeRequest(ctx);
+        return;
+      }
+      await answerCtx.deleteMessage();
+    }
   }
 }

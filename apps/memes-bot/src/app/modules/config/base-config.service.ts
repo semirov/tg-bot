@@ -60,4 +60,8 @@ export class BaseConfigService {
   get appApiHash(): string {
     return this.configService.getOrThrow<string>('APP_API_HASH');
   }
+
+  get tgEnv(): 'prod' | 'test' {
+    return this.configService.getOrThrow<'prod' | 'test'>('TG_ENV');
+  }
 }

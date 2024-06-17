@@ -68,7 +68,7 @@ export class UserModeratedPostService {
     try {
       await ctx.editMessageReplyMarkup({reply_markup: this.endModerateKeyboard});
       await ctx.reply(
-        'Жаль 😞\nЕсли снова захочешь оценивать мемы, то можешь включить это в настройках\n' +
+        'Если снова захочешь оценивать мемы, то можешь включить это в настройках\n' +
         '"Меню" -> "Настройки" -> "Не оцениваю мемы"\n'
       );
     } catch (e) {
@@ -112,13 +112,15 @@ export class UserModeratedPostService {
     publishContext: ScheduledPostContextInterface
   ): Promise<void> {
     try {
-      await ctx.api.sendMessage(
-        userId,
-        'Привет!\nОцени пожалуйста этот мем 😌\n' +
-        'Голосование продлится 2 часа, после чего мем будет либо отклонен, либо опубликован\n' +
-        'Если не хочешь чтобы тебя просили оценивать мемы, нажми кнопку "Не хочу оценивать мемы" ' +
-        'и больше таких сообщений не будет'
-      );
+      if (!ctx.session.userVoted) {
+        await ctx.api.sendMessage(
+          userId,
+          'Привет!\nОцени пожалуйста этот пост\n' +
+          'Голосование продлится 2 часа, после чего пост будет либо отклонен, либо опубликован\n' +
+          'Если не хочешь чтобы тебя просили оценивать мемы, нажми кнопку "Не хочу оценивать мемы" ' +
+          'и больше таких сообщений не будет'
+        );
+      }
       const message = await ctx.api.copyMessage(
         userId,
         this.baseConfigService.userRequestMemeChannel,
@@ -149,6 +151,7 @@ export class UserModeratedPostService {
 
   private async processUserVote(ctx: BotContext & MenuFlavor, isLike: boolean): Promise<void> {
     const moderatedMessage = await this.getModeratedContextByCtx(ctx);
+    ctx.session.userVoted = true;
     if (moderatedMessage.isRejected || moderatedMessage.isApproved) {
       try {
         await ctx.editMessageReplyMarkup({reply_markup: this.endModerateKeyboard});
