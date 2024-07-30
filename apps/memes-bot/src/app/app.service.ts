@@ -2,7 +2,11 @@ import { Inject, Injectable, OnModuleInit } from '@nestjs/common';
 import { MainMenuService } from './modules/menus/main-menu.service';
 import { BOT } from './modules/bot/providers/bot.provider';
 import { Bot, CommandContext, InlineKeyboard } from 'grammy';
-import { BotContext, CaptchaValuesInterface } from './modules/bot/interfaces/bot-context.interface';
+import {
+  BotContext,
+  CaptchaValuesInterface,
+  SessionDataInterface
+} from './modules/bot/interfaces/bot-context.interface';
 import { BaseConfigService } from './modules/config/base-config.service';
 import { UserService } from './modules/bot/services/user.service';
 import { UserPostManagementService } from './modules/post-management/user-post-management.service';
@@ -163,6 +167,9 @@ export class AppService implements OnModuleInit {
         return;
       }
       await answerCtx.deleteMessage();
+      const session = conversation.session;
+      const {first, second, operand} = session.captchaValues;
+      await ctx.reply(`Капчу все таки надо решить\nЧему равно <b>${first} ${operand} ${second}?</b>`, {parse_mode: 'HTML'});
     }
   }
 }
