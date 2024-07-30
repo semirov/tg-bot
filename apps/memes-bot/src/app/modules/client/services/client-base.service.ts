@@ -227,10 +227,6 @@ export class ClientBaseService implements OnModuleInit {
       return;
     }
 
-    if (await this.isPostWithLinks(event)) {
-      return;
-    }
-
     setTimeout(
       () => event.message.forwardTo(bigInt(this.baseConfigService.observerChannel)),
       Math.round(Math.random() * 5 + 5) * 1000
