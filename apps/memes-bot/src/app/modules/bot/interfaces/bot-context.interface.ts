@@ -20,6 +20,7 @@ export interface SessionDataInterface {
   adminUserConversationMessageId?: number;
   captchaSolved?: boolean;
   captchaValues?: CaptchaValuesInterface;
+  approveJoinRequest?: number;
   userVoted?: boolean;
 }
 

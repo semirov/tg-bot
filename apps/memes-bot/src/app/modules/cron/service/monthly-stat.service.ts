@@ -53,7 +53,7 @@ export class MonthlyStatService {
 
     let text =
       'Каждый месяц публикуется список наиболее активных пользователей предложки\n' +
-      'спасибо вам за мемы ❤️\n\n';
+      'спасибо вам за посты ❤️\n\n';
     for (const index in statistics) {
       const item = statistics[index];
       text += `${this.leaderBoardIconByIndex(index)}${this.getNameFromStatItem(item)} - ${
@@ -61,12 +61,12 @@ export class MonthlyStatService {
       }\n\n`;
     }
 
-    text += 'Чтобы попасть в этот список нужно предлагать мемы через бота 😉\n';
+    text += 'Чтобы попасть в этот список нужно предлагать посты через бота 😉\n';
     text += '#статистика';
 
     const me = await this.bot.api.getMe();
 
-    const inlineKeyboard = new InlineKeyboard().url('Прислать мем', `https://t.me/${me.username}`);
+    const inlineKeyboard = new InlineKeyboard().url('Прислать пост', `https://t.me/${me.username}`);
 
     const message = await this.bot.api.sendMessage(this.baseConfigService.memeChanelId, text, {
       reply_markup: inlineKeyboard,
@@ -103,7 +103,7 @@ export class MonthlyStatService {
       let text = `Привет!\n\nТы в топе пользователей предложки 🎉🎉\n\n`;
       text += `За последний месяц было опубликовано постов - ${item.count}\n`;
       text += `Твое место в общем рейтинге - ${Number(index) + 1}\n\n`;
-      text += `Спасибо что предлагаешь мемы ❤️`;
+      text += `Спасибо что предлагаешь посты ❤️`;
 
       const userId = item.userId;
       try {
