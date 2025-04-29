@@ -79,7 +79,7 @@ export class AppService implements OnModuleInit {
 
       const chatMember = await  this.bot.api.getChatMember(this.baseConfigService.memeChanelId, ctx.from.id);
 
-      if (chatMember.status !== 'member') {
+      if (!['member', 'creator', 'administrator' ].includes(chatMember.status)) {
         try {
           await this.approveUserJoin(ctx);
         } catch (e) {
@@ -192,7 +192,7 @@ export class AppService implements OnModuleInit {
         conversation.session.captchaSolved = true;
         const chatMember = await  conversation.external( async () => this.bot.api.getChatMember(this.baseConfigService.memeChanelId, ctx.from.id));
 
-        if (chatMember.status !== 'member') {
+        if (!['member', 'creator', 'administrator' ].includes(chatMember.status)) {
           try {
             await conversation.external(async () => this.approveUserJoin(ctx));
           } catch (e) {
