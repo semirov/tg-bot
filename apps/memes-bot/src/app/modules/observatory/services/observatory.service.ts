@@ -110,6 +110,8 @@ export class ObservatoryService implements OnModuleInit {
       .text('Кринж', async (ctx) => this.publishPost(ctx, PublicationModesEnum.NIGHT_CRINGE))
       .text('Сейчас', async (ctx) => this.publishPost(ctx, PublicationModesEnum.NOW_SILENT))
       .row()
+      .text('Ближайший слот', async (ctx) => this.publishPost(ctx, PublicationModesEnum.NEXT_INTERVAL))
+      .row()
       .text('Ночью', async (ctx) => this.publishPost(ctx, PublicationModesEnum.NEXT_NIGHT))
       .text('Утром', async (ctx) => this.publishPost(ctx, PublicationModesEnum.NEXT_MORNING))
       .text('Днем', async (ctx) => this.publishPost(ctx, PublicationModesEnum.NEXT_MIDDAY))
@@ -121,6 +123,8 @@ export class ObservatoryService implements OnModuleInit {
       autoAnswer: false,
     })
       .text('Сейчас', async (ctx) => this.moderateViaUsers(ctx, PublicationModesEnum.NOW_SILENT))
+      .row()
+      .text('Ближайший слот', async (ctx) => this.publishPost(ctx, PublicationModesEnum.NEXT_INTERVAL))
       .row()
       .text('Ночью', async (ctx) => this.moderateViaUsers(ctx, PublicationModesEnum.NEXT_NIGHT))
       .text('Утром', async (ctx) => this.moderateViaUsers(ctx, PublicationModesEnum.NEXT_MORNING))

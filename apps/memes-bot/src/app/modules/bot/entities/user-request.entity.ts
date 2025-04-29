@@ -18,6 +18,15 @@ export class UserRequestEntity {
   @Column('bigint', { nullable: true })
   userRequestChannelMessageId: number;
 
+  @Column({ default: false })
+  possibleDuplicate: boolean;
+
+  @Column({ default: false })
+  isDuplicate: boolean;
+
+  @Column('bigint', { nullable: true })
+  checkedByModerator: number;
+
   @Column('boolean', { nullable: true })
   isApproved: boolean;
 
@@ -44,4 +53,13 @@ export class UserRequestEntity {
 
   @Column('timestamptz', { default: 'NOW' })
   createdAt: Date;
+
+  @Column({ default: false })
+  isTextRequest: boolean;
+
+  @Column({ nullable: true })
+  replyToMessageId: number;
+
+  @Column({ nullable: true })
+  scheduledDuplicateId: number;
 }

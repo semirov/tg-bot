@@ -76,8 +76,32 @@ export class PostSchedulerService {
     return utcToZonedTime(date, 'Europe/Moscow');
   }
 
+  /**
+   * Получить все запланированные посты
+   */
+  public async getAllScheduledPosts(): Promise<any[]> {
+    return this.repository.find({
+      where: {
+        isPublished: false
+      },
+      order: {
+        publishDate: 'ASC'
+      }
+    });
+  }
+
+  /**
+   * Получить запланированный пост по ID
+   */
+  public async getScheduledPostById(id: number): Promise<any> {
+    return this.repository.findOne({
+      where: { id }
+    });
+  }
+
   private async nextScheduledTimeByMode(mode: PublicationModesEnum): Promise<Date> {
     const interval = SchedulerCommonService.timeIntervalByMode(mode);
+    const MIN_INTERVAL_MINUTES = 60; // Минимальный интервал в 1 час
 
     const nowTimeStamp = new Date();
     let startTimestamp = zonedTimeToUtc(set(nowTimeStamp, interval.from), 'Europe/Moscow');
@@ -85,58 +109,102 @@ export class PostSchedulerService {
     const nowIsAfterEnd = isAfter(nowTimeStamp, endTimestamp);
     const nowIsInInterval = nowTimeStamp >= startTimestamp && nowTimeStamp <= endTimestamp;
 
-    // если прям сейчас дальше начала интервала, переносим на следующий день
+    // Если текущее время после интервала, переносим на следующий день
     if (nowIsAfterEnd) {
       startTimestamp = add(startTimestamp, { days: 1 });
       endTimestamp = add(endTimestamp, { days: 1 });
     }
 
-    // если сейчас внутри интервала, двигаем левый конец на текущее время
+    // Если сейчас внутри интервала, двигаем левый конец на текущее время
     if (nowIsInInterval) {
       startTimestamp = nowTimeStamp;
     }
 
-    const scheduledPosts: PostSchedulerEntity[] = await this.postSchedulerEntity.find({
-      where: { publishDate: Between(startTimestamp, endTimestamp), mode, isPublished: false },
-      order: { publishDate: 'DESC' },
-      select: ['publishDate'],
-      cache: false,
-    });
-
-    // формируем границы интервала
-    const postIntervals = [
-      set(startTimestamp, { seconds: 0, milliseconds: 0 }).getTime(),
-      ...scheduledPosts.map((post) =>
-        set(post.publishDate, { seconds: 0, milliseconds: 0 }).getTime()
-      ),
-      set(endTimestamp, { seconds: 0, milliseconds: 0 }).getTime(),
-    ];
-
-    // получаем уникальные метки времени
-    const uniqueTimes = [...new Set(postIntervals)].sort((a, b) => a - b);
-
-    // формируем границы со значением интервалов
-    const intervalsArray = uniqueTimes.reduce((acc, curr, index, arr) => {
-      const prev = arr[index - 1];
-      if (!prev) {
-        return acc;
+    // Будем искать слот в течение следующих 14 дней
+    for (let dayOffset = 0; dayOffset < 14; dayOffset++) {
+      // Если это не первая итерация, сдвигаем интервал на следующий день
+      if (dayOffset > 0) {
+        // Восстанавливаем границы интервала для нового дня
+        startTimestamp = add(zonedTimeToUtc(set(nowTimeStamp, interval.from), 'Europe/Moscow'), { days: dayOffset });
+        endTimestamp = add(zonedTimeToUtc(set(nowTimeStamp, interval.to), 'Europe/Moscow'), { days: dayOffset });
       }
-      const diff = differenceInMinutes(curr, prev);
 
-      acc.push({ diff, left: new Date(prev), right: new Date(curr) });
+      // Генерируем все возможные получасовые слоты в интервале
+      const halfHourSlots: Date[] = [];
+      let currentSlot = set(startTimestamp, { minutes: Math.ceil(startTimestamp.getMinutes() / 30) * 30, seconds: 0, milliseconds: 0 });
 
-      return acc;
-    }, []);
+      // Если минуты кратны 30, оставляем как есть, иначе переходим к следующему получасу
+      if (currentSlot.getMinutes() === 0 && startTimestamp.getMinutes() > 0) {
+        currentSlot = add(currentSlot, { minutes: 30 });
+      }
 
-    // ищем максимальный интервал
-    const maxInterval = intervalsArray.reduce(function (prev, current) {
-      return prev.diff > current.diff ? prev : current;
-    });
+      while (currentSlot <= endTimestamp) {
+        halfHourSlots.push(new Date(currentSlot));
+        currentSlot = add(currentSlot, { minutes: 30 });
+      }
 
-    // возвращаем дату публикации посреди максимального интервала времени
-    return add(maxInterval.left, { minutes: maxInterval.diff / 2 });
+      // Получаем все запланированные посты в интервале
+      const scheduledPosts: PostSchedulerEntity[] = await this.postSchedulerEntity.find({
+        where: {
+          publishDate: Between(add(startTimestamp, { minutes: -MIN_INTERVAL_MINUTES }), add(endTimestamp, { minutes: MIN_INTERVAL_MINUTES })),
+          isPublished: false
+        },
+        order: { publishDate: 'ASC' },
+        select: ['publishDate'],
+        cache: false,
+      });
+
+      // Фильтруем слоты, оставляя только те, которые удовлетворяют условию минимального интервала
+      const validSlots = halfHourSlots.filter(slot => {
+        return scheduledPosts.every(post =>
+          Math.abs(differenceInMinutes(post.publishDate, slot)) >= MIN_INTERVAL_MINUTES
+        );
+      });
+
+      if (validSlots.length > 0) {
+        if (mode === PublicationModesEnum.NOW_SILENT || mode === PublicationModesEnum.NIGHT_CRINGE || mode === PublicationModesEnum.NEXT_INTERVAL) {
+          // Для этих режимов берем первый доступный слот
+          validSlots.sort((a, b) => a.getTime() - b.getTime());
+          return validSlots[0];
+        } else {
+          // Для остальных режимов стремимся к равномерному распределению
+          const allTimePoints = [
+            ...scheduledPosts.map(post => post.publishDate),
+          ].sort((a, b) => a.getTime() - b.getTime());
+
+          if (allTimePoints.length === 0) {
+            // Если нет запланированных постов, выбираем слот в середине интервала
+            const middleIndex = Math.floor(validSlots.length / 2);
+            return validSlots[middleIndex];
+          }
+
+          // Вычисляем "расстояние" каждого слота от других постов
+          const slotDistances = validSlots.map(slot => {
+            // Находим ближайший пост
+            const distances = allTimePoints.map(point => Math.abs(differenceInMinutes(point, slot)));
+            const minDistance = Math.min(...distances);
+            return { slot, minDistance };
+          });
+
+          // Сортируем слоты по убыванию минимального расстояния
+          slotDistances.sort((a, b) => b.minDistance - a.minDistance);
+
+          // Возвращаем слот с наибольшим минимальным расстоянием (наиболее удаленный от других постов)
+          return slotDistances[0].slot;
+        }
+      }
+    }
+
+    // Если не нашли подходящий слот в течение 14 дней, возвращаем дату через 14 дней,
+    // также кратную 30 минутам
+    const fallbackDate = add(nowTimeStamp, { days: 14, hours: 12 });
+    const fallbackMinutes = fallbackDate.getMinutes();
+    const fallbackRemainder = fallbackMinutes % 30;
+    return set(
+      add(fallbackDate, { minutes: fallbackRemainder ? 30 - fallbackRemainder : 0 }),
+      { seconds: 0, milliseconds: 0 }
+    );
   }
-
   async markPostAsPublished(id: number): Promise<any> {
     return this.postSchedulerEntity.update({ id }, { isPublished: true });
   }

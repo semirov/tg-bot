@@ -5,7 +5,6 @@ import { Bot, CommandContext, InlineKeyboard } from 'grammy';
 import {
   BotContext,
   CaptchaValuesInterface,
-  SessionDataInterface
 } from './modules/bot/interfaces/bot-context.interface';
 import { BaseConfigService } from './modules/config/base-config.service';
 import { UserService } from './modules/bot/services/user.service';
@@ -13,7 +12,6 @@ import { UserPostManagementService } from './modules/post-management/user-post-m
 import { ConversationsEnum } from './modules/post-management/constants/conversations.enum';
 import { SettingsService } from './modules/bot/services/settings.service';
 import { Conversation, createConversation } from '@grammyjs/conversations';
-import { ChatFullInfo } from 'grammy/types';
 
 @Injectable()
 export class AppService implements OnModuleInit {
@@ -65,7 +63,8 @@ export class AppService implements OnModuleInit {
         `Если хочешь, чтобы твой пост опубликовали ${
           ctx.session.anonymousPublishing ? 'публично' : 'анонимно'
         },` +
-        ' то это можно включить в настройках в меню бота';
+        ' то это можно включить в настройках в меню бота\n\n' +
+        'Если у тебя есть вопрос или предложение для администратора, просто напиши текстовое сообщение';
       await ctx.reply(text, { parse_mode: 'HTML' });
       await this.userService.updateUserLastActivity(ctx);
     });
@@ -73,13 +72,15 @@ export class AppService implements OnModuleInit {
 
   private onUserMessage() {
     this.bot.on(['message'], async (ctx: BotContext) => {
+      // Проверка на прохождение капчи
       if (!ctx.session.captchaSolved) {
         return this.sendCaptcha(ctx);
       }
 
-      const chatMember = await  this.bot.api.getChatMember(this.baseConfigService.memeChanelId, ctx.from.id);
+      // Проверка на подписку пользователя к каналу
+      const chatMember = await this.bot.api.getChatMember(this.baseConfigService.memeChanelId, ctx.from.id);
 
-      if (!['member', 'creator', 'administrator' ].includes(chatMember.status)) {
+      if (!['member', 'creator', 'administrator'].includes(chatMember.status)) {
         try {
           await this.approveUserJoin(ctx);
         } catch (e) {
@@ -88,9 +89,24 @@ export class AppService implements OnModuleInit {
         return;
       }
 
-
+      // Обновляем информацию о последней активности пользователя
       await this.userService.updateUserLastActivity(ctx);
-      await this.userPostManagementService.handleUserMemeRequest(ctx);
+
+      // Теперь разделяем обработку по типу сообщения
+      if (ctx.message.photo || ctx.message.video) {
+        // Если это медиаконтент, обрабатываем как запрос на публикацию
+        await this.userPostManagementService.handleUserMemeRequest(ctx);
+      } else if (ctx.message.text) {
+        // Если это текстовое сообщение, обрабатываем как обращение к администрации
+        await this.userPostManagementService.handleUserTextRequest(ctx);
+      } else {
+        // Если сообщение другого типа, сообщаем о поддерживаемых форматах
+        await ctx.reply(
+          'Я могу обработать только текстовые сообщения, фото или видео. ' +
+          'Если у тебя есть вопрос к администратору, просто напиши его текстом. ' +
+          'Если хочешь предложить пост в канал, пришли фото или видео.'
+        );
+      }
     });
   }
 
@@ -120,7 +136,6 @@ export class AppService implements OnModuleInit {
     }
     return {operand, result, first, second};
   }
-
 
   private async sendCaptcha(ctx: BotContext): Promise<void> {
     if (!ctx.session.captchaValues) {
@@ -190,9 +205,11 @@ export class AppService implements OnModuleInit {
         await answerCtx.api.deleteMessage(captchaMessage.chat.id, captchaMessage.message_id);
         conversation.session.captchaValues = null;
         conversation.session.captchaSolved = true;
-        const chatMember = await  conversation.external( async () => this.bot.api.getChatMember(this.baseConfigService.memeChanelId, ctx.from.id));
+        const chatMember = await conversation.external(async () =>
+          this.bot.api.getChatMember(this.baseConfigService.memeChanelId, ctx.from.id)
+        );
 
-        if (!['member', 'creator', 'administrator' ].includes(chatMember.status)) {
+        if (!['member', 'creator', 'administrator'].includes(chatMember.status)) {
           try {
             await conversation.external(async () => this.approveUserJoin(ctx));
           } catch (e) {
@@ -200,17 +217,34 @@ export class AppService implements OnModuleInit {
           }
           return;
         }
+
         await this.userService.updateUserLastActivity(ctx);
-        await this.userPostManagementService.handleUserMemeRequest(ctx);
+
+        // Обрабатываем исходное сообщение пользователя после прохождения капчи
+        if (ctx.message.photo || ctx.message.video) {
+          await conversation.external(async () =>
+            this.userPostManagementService.handleUserMemeRequest(ctx)
+          );
+        } else if (ctx.message.text && !ctx.message.text.startsWith('/')) {
+          await conversation.external(async () =>
+            this.userPostManagementService.handleUserTextRequest(ctx)
+          );
+        } else {
+          // Для команд и других типов сообщений
+          await ctx.reply(
+            'Капча пройдена! Теперь ты можешь предлагать посты или обращаться к администратору. ' +
+            'Нажми /menu для просмотра доступных функций.'
+          );
+        }
         return;
       }
+
       await answerCtx.deleteMessage();
       const session = conversation.session;
       const {first, second, operand} = session.captchaValues;
       await ctx.reply(`Капчу все таки надо решить\nЧему равно <b>${first} ${operand} ${second}?</b>`, {parse_mode: 'HTML'});
     }
   }
-
 
   public async sendLinkForNonSubscribedUser(ctx: BotContext): Promise<void> {
     const channelInfo = await this.bot.api.getChat(this.baseConfigService.memeChanelId);
