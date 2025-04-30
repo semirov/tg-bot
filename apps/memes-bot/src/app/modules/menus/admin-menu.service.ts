@@ -257,18 +257,18 @@ export class AdminMenuService implements OnModuleInit {
     await ctx.api.banChatMember(this.baseConfigService.userRequestMemeChannel, moderatorId);
     await ctx.api.sendMessage(
       moderatorId,
-      'Жаль, но ты исключен из списка модераторов, доступ в канал предложки ограничен, но ты по прежнему можешь присылать мемы'
+      'Жаль, но ты исключен из списка модераторов, доступ в канал предложки ограничен, но ты по прежнему можешь присылать посты'
     );
   }
 
   private async publishBotPromo(ctx: BotContext) {
     const inlineKeyboard = new InlineKeyboard().url(
-      'Прислать мем',
+      'Прислать пост',
       `https://t.me/${ctx.me.username}`
     );
     await this.bot.api.sendMessage(
       this.baseConfigService.memeChanelId,
-      'Ты можешь прислать мем через бота 😉',
+      'Ты можешь прислать посты через бота 😉',
       { reply_markup: inlineKeyboard, disable_notification: true }
     );
   }

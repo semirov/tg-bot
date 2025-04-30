@@ -24,7 +24,7 @@ export class MainMenuService {
 
   private buildStartUserMenu(): Menu<BotContext> {
     const menu = new Menu<BotContext>(UserMenusEnum.USER_START_MENU)
-      .text('Прислать мем', (ctx) =>
+      .text('Прислать пост', (ctx) =>
         ctx.conversation.enter(ConversationsEnum.SEND_MEME_CONVERSATION)
       )
       .row()
@@ -47,7 +47,7 @@ export class MainMenuService {
       )
       .row()
       .text(
-        (ctx) => (ctx.session.canBeModeratePosts ? '👮 Оцениваю мемы' : '🙅 Не оцениваю мемы'),
+        (ctx) => (ctx.session.canBeModeratePosts ? '👮 Оцениваю посты' : '🙅 Не оцениваю посты'),
         async (ctx) => {
           ctx.session.canBeModeratePosts = !ctx.session.canBeModeratePosts;
           await this.userService.changeUserModeratedMode(

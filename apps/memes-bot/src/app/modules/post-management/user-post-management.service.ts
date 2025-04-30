@@ -10,7 +10,7 @@ import { UserService } from '../bot/services/user.service';
 import { UserPermissionEnum } from '../bot/constants/user-permission.enum';
 import { PublicationModesEnum } from './constants/publication-modes.enum';
 import { PostModerationMenusEnum } from './constants/post-moderation-menus.enum';
-import { add, format, getUnixTime } from 'date-fns';
+import { add, format, formatDistance, getUnixTime } from 'date-fns';
 import { UserRequestService } from '../bot/services/user-request.service';
 import {
   PostSchedulerService,
@@ -20,6 +20,7 @@ import { SettingsService } from '../bot/services/settings.service';
 import { CringeManagementService } from '../bot/services/cringe-management.service';
 import { DeduplicationService } from '../bot/services/deduplication.service';
 import * as console from 'node:console';
+import { ru } from 'date-fns/locale';
 
 export class UserPostManagementService implements OnModuleInit {
   constructor(
@@ -43,17 +44,20 @@ export class UserPostManagementService implements OnModuleInit {
     '<b>Для публикации принимаются:</b>\n' +
     '- Смищное\n' +
     '- Видео\n\n' +
-    '<b>Мы можем изменить предложеный мем:</b>\n' +
+    '<b>Мы можем изменить предложеный пост:</b>\n' +
     '- Подпись к картинкам или видео будет удалена\n' +
-    '- Публикация может быть отклонена, если админу мем покажется не смешным\n' +
-    '- Публикуемые мемы будут подписаны автором\n' +
-    '- Мем может быть опубликован не сразу\n';
+    '- Публикация может быть отклонена, если админу пост покажется не подходящим\n' +
+    '- Публикуемые посты будут подписаны автором\n' +
+    '- Пост может быть опубликован не сразу\n';
 
   public readonly cancelMessage =
     'Жаль что ты передумал, возвращайся снова!\nЧтобы показать основное меню бота, нажми /menu';
 
+  private duplicateMenu: Menu<BotContext>;
+
   public onModuleInit(): void {
     this.buildModeratedPostMenu();
+    this.buildDuplicateMenu();  // Добавляем создание меню для дубликатов
     this.prepareReplyToBotContext();
     this.handleAdminUserResponse();
     this.bot.errorBoundary(
@@ -87,14 +91,21 @@ export class UserPostManagementService implements OnModuleInit {
     await conversation.run(menu);
 
     const text =
-      'Просто пришли мем, который ты хочешь опубликовать, если будет смешно, то его опубликуют';
+      'Просто пришли пост, который ты хочешь опубликовать, возможно, то его опубликуют';
 
     await ctx.reply(text, { reply_markup: menu });
-    while (!ctx.message?.photo) {
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
       ctx = await conversation.wait();
 
       if (ctx.message?.photo || ctx.message?.video) {
         await this.handleUserMemeRequest(ctx);
+        return;
+      }
+
+      if (ctx.message?.text && ctx.message.text !== '/cancel') {
+        // Обрабатываем текстовое обращение
+        await this.handleUserTextRequest(ctx);
         return;
       }
 
@@ -103,13 +114,108 @@ export class UserPostManagementService implements OnModuleInit {
         return;
       }
 
-      if (ctx.message) {
+      if (ctx.message && !ctx.message.photo && !ctx.message.video && !ctx.message.text) {
         await ctx.reply(
           'К публикации принимаются только картинки и видео\nесли ты передумал, то нажми /cancel'
         );
       }
     }
   }
+
+  public async handleUserTextRequest(ctx: BotContext): Promise<void> {
+    try {
+      await ctx.react('👍');
+    } catch (e) {
+      await ctx.reply('Мы получили твоё обращение и скоро ответим');
+      Logger.warn(
+        `Cannot set message reaction for user text message in bot ${ctx.me.id}`,
+        UserPostManagementService.name
+      );
+    }
+
+    const user = await this.userService.repository.findOne({
+      where: { id: ctx.message.from.id },
+    });
+
+    const { first_name, last_name, username, is_bot, is_premium } = ctx.message.from;
+
+    // Формируем текст для обращения
+    const userText = [
+      '📝 Обращение от',
+      is_premium ? '👑' : null,
+      is_bot ? '🤖' : null,
+      first_name,
+      last_name,
+      username ? `@${username}` : null,
+    ]
+      .filter((v) => !!v)
+      .join(' ');
+
+    // Отправляем информацию о пользователе в канал запросов
+    await this.bot.api.sendMessage(this.baseConfigService.userRequestMemeChannel, userText, {
+      disable_notification: true,
+    });
+
+    // Если это ответ на сообщение, сначала пересылаем сообщение, на которое ответил пользователь
+    if (ctx.message.reply_to_message) {
+      try {
+        // Отправляем сообщение, на которое ответил пользователь
+        const replyMessage = await ctx.api.forwardMessage(
+          this.baseConfigService.userRequestMemeChannel,
+          ctx.message.chat.id,
+          ctx.message.reply_to_message.message_id
+        );
+
+        // Добавляем уточнение, что пользователь ответил на это сообщение
+        await this.bot.api.sendMessage(
+          this.baseConfigService.userRequestMemeChannel,
+          "👆 Пользователь ответил на это сообщение:",
+          { disable_notification: true }
+        );
+      } catch (e) {
+        Logger.warn(
+          `Cannot forward reply_to_message: ${e.message}`,
+          UserPostManagementService.name
+        );
+
+        // Если не удалось переслать, то хотя бы поясняем в тексте
+        await this.bot.api.sendMessage(
+          this.baseConfigService.userRequestMemeChannel,
+          "Пользователь ответил на сообщение, но его не удалось переслать. Возможно, это слишком старое сообщение.",
+          { disable_notification: true }
+        );
+      }
+    }
+
+    // Копируем сообщение пользователя без меню модерации
+    const message = await ctx.api.copyMessage(
+      this.baseConfigService.userRequestMemeChannel,
+      ctx.message.chat.id,
+      ctx.message.message_id,
+      { disable_notification: true }
+    );
+
+    // Закрепляем сообщение
+    await this.bot.api.pinChatMessage(
+      this.baseConfigService.userRequestMemeChannel,
+      message.message_id,
+      { disable_notification: true }
+    );
+
+    // Сохраняем информацию о запросе в БД
+    await this.userRequestService.repository.insert({
+      user: user,
+      isAnonymousPublishing: ctx.session.anonymousPublishing,
+      originalMessageId: ctx.message.message_id,
+      userRequestChannelMessageId: message.message_id,
+      isTextRequest: true,
+      replyToMessageId: ctx.message.reply_to_message?.message_id // Сохраняем ID сообщения, на которое был ответ
+    });
+
+    await this.userService.updateUserLastActivity(ctx);
+
+  }
+
 
   public async handleUserMemeRequest(ctx: BotContext): Promise<void> {
     try {
@@ -122,27 +228,13 @@ export class UserPostManagementService implements OnModuleInit {
       );
     }
 
-    const hash = await this.deduplicationService.getPostImageHash(ctx?.message?.photo);
-    const duplicates = await this.deduplicationService.checkDuplicate(hash);
-    if (duplicates.some((duplicate) => duplicate.distance >= 0.5)) {
-      const [duplicate] = duplicates;
-      await ctx.reply(
-        'Такая публикация уже была'
-      );
-      await this.bot.api.forwardMessage(
-        ctx.from.id,
-        this.baseConfigService.memeChanelId,
-        duplicate.memePostId
-      );
-      ctx.session.lastPublishedAt = null;
-      return;
-    }
-
     const user = await this.userService.repository.findOne({
       where: { id: ctx.message.from.id },
     });
+
     const { first_name, last_name, username, is_bot, is_premium } = ctx.message.from;
-    const text = [
+
+    let userText = [
       'Пост от',
       is_premium ? '👑' : null,
       is_bot ? '🤖' : null,
@@ -153,29 +245,374 @@ export class UserPostManagementService implements OnModuleInit {
     ]
       .filter((v) => !!v)
       .join(' ');
-    await this.bot.api.sendMessage(this.baseConfigService.userRequestMemeChannel, text, {
+
+    // Проверяем на дубликаты только если есть фото (для видео это не работает)
+    let menuToUse: Menu<BotContext> = this.moderatedPostMenu;
+    let hasPossibleDuplicate = false;
+    let bestMatch = null;
+    let scheduledDuplicate = null;
+
+    if (ctx.message?.photo) {
+      const hash = await this.deduplicationService.getPostImageHash(ctx.message.photo);
+      if (hash) {
+        // Проверяем опубликованные посты
+        const duplicates = await this.deduplicationService.checkDuplicate(hash);
+
+        if (duplicates.some((duplicate) => duplicate.distance >= 0.5)) {
+          // Находим лучшее совпадение
+          bestMatch = duplicates.reduce((prev, current) =>
+            prev.distance > current.distance ? prev : current
+          );
+
+          // Форматируем процент совпадения
+          const matchPercentage = Math.round(bestMatch.distance * 100);
+
+          // Добавляем информацию о дубликате в текст сообщения
+          userText += `\n🔄 Возможный дубликат (совпадение ${matchPercentage}%)`;
+          hasPossibleDuplicate = true;
+
+          // Используем специальное меню для дубликатов
+          menuToUse = this.duplicateMenu;
+        } else {
+          // Если нет совпадений среди опубликованных, проверяем в запланированных
+          scheduledDuplicate = await this.checkScheduledDuplicates(hash);
+
+          console.log(scheduledDuplicate);
+
+          if (scheduledDuplicate && this.isValidDate(scheduledDuplicate.scheduledDate)) {
+            const matchPercentage = Math.round(scheduledDuplicate.distance * 100);
+
+            try {
+              const formattedDate = format(
+                scheduledDuplicate.scheduledDate,
+                'dd.LL.yy в ~HH:mm',
+                { locale: ru }
+              );
+
+              // Добавляем информацию о запланированном дубликате
+              userText += `\n🕒 Похожий пост (${matchPercentage}%) запланирован на ${formattedDate}`;
+            } catch (error) {
+              // В случае ошибки форматирования, используем более простой вариант
+              userText += `\n🕒 Похожий пост (${matchPercentage}%) запланирован к публикации`;
+            }
+
+            hasPossibleDuplicate = true;
+            menuToUse = this.duplicateMenu;
+          }
+        }
+      }
+    }
+
+    await this.bot.api.sendMessage(this.baseConfigService.userRequestMemeChannel, userText, {
       disable_notification: true,
     });
+
+    // Если есть потенциальный дубликат среди опубликованных, отправляем его для сравнения
+    if (hasPossibleDuplicate && bestMatch) {
+      try {
+        await this.bot.api.forwardMessage(
+          this.baseConfigService.userRequestMemeChannel,
+          this.baseConfigService.memeChanelId,
+          bestMatch.memePostId,
+          { disable_notification: true }
+        );
+      } catch (error) {
+        Logger.error(
+          `Failed to forward duplicate post ${bestMatch.memePostId}: ${error.message}`,
+          UserPostManagementService.name
+        );
+      }
+    }
+
+// Если есть потенциальный дубликат среди запланированных
+    if (hasPossibleDuplicate && scheduledDuplicate && !bestMatch) {
+      try {
+        // Проверяем валидность даты перед форматированием
+        if (this.isValidDate(scheduledDuplicate.scheduledDate)) {
+          const formattedDate = format(
+            scheduledDuplicate.scheduledDate,
+            'dd.LL.yy в ~HH:mm',
+            { locale: ru }
+          );
+
+          const timeDistance = formatDistance(
+            scheduledDuplicate.scheduledDate,
+            new Date(),
+            { locale: ru, addSuffix: false }
+          );
+
+          // Отправляем сообщение о запланированном посте с деталями
+          await this.bot.api.sendMessage(
+            this.baseConfigService.userRequestMemeChannel,
+            `👆 Похожий пост запланирован на ${formattedDate} (через ${timeDistance})\n\nID поста: ${scheduledDuplicate.postId}`,
+            { disable_notification: true }
+          );
+        } else {
+          // Если дата невалидна, отправляем сообщение без форматирования
+          await this.bot.api.sendMessage(
+            this.baseConfigService.userRequestMemeChannel,
+            `👆 Похожий пост запланирован к публикации.\n\nID поста: ${scheduledDuplicate.postId}`,
+            { disable_notification: true }
+          );
+        }
+
+        // Пытаемся получить и переслать запланированный пост
+        try {
+          const scheduledPost = await this.postSchedulerService.getScheduledPostById(scheduledDuplicate.postId);
+          if (scheduledPost && scheduledPost.requestChannelMessageId) {
+            await this.bot.api.forwardMessage(
+              this.baseConfigService.userRequestMemeChannel,
+              this.baseConfigService.userRequestMemeChannel,
+              scheduledPost.requestChannelMessageId,
+              { disable_notification: true }
+            );
+          }
+        } catch (err) {
+          Logger.warn(
+            `Failed to forward scheduled post preview: ${err.message}`,
+            UserPostManagementService.name
+          );
+        }
+      } catch (error) {
+        Logger.error(
+          `Failed to send scheduled duplicate info: ${error.message}`,
+          UserPostManagementService.name
+        );
+      }
+    }
+
     const message = await ctx.api.copyMessage(
       this.baseConfigService.userRequestMemeChannel,
       ctx.message.chat.id,
       ctx.message.message_id,
-      { reply_markup: this.moderatedPostMenu, disable_notification: true }
+      { reply_markup: menuToUse, disable_notification: true }
     );
+
     await this.bot.api.pinChatMessage(
       this.baseConfigService.userRequestMemeChannel,
       message.message_id,
       { disable_notification: true }
     );
+
     await this.userRequestService.repository.insert({
       user: user,
       isAnonymousPublishing: ctx.session.anonymousPublishing,
       originalMessageId: ctx.message.message_id,
       userRequestChannelMessageId: message.message_id,
+      possibleDuplicate: hasPossibleDuplicate,
+      scheduledDuplicateId: scheduledDuplicate?.postId, // Сохраняем ID запланированного дубликата
     });
+
     await this.userService.updateUserLastActivity(ctx);
   }
 
+
+
+  /**
+   * Проверяет наличие похожих постов среди запланированных
+   */
+  private async checkScheduledDuplicates(hash: string): Promise<{
+    postId: number;
+    distance: number;
+    scheduledDate: Date;
+  } | null> {
+    if (!hash) return null;
+
+    try {
+      // Получаем все запланированные посты
+      const scheduledPosts = await this.postSchedulerService.getAllScheduledPosts();
+
+
+      if (!scheduledPosts || scheduledPosts.length === 0) return null;
+
+      // Проходим по запланированным постам и ищем похожие
+      const potentialDuplicates = [];
+
+      for (const post of scheduledPosts) {
+        // Если у поста есть хеш изображения и валидная дата
+        if (post.hash && post.publishDate && this.isValidDate(post.publishDate)) {
+          // Вычисляем "расстояние" между хешами (чем ближе к 1, тем более похожи)
+          const distance = this.deduplicationService.calculateHashDistance(hash, post.hash);
+
+          // Если расстояние достаточно большое (схожесть высокая)
+          if (distance >= 0.5) {
+            potentialDuplicates.push({
+              postId: post.id,
+              distance: distance,
+              scheduledDate: post.publishDate
+            });
+          }
+        }
+      }
+
+      // Если нашли потенциальные дубликаты, возвращаем самый похожий
+      if (potentialDuplicates.length > 0) {
+        return potentialDuplicates.reduce((prev, current) =>
+          prev.distance > current.distance ? prev : current
+        );
+      }
+
+      return null;
+    } catch (error) {
+      Logger.error(
+        `Failed to check scheduled duplicates: ${error.message}`,
+        UserPostManagementService.name
+      );
+      return null;
+    }
+  }
+
+// Вспомогательная функция для проверки валидности даты
+  private isValidDate(date: any): boolean {
+    if (!date) return false;
+
+    // Преобразуем в объект Date, если это строка или число
+    const dateObj = date instanceof Date ? date : new Date(date);
+
+    // Проверяем, что это валидная дата (не NaN)
+    return !isNaN(dateObj.getTime());
+  }
+
+
+
+
+// Обновляем метод buildDuplicateMenu, чтобы он также мог обрабатывать запланированные дубликаты
+  private buildDuplicateMenu() {
+    return new Menu<BotContext>('duplicate-check-menu', { autoAnswer: false })
+      .text('✅ Дубликат', async (ctx) => {
+        if (this.userService.checkPermission(ctx, UserPermissionEnum.IS_BASE_MODERATOR)) {
+          // Обработка подтвержденного дубликата
+          const message = await this.userRequestService.repository.findOne({
+            relations: { user: true },
+            where: { userRequestChannelMessageId: ctx.callbackQuery.message.message_id },
+          });
+
+          // Проверяем, является ли это дубликатом запланированного поста
+          if (message.scheduledDuplicateId) {
+            // Получаем информацию о запланированном посте
+            const scheduledPost = await this.postSchedulerService.getScheduledPostById(message.scheduledDuplicateId);
+
+            if (scheduledPost && this.isValidDate(scheduledPost.publishDate)) {
+              const scheduledDateFormatted = format(
+                scheduledPost.publishDate,
+                'dd.LL.yy в ~HH:mm',
+                { locale: ru }
+              );
+
+              // Уведомляем пользователя о запланированном посте
+              await this.bot.api.sendMessage(
+                message.user.id,
+                `Похожий пост уже запланирован к публикации ${scheduledDateFormatted}.\nТы можешь предложить что-нибудь другое`,
+                {reply_to_message_id: message.originalMessageId}
+              );
+            } else {
+              // Стандартное сообщение, если не удалось получить детали о запланированном посте
+              await this.bot.api.sendMessage(
+                message.user.id,
+                'Похожий пост уже запланирован к публикации. Ты можешь предложить что-нибудь другое'
+              );
+            }
+          } else {
+            // Стандартное сообщение для дубликата опубликованного поста
+            await this.bot.api.sendMessage(
+              message.user.id,
+              'Этот пост уже публиковался, ты можешь предложить что-нибудь другое'
+            );
+
+            // Находим дубликат снова и пересылаем его
+            const hash = await this.deduplicationService.getPostImageHash(ctx.callbackQuery.message.photo);
+            if (hash) {
+              const duplicates = await this.deduplicationService.checkDuplicate(hash);
+              if (duplicates.length > 0) {
+                const bestMatch = duplicates.reduce((prev, current) =>
+                  prev.distance > current.distance ? prev : current
+                );
+
+                // Отправляем оригинальный пост
+                try {
+                  await this.bot.api.forwardMessage(
+                    message.user.id,
+                    this.baseConfigService.memeChanelId,
+                    bestMatch.memePostId
+                  );
+                } catch (error) {
+                  Logger.error(
+                    `Failed to forward original post to user: ${error.message}`,
+                    UserPostManagementService.name
+                  );
+                }
+              }
+            }
+          }
+
+          // Обновляем статус запроса
+          await this.userRequestService.repository.update(
+            { id: message.id },
+            {
+              isApproved: false,
+              isDuplicate: true,
+              processedByModerator: { id: ctx.callbackQuery.from.id },
+              moderatedAt: new Date(),
+            }
+          );
+
+          // Удаляем сообщение из чата модераторов
+          await ctx.unpinChatMessage();
+          await ctx.deleteMessage();
+        }
+      })
+      .text('❌ Не дубликат', async (ctx) => {
+        if (this.userService.checkPermission(ctx, UserPermissionEnum.IS_BASE_MODERATOR)) {
+          // Получаем информацию о сообщении
+          const message = await this.userRequestService.repository.findOne({
+            relations: { user: true },
+            where: { userRequestChannelMessageId: ctx.callbackQuery.message.message_id },
+          });
+
+          // Обновляем статус запроса, отмечая что ручная проверка на дубликат пройдена
+          await this.userRequestService.repository.update(
+            { id: message.id },
+            {
+              possibleDuplicate: false, // Подтверждаем, что это НЕ дубликат
+              scheduledDuplicateId: null, // Очищаем ссылку на запланированный дубликат
+              checkedByModerator: ctx.callbackQuery.from.id
+            }
+          );
+
+          // Заменяем меню на стандартное меню модерации
+          try {
+            await ctx.editMessageReplyMarkup({
+              reply_markup: this.moderatedPostMenu
+            });
+          } catch (error) {
+            Logger.error(
+              `Failed to update message menu: ${error.message}`,
+              UserPostManagementService.name
+            );
+
+            // Альтернативный вариант: полностью заменить сообщение
+            try {
+              const originalMessage = ctx.callbackQuery.message;
+              await ctx.api.deleteMessage(originalMessage.chat.id, originalMessage.message_id);
+              await ctx.api.copyMessage(
+                originalMessage.chat.id,
+                originalMessage.chat.id,
+                originalMessage.message_id,
+                {
+                  reply_markup: this.moderatedPostMenu
+                }
+              );
+            } catch (secondError) {
+              Logger.error(
+                `Failed to recreate message with new menu: ${secondError.message}`,
+                UserPostManagementService.name
+              );
+            }
+          }
+        }
+      })
+      .row();
+  }
   private buildModeratedPostMenu() {
     const menu = new Menu<BotContext>(PostModerationMenusEnum.MODERATION, { autoAnswer: false })
       .text('👍 Одобрить', async (ctx) => {
@@ -230,6 +667,8 @@ export class UserPostManagementService implements OnModuleInit {
     })
       .text('Кринж', async (ctx) => this.onPublishActions(ctx, PublicationModesEnum.NIGHT_CRINGE))
       .text('Сейчас', async (ctx) => this.onPublishActions(ctx, PublicationModesEnum.NOW_SILENT))
+      .row()
+      .text('Ближайший слот', async (ctx) => this.onPublishActions(ctx, PublicationModesEnum.NEXT_INTERVAL))
       .row()
       .text('Ночью', async (ctx) => this.onPublishActions(ctx, PublicationModesEnum.NEXT_NIGHT))
       .text('Утром', async (ctx) => this.onPublishActions(ctx, PublicationModesEnum.NEXT_MORNING))
@@ -314,6 +753,7 @@ export class UserPostManagementService implements OnModuleInit {
       })
       .row();
 
+    // Регистрируем все подменю
     menu.register(publishSubmenu);
     menu.register(banConfirmation);
     menu.register(strikeConfirmation);
@@ -322,6 +762,10 @@ export class UserPostManagementService implements OnModuleInit {
 
     this.moderatedPostMenu = menu;
     this.bot.use(this.moderatedPostMenu);
+
+    // Создаем и регистрируем меню для дубликатов отдельно
+    this.duplicateMenu = this.buildDuplicateMenu();
+    this.bot.use(this.duplicateMenu);
   }
 
   /**
@@ -384,6 +828,7 @@ export class UserPostManagementService implements OnModuleInit {
     const imageHash = await this.deduplicationService.getPostImageHash(
       ctx?.callbackQuery?.message?.photo
     );
+    console.log(imageHash);
 
     const publishContext: ScheduledPostContextInterface = {
       mode,
@@ -402,6 +847,7 @@ export class UserPostManagementService implements OnModuleInit {
       case PublicationModesEnum.NEXT_MORNING:
       case PublicationModesEnum.NEXT_MIDDAY:
       case PublicationModesEnum.NEXT_EVENING:
+      case PublicationModesEnum.NEXT_INTERVAL:
       case PublicationModesEnum.NEXT_NIGHT:
         return this.publishScheduled(publishContext);
       case PublicationModesEnum.NIGHT_CRINGE:
@@ -416,7 +862,6 @@ export class UserPostManagementService implements OnModuleInit {
         where: { userRequestChannelMessageId: ctx.channelPost.reply_to_message.message_id },
         relations: { user: true },
       });
-
 
       try {
         // убираем реакцию у пользователя
@@ -436,6 +881,21 @@ export class UserPostManagementService implements OnModuleInit {
       await this.bot.api.copyMessage(message.user.id, ctx.chat.id, adminMessageId, {
         reply_to_message_id: message.originalMessageId,
       });
+
+      // Если это текстовое обращение, то после ответа открепляем сообщение
+      if (message.isTextRequest) {
+        try {
+          await this.bot.api.unpinChatMessage(
+            this.baseConfigService.userRequestMemeChannel,
+            message.userRequestChannelMessageId
+          );
+        } catch (e) {
+          Logger.warn(
+            `Cannot unpin text request after admin response for bot ${ctx.me.id}`,
+            UserPostManagementService.name
+          );
+        }
+      }
     });
   }
 
@@ -579,7 +1039,7 @@ export class UserPostManagementService implements OnModuleInit {
 
     await this.bot.api.forwardMessage(message.user.id, message.user.id, message.originalMessageId);
 
-    let userFeedbackMessage = `Твой мем будет опубликован ${dateFormatted} ⏱\n\n`;
+    let userFeedbackMessage = `Твой пост будет опубликован ${dateFormatted} ⏱\n\n`;
     if (publishContext.mode === PublicationModesEnum.NIGHT_CRINGE) {
       const cringeChannelLink = await this.settingsService.cringeChannelHtmlLink();
       userFeedbackMessage += `Пост попал в особую рубрику, которая публикуется только ночью, а утром перемещается в отдельный канал: ${cringeChannelLink}\n`;
@@ -611,10 +1071,10 @@ export class UserPostManagementService implements OnModuleInit {
     await this.bot.api.sendMessage(
       message.user.id,
       'Мы передумали! 🤯\n\n' +
-        'Такое иногда бывает, мы долго думали, смеяли мем со всех сторон, показывали его всем кому могли, ' +
+        'Такое иногда бывает, мы долго думали, смеяли пост со всех сторон, показывали его всем кому могли, ' +
         'в итоге он будет опубликован! 🎉\n' +
         'Прости что так поступили с тобой, в следующий раз мы будем внимательнее. 🥺\n' +
-        'P.S. Тебе придет отдельне сообщение, когда мем будет опубликован 😉'
+        'P.S. Тебе придет отдельное сообщение, когда пост будет опубликован 😉'
     );
   }
 

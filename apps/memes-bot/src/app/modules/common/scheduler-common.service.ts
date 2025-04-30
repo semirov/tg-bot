@@ -33,6 +33,10 @@ export class SchedulerCommonService {
       from: { hours: 19, minutes: 0, seconds: 0 },
       to: { hours: 23, minutes: 59, seconds: 59 },
     },
+    [PublicationModesEnum.NEXT_INTERVAL]: {
+      from: { hours: 9, minutes: 0, seconds: 0 },
+      to: { hours: 23, minutes: 59, seconds: 59 },
+    },
   };
 
   public static timeIntervalByMode(mode: PublicationModesEnum): IntervalInterface {

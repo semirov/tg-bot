@@ -5,4 +5,5 @@ export enum PostModerationMenusEnum {
   PUBLICATION = 'PUBLICATION',
   BAN = 'BAN',
   STRIKE = 'STRIKE',
+  DUPLICATE_CHECK = 'DUPLICATE_CHECK'
 }

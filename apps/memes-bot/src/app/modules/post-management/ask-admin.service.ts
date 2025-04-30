@@ -43,7 +43,7 @@ export class AskAdminService implements OnModuleInit {
     const replyCtx = await conversation.wait();
 
     if (replyCtx?.message?.text === '/cancel') {
-      await ctx.reply('Окей, если нужно меню - нажми /menu или просто пришли мем');
+      await ctx.reply('Окей, если нужно меню - нажми /menu или просто пришли пост');
       return;
     }
     await ctx.reply('Я передам твое сообщение админу, он ответит тебе через бота');
