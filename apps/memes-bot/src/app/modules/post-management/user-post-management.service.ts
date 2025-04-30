@@ -277,7 +277,6 @@ export class UserPostManagementService implements OnModuleInit {
           // Если нет совпадений среди опубликованных, проверяем в запланированных
           scheduledDuplicate = await this.checkScheduledDuplicates(hash);
 
-          console.log(scheduledDuplicate);
 
           if (scheduledDuplicate && this.isValidDate(scheduledDuplicate.scheduledDate)) {
             const matchPercentage = Math.round(scheduledDuplicate.distance * 100);
@@ -828,7 +827,6 @@ export class UserPostManagementService implements OnModuleInit {
     const imageHash = await this.deduplicationService.getPostImageHash(
       ctx?.callbackQuery?.message?.photo
     );
-    console.log(imageHash);
 
     const publishContext: ScheduledPostContextInterface = {
       mode,
