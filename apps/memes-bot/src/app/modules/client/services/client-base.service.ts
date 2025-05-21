@@ -327,11 +327,6 @@ export class ClientBaseService implements OnModuleInit {
   // 21:00 МСК
   @Cron(CronExpression.EVERY_DAY_AT_6PM)
   public async postDailyBestMeme() {
-    if (!this.telegramClient?.connected) {
-      Logger.warn('Telegram client is not connected for daily best post', ClientBaseService.name);
-      return;
-    }
-
     try {
       // Получаем сущность канала с мемами
       const memeChannel = await this.telegramClient.getEntity(
