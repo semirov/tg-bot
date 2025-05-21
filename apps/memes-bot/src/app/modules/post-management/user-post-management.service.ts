@@ -40,18 +40,7 @@ export class UserPostManagementService implements OnModuleInit {
   private moderatedPostMenu: Menu<BotContext>;
   private replyToBotContext: Composer<BotContext>;
 
-  public readonly MEME_RULES =
-    '<b>Для публикации принимаются:</b>\n' +
-    '- Смищное\n' +
-    '- Видео\n\n' +
-    '<b>Мы можем изменить предложеный пост:</b>\n' +
-    '- Подпись к картинкам или видео будет удалена\n' +
-    '- Публикация может быть отклонена, если админу пост покажется не подходящим\n' +
-    '- Публикуемые посты будут подписаны автором\n' +
-    '- Пост может быть опубликован не сразу\n';
 
-  public readonly cancelMessage =
-    'Жаль что ты передумал, возвращайся снова!\nЧтобы показать основное меню бота, нажми /menu';
 
   private duplicateMenu: Menu<BotContext>;
 
@@ -60,67 +49,8 @@ export class UserPostManagementService implements OnModuleInit {
     this.buildDuplicateMenu();  // Добавляем создание меню для дубликатов
     this.prepareReplyToBotContext();
     this.handleAdminUserResponse();
-    this.bot.errorBoundary(
-      (err) => Logger.log(err),
-      createConversation(this.conversation.bind(this), ConversationsEnum.SEND_MEME_CONVERSATION)
-    );
   }
 
-  public async conversation(
-    conversation: Conversation<BotContext>,
-    ctx: BotContext
-  ): Promise<void> {
-    const menu = new Menu<BotContext>('inner-meme-menu')
-      .text(
-        (ctx) =>
-          ctx.session.anonymousPublishing ? '🙈️ Публикуюсь анонимно' : '👁️ Публикуюсь не анонимно',
-        (ctx) => {
-          ctx.session.anonymousPublishing = !ctx.session.anonymousPublishing;
-          ctx.menu.update();
-        }
-      )
-      .row()
-      .text('Показать правила', (ctx) => ctx.reply(this.MEME_RULES, { parse_mode: 'HTML' }))
-      .text('Я передумал', async (ctx) => {
-        await ctx.deleteMessage();
-        await ctx.reply(this.cancelMessage);
-        throw new Error('User exit from send meme conversation');
-      })
-      .row();
-
-    await conversation.run(menu);
-
-    const text =
-      'Просто пришли пост, который ты хочешь опубликовать, возможно, то его опубликуют';
-
-    await ctx.reply(text, { reply_markup: menu });
-    // eslint-disable-next-line no-constant-condition
-    while (true) {
-      ctx = await conversation.wait();
-
-      if (ctx.message?.photo || ctx.message?.video) {
-        await this.handleUserMemeRequest(ctx);
-        return;
-      }
-
-      if (ctx.message?.text && ctx.message.text !== '/cancel') {
-        // Обрабатываем текстовое обращение
-        await this.handleUserTextRequest(ctx);
-        return;
-      }
-
-      if (ctx.message?.text === '/cancel') {
-        await ctx.reply(this.cancelMessage);
-        return;
-      }
-
-      if (ctx.message && !ctx.message.photo && !ctx.message.video && !ctx.message.text) {
-        await ctx.reply(
-          'К публикации принимаются только картинки и видео\nесли ты передумал, то нажми /cancel'
-        );
-      }
-    }
-  }
 
   public async handleUserTextRequest(ctx: BotContext): Promise<void> {
     try {
@@ -205,7 +135,7 @@ export class UserPostManagementService implements OnModuleInit {
     // Сохраняем информацию о запросе в БД
     await this.userRequestService.repository.insert({
       user: user,
-      isAnonymousPublishing: ctx.session.anonymousPublishing,
+      isAnonymousPublishing: false,
       originalMessageId: ctx.message.message_id,
       userRequestChannelMessageId: message.message_id,
       isTextRequest: true,
@@ -395,7 +325,7 @@ export class UserPostManagementService implements OnModuleInit {
 
     await this.userRequestService.repository.insert({
       user: user,
-      isAnonymousPublishing: ctx.session.anonymousPublishing,
+      isAnonymousPublishing: false,
       originalMessageId: ctx.message.message_id,
       userRequestChannelMessageId: message.message_id,
       possibleDuplicate: hasPossibleDuplicate,
@@ -911,27 +841,10 @@ export class UserPostManagementService implements OnModuleInit {
       caption += `${publishContext.caption}\n\n`;
     }
 
-    if (!message.isAnonymousPublishing) {
-      const chatInfo = await this.bot.api.getChat(message.user.id);
-      if (chatInfo['username']) {
-        caption += `#предложка @${chatInfo['username']}\n`;
-      } else {
-        caption += `#предложка ${[chatInfo['first_name'], chatInfo['last_name']]
-          .filter((item) => !!item)
-          .join(' ')}\n`;
-      }
-    } else {
-      caption += `#предложка\n`;
-    }
-
     if (publishContext.mode === PublicationModesEnum.NIGHT_CRINGE) {
       const channelHtmlLink = await this.settingsService.cringeChannelHtmlLink();
       caption += channelHtmlLink;
-    } else {
-      const channelHtmlLink = await this.settingsService.channelHtmlLinkIfPrivate();
-      caption += channelHtmlLink;
     }
-    const channelInfo = await this.bot.api.getChat(this.baseConfigService.memeChanelId);
 
     const publishedMessage = await this.bot.api.copyMessage(
       this.baseConfigService.memeChanelId,
@@ -954,6 +867,7 @@ export class UserPostManagementService implements OnModuleInit {
       }
     );
 
+    const channelInfo = await this.bot.api.getChat(this.baseConfigService.memeChanelId);
     await this.bot.api.forwardMessage(message.user.id, channelInfo.id, publishedMessage.message_id);
 
     let userFeedbackMessage = 'Твой пост опубликован \n';
@@ -1122,17 +1036,6 @@ export class UserPostManagementService implements OnModuleInit {
     });
 
     return message.user.strikes;
-  }
-
-  private async isLastRequestMoreThanMinuteAgo(ctx: BotContext): Promise<boolean> {
-    if (
-      !ctx.session?.lastPublishedAt ||
-      ctx.session?.lastPublishedAt + 60 < getUnixTime(new Date())
-    ) {
-      ctx.session.lastPublishedAt = getUnixTime(new Date());
-      return true;
-    }
-    return false;
   }
 
   private prepareReplyToBotContext(): void {

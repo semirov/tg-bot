@@ -18,10 +18,6 @@ export class AskAdminService implements OnModuleInit {
   onModuleInit() {
     this.bot.errorBoundary(
       (err) => Logger.log(err),
-      createConversation(
-        this.userAdminConversation.bind(this),
-        ConversationsEnum.USER_ADMIN_CONVERSATION
-      )
     );
     this.bot.errorBoundary(
       (err) => Logger.log(err),
@@ -34,39 +30,6 @@ export class AskAdminService implements OnModuleInit {
     this.onAdminUserQuery();
   }
 
-  public async userAdminConversation(
-    conversation: Conversation<BotContext>,
-    ctx: BotContext
-  ): Promise<void> {
-    await ctx.reply('Напиши то что хочешь и я передам админу\n\nЕсли передумал, нажми /cancel');
-
-    const replyCtx = await conversation.wait();
-
-    if (replyCtx?.message?.text === '/cancel') {
-      await ctx.reply('Окей, если нужно меню - нажми /menu или просто пришли пост');
-      return;
-    }
-    await ctx.reply('Я передам твое сообщение админу, он ответит тебе через бота');
-
-    const menu = new InlineKeyboard()
-      .text(
-        'Ответить',
-        `admin_user_dialog_start$${replyCtx.message.from.id}$${replyCtx.message.message_id}`
-      )
-      .row()
-      .text(
-        '💀 Бан',
-        `admin_user_dialog_ban_user$${replyCtx.message.from.id}$${replyCtx.message.message_id}`
-      )
-      .row();
-
-    await replyCtx.forwardMessage(this.baseConfigService.ownerId);
-    await replyCtx.api.sendMessage(
-      this.baseConfigService.ownerId,
-      `Обращение пользователя @${replyCtx.message.from.username}`,
-      { reply_markup: menu }
-    );
-  }
 
   public async adminUserConversation(
     conversation: Conversation<BotContext>,

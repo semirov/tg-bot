@@ -29,18 +29,12 @@ export class AppService implements OnModuleInit {
       createConversation(this.prepareCaptchaConversation.bind(this), 'privateBotCaptcha')
     );
     this.mainMenuService.initStartMenu();
-    this.onAskAdmin();
     this.onStartCommand();
     this.onMenuCommand();
     this.onUserMessage();
     this.onNewMember();
   }
 
-  private onAskAdmin() {
-    this.bot.command('ask_admin', async (ctx) => {
-      await ctx.conversation.enter(ConversationsEnum.USER_ADMIN_CONVERSATION);
-    });
-  }
 
   private onMenuCommand() {
     this.bot.command('menu', async (ctx: CommandContext<BotContext>) => {
@@ -59,12 +53,8 @@ export class AppService implements OnModuleInit {
         'Привет, это бот канала' +
         ` ${channelLink}\n\n` +
         'Можешь прислать пост\n' +
-        'или нажми /menu, чтобы показать основное меню бота\n\n' +
-        `Если хочешь, чтобы твой пост опубликовали ${
-          ctx.session.anonymousPublishing ? 'публично' : 'анонимно'
-        },` +
-        ' то это можно включить в настройках в меню бота\n\n' +
-        'Если у тебя есть вопрос или предложение для администратора, просто напиши текстовое сообщение';
+        'или нажми /menu, чтобы показать основное меню бота.\n\n' +
+        'Если у тебя есть вопрос или предложение для администратора, просто напиши сообщение';
       await ctx.reply(text, { parse_mode: 'HTML' });
       await this.userService.updateUserLastActivity(ctx);
     });

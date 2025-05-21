@@ -101,7 +101,7 @@ export class PostSchedulerService {
 
   private async nextScheduledTimeByMode(mode: PublicationModesEnum): Promise<Date> {
     const interval = SchedulerCommonService.timeIntervalByMode(mode);
-    const MIN_INTERVAL_MINUTES = 60; // Минимальный интервал в 1 час
+    const MIN_INTERVAL_MINUTES = 59; // Минимальный интервал в 59 минут
 
     const nowTimeStamp = new Date();
     let startTimestamp = zonedTimeToUtc(set(nowTimeStamp, interval.from), 'Europe/Moscow');
@@ -120,8 +120,8 @@ export class PostSchedulerService {
       startTimestamp = nowTimeStamp;
     }
 
-    // Будем искать слот в течение следующих 14 дней
-    for (let dayOffset = 0; dayOffset < 14; dayOffset++) {
+    // Будем искать слот в течение следующих 30 дней
+    for (let dayOffset = 0; dayOffset < 30; dayOffset++) {
       // Если это не первая итерация, сдвигаем интервал на следующий день
       if (dayOffset > 0) {
         // Восстанавливаем границы интервала для нового дня
