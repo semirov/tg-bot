@@ -101,7 +101,7 @@ export class PostSchedulerService {
 
   private async nextScheduledTimeByMode(mode: PublicationModesEnum): Promise<Date> {
     const interval = SchedulerCommonService.timeIntervalByMode(mode);
-    const MIN_INTERVAL_MINUTES = 59; // Минимальный интервал в 59 минут
+    const MIN_INTERVAL_MINUTES = 89; // Минимальный интервал в 90 минут
 
     const nowTimeStamp = new Date();
     let startTimestamp = zonedTimeToUtc(set(nowTimeStamp, interval.from), 'Europe/Moscow');

@@ -222,15 +222,50 @@ export class ClientBaseService implements OnModuleInit {
     }
   }
 
-  private async onMessageEvent(event: NewMessageEvent) {
-    if (!event.isChannel) {
-      return;
+  private lastProcessedGroup?: {
+    id: string;
+    timer: NodeJS.Timeout;
+  };
+
+  private async handleAlbum(event: NewMessageEvent) {
+    if (!event.message.groupedId) return false;
+
+    const groupId = event.message.groupedId.toString();
+
+    // Если уже обрабатывается эта группа
+    if (this.lastProcessedGroup?.id === groupId) {
+      clearTimeout(this.lastProcessedGroup.timer);
     }
 
-    setTimeout(
-      () => event.message.forwardTo(bigInt(this.baseConfigService.observerChannel)),
-      Math.round(Math.random() * 5 + 5) * 1000
-    );
+    // Устанавливаем новый таймер
+    this.lastProcessedGroup = {
+      id: groupId,
+      timer: setTimeout(async () => {
+        if (!(await this.isAdPost(event))) {
+          await event.message.forwardTo(
+            bigInt(this.baseConfigService.observerChannel)
+          );
+        }
+        this.lastProcessedGroup = undefined;
+      }, 800) // Оптимальная задержка для альбомов
+    };
+
+    return true;
+  }
+
+  private async onMessageEvent(event: NewMessageEvent) {
+    if (!event.isChannel) return;
+
+    // Пытаемся обработать как альбом
+    if (await this.handleAlbum(event)) return;
+
+    // Одиночное сообщение
+    if (!(await this.isAdPost(event))) {
+      setTimeout(
+        () => event.message.forwardTo(bigInt(this.baseConfigService.observerChannel)),
+        Math.round(Math.random() * 5 + 5) * 1000
+      );
+    }
   }
 
   private onObserverChannelPost() {
@@ -240,6 +275,97 @@ export class ClientBaseService implements OnModuleInit {
       }
       this.observerChannelPostSubject.next(ctx);
     });
+  }
+
+  private async isAdPost(event: NewMessageEvent): Promise<boolean> {
+    // Проверяем наличие ссылок
+    const hasLinks = await this.isPostWithLinks(event);
+    if (!hasLinks) return false;
+
+    const message = event.message.message;
+    if (!message) return false;
+
+    // Получаем все ссылки из сообщения
+    const urls = await this.extractUrls(event);
+    if (urls.length === 0) return false;
+
+    // Получаем информацию о текущем канале
+    const currentChannel = await this.telegramClient.getEntity(event.chatId);
+
+    // Проверяем каждую ссылку
+    for (const url of urls) {
+      try {
+        const resolved = await this.resolveUrl(url);
+
+        // Если ссылка ведет не на текущий канал - считаем рекламой
+        if (!this.isSameChannel(resolved, currentChannel)) {
+          return true;
+        }
+      } catch (error) {
+        Logger.error(`Error resolving URL ${url}: ${error}`, ClientBaseService.name);
+        // Если не удалось разрешить URL, считаем что это внешняя ссылка
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  private async extractUrls(event: NewMessageEvent): Promise<string[]> {
+    const urls: string[] = [];
+    const message = event.message;
+
+    if (!message.entities) return urls;
+
+    for (const entity of message.entities) {
+      if (entity instanceof Api.MessageEntityUrl) {
+        const offset = entity.offset;
+        const length = entity.length;
+        urls.push(message.message.substring(offset, offset + length));
+      } else if (entity instanceof Api.MessageEntityTextUrl) {
+        urls.push(entity.url);
+      }
+    }
+
+    return urls;
+  }
+
+  private async resolveUrl(url: string): Promise<any> {
+    // Telegram может возвращать сокращенные ссылки (t.me/xxx)
+    // Нужно раскрыть их до полного URL
+    if (url.startsWith('t.me/')) {
+      url = `https://${url}`;
+    }
+
+    // Для Telegram ссылок используем getEntity
+    if (url.includes('t.me/')) {
+      const username = url.split('t.me/')[1].split('/')[0];
+      return await this.telegramClient.getEntity(username);
+    }
+
+    // Для других ссылок можно использовать HTTP запрос
+    // (но нужно учитывать редиректы)
+    // Здесь простейшая реализация - в реальном коде нужно обрабатывать редиректы
+    return { isExternal: true, url };
+  }
+
+  private isSameChannel(resolvedEntity: any, currentChannel: any): boolean {
+    // Если это внешний URL (не Telegram)
+    if (resolvedEntity.isExternal) {
+      return false;
+    }
+
+    // Сравниваем ID каналов
+    if (resolvedEntity.id && currentChannel.id) {
+      return resolvedEntity.id.equals(currentChannel.id);
+    }
+
+    // Сравниваем usernames каналов
+    if (resolvedEntity.username && currentChannel.username) {
+      return resolvedEntity.username.toLowerCase() === currentChannel.username.toLowerCase();
+    }
+
+    return false;
   }
 
   private async isPostWithLinks(event: NewMessageEvent) {
