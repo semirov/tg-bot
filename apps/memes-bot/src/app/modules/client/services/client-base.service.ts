@@ -12,6 +12,7 @@ import { Repository } from 'typeorm';
 import { ClientSessionEntity } from '../entities/client-session.entity';
 import { NewMessage, NewMessageEvent } from 'telegram/events';
 import * as bigInt from 'big-integer';
+import { Cron, CronExpression } from '@nestjs/schedule';
 
 @Injectable()
 export class ClientBaseService implements OnModuleInit {
@@ -256,6 +257,18 @@ export class ClientBaseService implements OnModuleInit {
   private async onMessageEvent(event: NewMessageEvent) {
     if (!event.isChannel) return;
 
+    // Пропускаем сообщения из собственных каналов
+    const ownChannels = [
+      this.baseConfigService.memeChanelId,
+      this.baseConfigService.cringeMemeChannelId,
+      this.baseConfigService.observerChannel,
+      this.baseConfigService.bestMemeChanelId
+    ].map(id => bigInt(id));
+
+    if (ownChannels.some(channelId => channelId.equals(event.chatId))) {
+      return;
+    }
+
     // Пытаемся обработать как альбом
     if (await this.handleAlbum(event)) return;
 
@@ -309,6 +322,73 @@ export class ClientBaseService implements OnModuleInit {
     }
 
     return false;
+  }
+
+  @Cron(CronExpression.EVERY_DAY_AT_9PM)
+  public async scheduleDailyBestPost() {
+    try {
+      Logger.log('Starting daily best post selection', ClientBaseService.name);
+      await this.postDailyBestMeme();
+    } catch (error) {
+      Logger.error(`Error in daily best post: ${error}`, ClientBaseService.name);
+    }
+  }
+
+
+  public async postDailyBestMeme() {
+    if (!this.telegramClient?.connected) {
+      Logger.warn('Telegram client is not connected for daily best post', ClientBaseService.name);
+      return;
+    }
+
+    const memeChannelId = bigInt(this.baseConfigService.memeChanelId);
+
+    try {
+      // Получаем сообщения за последние 24 часа
+      const messages = await this.telegramClient.getMessages(memeChannelId, {
+        limit: 100,
+        offsetDate: Math.floor(Date.now() / 1000) - 86400 // 24 часа назад
+      });
+
+      if (messages.length === 0) {
+        Logger.log('No messages found in meme channel for last 24h', ClientBaseService.name);
+        return;
+      }
+
+      // Находим сообщение с максимальным engagement (просмотры + реакции)
+      let bestMessage = null;
+      let maxEngagement = 0;
+
+      for (const message of messages) {
+        if (!message) continue;
+
+        // Получаем количество просмотров
+        const views = message.views || 0;
+
+        // Получаем количество реакций
+        let reactionsCount = 0;
+        if (message.reactions) {
+          reactionsCount = message.reactions.results
+            .reduce((sum, reaction) => sum + reaction.count, 0);
+        }
+
+        const engagement = views + reactionsCount;
+
+        if (engagement > maxEngagement) {
+          maxEngagement = engagement;
+          bestMessage = message;
+        }
+      }
+
+      if (bestMessage) {
+        await this.bot.api.forwardMessage(this.baseConfigService.bestMemeChanelId, this.baseConfigService.memeChanelId, bestMessage.id);
+      } else {
+        Logger.log('No suitable message found to post', ClientBaseService.name);
+      }
+    } catch (error) {
+      Logger.error(`Error posting daily best meme: ${error}`, ClientBaseService.name);
+      throw error;
+    }
   }
 
   private async extractUrls(event: NewMessageEvent): Promise<string[]> {

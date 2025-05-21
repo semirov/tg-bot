@@ -17,6 +17,10 @@ export class BaseConfigService {
     return +this.configService.getOrThrow<string>('MANAGED_CHANNEL');
   }
 
+  get bestMemeChanelId(): number {
+    return +this.configService.getOrThrow<string>('BEST_MANAGED_CHANNEL');
+  }
+
   get userRequestMemeChannel(): number {
     return +this.configService.getOrThrow<string>('USER_REQUEST_CHANNEL');
   }

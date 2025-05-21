@@ -65,6 +65,10 @@ export class AdminMenuService implements OnModuleInit {
         await this.publishBotPromo(ctx);
       })
       .row()
+      .text('Лучший пост в канал', async (ctx) => {
+        await this.clientBaseService.postDailyBestMeme();
+      })
+      .row()
       .text('Меню модератора', (ctx) =>
         ctx.reply('Выбери то, что хочешь сделать', {
           reply_markup: moderatorStartMenu,
