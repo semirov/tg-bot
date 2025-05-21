@@ -324,16 +324,8 @@ export class ClientBaseService implements OnModuleInit {
     return false;
   }
 
-  @Cron(CronExpression.EVERY_DAY_AT_9PM)
-  public async scheduleDailyBestPost() {
-    try {
-      Logger.log('Starting daily best post selection', ClientBaseService.name);
-      await this.postDailyBestMeme();
-    } catch (error) {
-      Logger.error(`Error in daily best post: ${error}`, ClientBaseService.name);
-    }
-  }
-
+  // 21:00 МСК
+  @Cron(CronExpression.EVERY_DAY_AT_6PM)
   public async postDailyBestMeme() {
     if (!this.telegramClient?.connected) {
       Logger.warn('Telegram client is not connected for daily best post', ClientBaseService.name);
@@ -357,43 +349,77 @@ export class ClientBaseService implements OnModuleInit {
         return;
       }
 
-      // Находим сообщение с максимальным engagement (просмотры + реакции)
-      let bestMessage = null;
-      let maxEngagement = 0;
+      // Находим лучший пост по просмотрам
+      let bestByViews = null;
+      let maxViews = 0;
+
+      // Находим лучший пост по реакциям
+      let bestByReactions = null;
+      let maxReactions = 0;
 
       for (const message of messages) {
         if (!message) continue;
 
-        // Получаем количество просмотров
+        // Обработка просмотров
         const views = message.views || 0;
+        if (views > maxViews) {
+          maxViews = views;
+          bestByViews = message;
+        }
 
-        // Получаем количество реакций
+        // Обработка реакций
         let reactionsCount = 0;
         if (message.reactions) {
           reactionsCount = message.reactions.results
             .reduce((sum, reaction) => sum + reaction.count, 0);
         }
 
-        const engagement = views + reactionsCount;
-
-        if (engagement > maxEngagement) {
-          maxEngagement = engagement;
-          bestMessage = message;
+        if (reactionsCount > maxReactions) {
+          maxReactions = reactionsCount;
+          bestByReactions = message;
         }
       }
 
-      if (bestMessage) {
-        Logger.log(`Posting best message with engagement ${maxEngagement}`, ClientBaseService.name);
+      if (!bestByViews && !bestByReactions) {
+        Logger.log('No suitable messages found to post', ClientBaseService.name);
+        return;
+      }
 
-        // Пересылаем через бота
+
+      // Проверяем, один ли это пост
+      if (bestByViews?.id === bestByReactions?.id) {
+        // Если один пост лидирует и по просмотрам и по реакциям
+        Logger.log(`Posting single best message with ${maxViews} views and ${maxReactions} reactions`,
+          ClientBaseService.name);
+
         await this.bot.api.copyMessage(
           this.baseConfigService.bestMemeChanelId,
           this.baseConfigService.memeChanelId,
-          bestMessage.id
+          bestByViews.id
         );
       } else {
-        Logger.log('No suitable message found to post', ClientBaseService.name);
+        // Если разные посты лидируют по разным метрикам
+        if (bestByViews) {
+          Logger.log(`Posting best by views: ${maxViews} views`, ClientBaseService.name);
+
+          await this.bot.api.copyMessage(
+            this.baseConfigService.bestMemeChanelId,
+            this.baseConfigService.memeChanelId,
+            bestByViews.id,
+          );
+        }
+
+        if (bestByReactions) {
+          Logger.log(`Posting best by reactions: ${maxReactions} reactions`, ClientBaseService.name);
+
+          await this.bot.api.copyMessage(
+            this.baseConfigService.bestMemeChanelId,
+            this.baseConfigService.memeChanelId,
+            bestByReactions.id,
+          );
+        }
       }
+
     } catch (error) {
       Logger.error(`Error posting daily best meme: ${error}`, ClientBaseService.name);
 
