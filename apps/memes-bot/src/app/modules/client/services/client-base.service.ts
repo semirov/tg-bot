@@ -334,18 +334,20 @@ export class ClientBaseService implements OnModuleInit {
     }
   }
 
-
   public async postDailyBestMeme() {
     if (!this.telegramClient?.connected) {
       Logger.warn('Telegram client is not connected for daily best post', ClientBaseService.name);
       return;
     }
 
-    const memeChannelId = bigInt(this.baseConfigService.memeChanelId);
-
     try {
+      // Получаем сущность канала с мемами
+      const memeChannel = await this.telegramClient.getEntity(
+        bigInt(this.baseConfigService.memeChanelId)
+      );
+
       // Получаем сообщения за последние 24 часа
-      const messages = await this.telegramClient.getMessages(memeChannelId, {
+      const messages = await this.telegramClient.getMessages(memeChannel, {
         limit: 100,
         offsetDate: Math.floor(Date.now() / 1000) - 86400 // 24 часа назад
       });
@@ -381,12 +383,27 @@ export class ClientBaseService implements OnModuleInit {
       }
 
       if (bestMessage) {
-        await this.bot.api.forwardMessage(this.baseConfigService.bestMemeChanelId, this.baseConfigService.memeChanelId, bestMessage.id);
+        Logger.log(`Posting best message with engagement ${maxEngagement}`, ClientBaseService.name);
+
+        // Пересылаем через бота
+        await this.bot.api.copyMessage(
+          this.baseConfigService.bestMemeChanelId,
+          this.baseConfigService.memeChanelId,
+          bestMessage.id
+        );
       } else {
         Logger.log('No suitable message found to post', ClientBaseService.name);
       }
     } catch (error) {
       Logger.error(`Error posting daily best meme: ${error}`, ClientBaseService.name);
+
+      // Дополнительная обработка ошибок
+      if (error.message.includes('Could not find the input entity')) {
+        Logger.error('Make sure the bot has access to both channels', ClientBaseService.name);
+      } else if (error.message.includes('message to forward not found')) {
+        Logger.error('The message may have been deleted', ClientBaseService.name);
+      }
+
       throw error;
     }
   }
