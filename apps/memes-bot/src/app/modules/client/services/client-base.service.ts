@@ -386,32 +386,16 @@ export class ClientBaseService implements OnModuleInit {
         // Если один пост лидирует и по просмотрам и по реакциям
         Logger.log(`Posting single best message with ${maxViews} views and ${maxReactions} reactions`,
           ClientBaseService.name);
-
-        await this.bot.api.copyMessage(
-          this.baseConfigService.bestMemeChanelId,
-          this.baseConfigService.memeChanelId,
-          bestByViews.id
-        );
+        await this.copyMessage(bestByViews.id);
       } else {
         // Если разные посты лидируют по разным метрикам
         if (bestByViews) {
           Logger.log(`Posting best by views: ${maxViews} views`, ClientBaseService.name);
-
-          await this.bot.api.copyMessage(
-            this.baseConfigService.bestMemeChanelId,
-            this.baseConfigService.memeChanelId,
-            bestByViews.id,
-          );
+          await this.copyMessage(bestByViews.id);
         }
-
         if (bestByReactions) {
           Logger.log(`Posting best by reactions: ${maxReactions} reactions`, ClientBaseService.name);
-
-          await this.bot.api.copyMessage(
-            this.baseConfigService.bestMemeChanelId,
-            this.baseConfigService.memeChanelId,
-            bestByReactions.id,
-          );
+          await this.copyMessage(bestByReactions.id);
         }
       }
 
@@ -426,6 +410,18 @@ export class ClientBaseService implements OnModuleInit {
       }
 
       throw error;
+    }
+  }
+
+  private async copyMessage(messageId: number): Promise<void> {
+    try {
+      await this.bot.api.copyMessage(
+        this.baseConfigService.bestMemeChanelId,
+        this.baseConfigService.memeChanelId,
+        messageId
+      );
+    } catch (e) {
+      Logger.error(`Cannot copy message ${messageId}`, ClientBaseService.name );
     }
   }
 
