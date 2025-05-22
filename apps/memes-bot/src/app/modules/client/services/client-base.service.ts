@@ -349,7 +349,7 @@ export class ClientBaseService implements OnModuleInit {
 
       // Фильтруем сообщения за последние 24 часа
       const recentMessages = messages.filter(msg =>
-        msg.date && msg.date >= twentyFourHoursAgo
+        msg.date && msg.date >= twentyFourHoursAgo && this.hasMediaContent(msg)
       );
 
       if (recentMessages.length === 0) {
@@ -447,6 +447,20 @@ export class ClientBaseService implements OnModuleInit {
     }
 
     return urls;
+  }
+
+  // Проверяет, содержит ли сообщение медиа контент (фото или видео)
+  private hasMediaContent(message: Api.Message): boolean {
+    return !!(
+      message.photo ||
+      message.video ||
+      (message.media && (
+        message.media instanceof Api.MessageMediaPhoto ||
+        message.media instanceof Api.MessageMediaDocument &&
+        message.media.document instanceof Api.Document &&
+        message.media.document.mimeType.startsWith('video/')
+      ))
+    );
   }
 
   private async resolveUrl(url: string): Promise<any> {
