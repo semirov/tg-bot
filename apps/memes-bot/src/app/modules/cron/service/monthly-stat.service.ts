@@ -24,9 +24,6 @@ export class MonthlyStatService {
   ) {}
 
   private getNameFromStatItem(item: StatisticRequestType): string {
-    if (item.isAnonymousPublishing) {
-      return 'Анонимный автор';
-    }
     if (item.username) {
       return `@${item.username}`;
     }
@@ -83,12 +80,10 @@ export class MonthlyStatService {
       .addSelect('user.username', 'username')
       .addSelect('user.firstName', 'firstName')
       .addSelect('user.lastName', 'lastName')
-      .addSelect('userRequest.isAnonymousPublishing', 'isAnonymousPublishing')
       .addSelect('COUNT(userRequest.id)', 'count')
       .where('userRequest.isPublished = true')
       .andWhere('userRequest.publishedAt >= :date', { date: sub(new Date(), { months: 1 }) })
       .groupBy('user.id')
-      .addGroupBy('userRequest.isAnonymousPublishing')
       .orderBy('count', 'DESC')
       .limit(10)
       .getRawMany();

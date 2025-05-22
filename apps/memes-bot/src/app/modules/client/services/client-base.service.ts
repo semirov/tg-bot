@@ -12,6 +12,7 @@ import { Repository } from 'typeorm';
 import { ClientSessionEntity } from '../entities/client-session.entity';
 import { NewMessage, NewMessageEvent } from 'telegram/events';
 import * as bigInt from 'big-integer';
+import { Cron, CronExpression } from '@nestjs/schedule';
 
 @Injectable()
 export class ClientBaseService implements OnModuleInit {
@@ -222,15 +223,62 @@ export class ClientBaseService implements OnModuleInit {
     }
   }
 
+  private lastProcessedGroup?: {
+    id: string;
+    timer: NodeJS.Timeout;
+  };
+
+  private async handleAlbum(event: NewMessageEvent) {
+    if (!event.message.groupedId) return false;
+
+    const groupId = event.message.groupedId.toString();
+
+    // Если уже обрабатывается эта группа
+    if (this.lastProcessedGroup?.id === groupId) {
+      clearTimeout(this.lastProcessedGroup.timer);
+    }
+
+    // Устанавливаем новый таймер
+    this.lastProcessedGroup = {
+      id: groupId,
+      timer: setTimeout(async () => {
+        if (!(await this.isAdPost(event))) {
+          await event.message.forwardTo(
+            bigInt(this.baseConfigService.observerChannel)
+          );
+        }
+        this.lastProcessedGroup = undefined;
+      }, 800) // Оптимальная задержка для альбомов
+    };
+
+    return true;
+  }
+
   private async onMessageEvent(event: NewMessageEvent) {
-    if (!event.isChannel) {
+    if (!event.isChannel) return;
+
+    // Пропускаем сообщения из собственных каналов
+    const ownChannels = [
+      this.baseConfigService.memeChanelId,
+      this.baseConfigService.cringeMemeChannelId,
+      this.baseConfigService.observerChannel,
+      this.baseConfigService.bestMemeChanelId
+    ].map(id => bigInt(id));
+
+    if (ownChannels.some(channelId => channelId.equals(event.chatId))) {
       return;
     }
 
-    setTimeout(
-      () => event.message.forwardTo(bigInt(this.baseConfigService.observerChannel)),
-      Math.round(Math.random() * 5 + 5) * 1000
-    );
+    // Пытаемся обработать как альбом
+    if (await this.handleAlbum(event)) return;
+
+    // Одиночное сообщение
+    if (!(await this.isAdPost(event))) {
+      setTimeout(
+        () => event.message.forwardTo(bigInt(this.baseConfigService.observerChannel)),
+        Math.round(Math.random() * 5 + 5) * 1000
+      );
+    }
   }
 
   private onObserverChannelPost() {
@@ -240,6 +288,203 @@ export class ClientBaseService implements OnModuleInit {
       }
       this.observerChannelPostSubject.next(ctx);
     });
+  }
+
+  private async isAdPost(event: NewMessageEvent): Promise<boolean> {
+    // Проверяем наличие ссылок
+    const hasLinks = await this.isPostWithLinks(event);
+    if (!hasLinks) return false;
+
+    const message = event.message.message;
+    if (!message) return false;
+
+    // Получаем все ссылки из сообщения
+    const urls = await this.extractUrls(event);
+    if (urls.length === 0) return false;
+
+    // Получаем информацию о текущем канале
+    const currentChannel = await this.telegramClient.getEntity(event.chatId);
+
+    // Проверяем каждую ссылку
+    for (const url of urls) {
+      try {
+        const resolved = await this.resolveUrl(url);
+
+        // Если ссылка ведет не на текущий канал - считаем рекламой
+        if (!this.isSameChannel(resolved, currentChannel)) {
+          return true;
+        }
+      } catch (error) {
+        Logger.error(`Error resolving URL ${url}: ${error}`, ClientBaseService.name);
+        // Если не удалось разрешить URL, считаем что это внешняя ссылка
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  // 21:00 МСК
+  @Cron(CronExpression.EVERY_DAY_AT_6PM)
+  public async postDailyBestMeme(alternateChatId?: number) {
+    try {
+      // Получаем сущность канала с мемами
+      const memeChannel = await this.telegramClient.getEntity(
+        bigInt(this.baseConfigService.memeChanelId)
+      );
+
+      // Рассчитываем временные рамки
+      const now = Math.floor(Date.now() / 1000);
+      const twentyFourHoursAgo = now - 86400;
+
+      // Получаем сообщения с конца (новые сначала)
+      const messages = await this.telegramClient.getMessages(memeChannel, {
+        limit: 100, // Достаточно для покрытия 24 часов в активном канале
+      });
+
+      if (messages.length === 0) {
+        Logger.log('No messages found in meme channel', ClientBaseService.name);
+        return;
+      }
+
+      // Фильтруем сообщения за последние 24 часа
+      const recentMessages = messages.filter(msg =>
+        msg.date && msg.date >= twentyFourHoursAgo
+      );
+
+      if (recentMessages.length === 0) {
+        Logger.log(`Found ${messages.length} messages, but none in last 24 hours. Oldest message: ${new Date(messages[messages.length-1].date * 1000)}`,
+          ClientBaseService.name);
+        return;
+      }
+
+      // Находим лучший пост по просмотрам
+      let bestByViews = null;
+      let maxViews = 0;
+
+      // Находим лучший пост по реакциям
+      let bestByReactions = null;
+      let maxReactions = 0;
+
+      for (const message of recentMessages) {
+        if (!message) continue;
+
+        // Обработка просмотров
+        const views = message.views || 0;
+        if (views > maxViews) {
+          maxViews = views;
+          bestByViews = message;
+        }
+
+        // Обработка реакций
+        let reactionsCount = 0;
+        if (message.reactions) {
+          reactionsCount = message.reactions.results
+            .reduce((sum, reaction) => sum + reaction.count, 0);
+        }
+
+        if (reactionsCount > maxReactions) {
+          maxReactions = reactionsCount;
+          bestByReactions = message;
+        }
+      }
+
+      if (!bestByViews && !bestByReactions) {
+        Logger.log('No suitable messages found to post', ClientBaseService.name);
+        return;
+      }
+
+      // Проверяем, один ли это пост
+      if (bestByViews?.id === bestByReactions?.id) {
+        Logger.log(`Posting single best message with ${maxViews} views and ${maxReactions} reactions`,
+          ClientBaseService.name);
+        await this.copyMessage(bestByViews.id, false, alternateChatId);
+      } else {
+        if (bestByViews) {
+          Logger.log(`Posting best by views: ${maxViews} views`, ClientBaseService.name);
+          await this.copyMessage(bestByViews.id, true, alternateChatId);
+        }
+        if (bestByReactions) {
+          Logger.log(`Posting best by reactions: ${maxReactions} reactions`, ClientBaseService.name);
+          await this.copyMessage(bestByReactions.id, false, alternateChatId);
+        }
+      }
+
+    } catch (error) {
+      Logger.error(`Error posting daily best meme: ${error}`, ClientBaseService.name);
+      throw error;
+    }
+  }
+
+  private async copyMessage(messageId: number, silent: boolean, alternateChatId?: number): Promise<void> {
+    try {
+      await this.bot.api.copyMessage(
+        alternateChatId || this.baseConfigService.bestMemeChanelId,
+        this.baseConfigService.memeChanelId,
+        messageId, {
+          disable_notification: silent
+        }
+      );
+    } catch (e) {
+      Logger.error(`Cannot copy message ${messageId}`, ClientBaseService.name );
+    }
+  }
+
+  private async extractUrls(event: NewMessageEvent): Promise<string[]> {
+    const urls: string[] = [];
+    const message = event.message;
+
+    if (!message.entities) return urls;
+
+    for (const entity of message.entities) {
+      if (entity instanceof Api.MessageEntityUrl) {
+        const offset = entity.offset;
+        const length = entity.length;
+        urls.push(message.message.substring(offset, offset + length));
+      } else if (entity instanceof Api.MessageEntityTextUrl) {
+        urls.push(entity.url);
+      }
+    }
+
+    return urls;
+  }
+
+  private async resolveUrl(url: string): Promise<any> {
+    // Telegram может возвращать сокращенные ссылки (t.me/xxx)
+    // Нужно раскрыть их до полного URL
+    if (url.startsWith('t.me/')) {
+      url = `https://${url}`;
+    }
+
+    // Для Telegram ссылок используем getEntity
+    if (url.includes('t.me/')) {
+      const username = url.split('t.me/')[1].split('/')[0];
+      return await this.telegramClient.getEntity(username);
+    }
+
+    // Для других ссылок можно использовать HTTP запрос
+    // (но нужно учитывать редиректы)
+    // Здесь простейшая реализация - в реальном коде нужно обрабатывать редиректы
+    return { isExternal: true, url };
+  }
+
+  private isSameChannel(resolvedEntity: any, currentChannel: any): boolean {
+    // Если это внешний URL (не Telegram)
+    if (resolvedEntity.isExternal) {
+      return false;
+    }
+
+    // Сравниваем ID каналов
+    if (resolvedEntity.id && currentChannel.id) {
+      return resolvedEntity.id.equals(currentChannel.id);
+    }
+
+    // Сравниваем usernames каналов
+    if (resolvedEntity.username && currentChannel.username) {
+      return resolvedEntity.username.toLowerCase() === currentChannel.username.toLowerCase();
+    }
+
+    return false;
   }
 
   private async isPostWithLinks(event: NewMessageEvent) {

@@ -9,7 +9,7 @@ export class UserRequestEntity {
   @ManyToOne(() => UserEntity, (user) => user.postRequests)
   user: UserEntity;
 
-  @Column('boolean', { nullable: true })
+  @Column('boolean', { nullable: false })
   public isAnonymousPublishing: boolean;
 
   @Column('bigint')

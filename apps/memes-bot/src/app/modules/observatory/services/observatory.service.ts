@@ -168,6 +168,7 @@ export class ObservatoryService implements OnModuleInit {
       case PublicationModesEnum.NEXT_MORNING:
       case PublicationModesEnum.NEXT_MIDDAY:
       case PublicationModesEnum.NEXT_EVENING:
+      case PublicationModesEnum.NEXT_INTERVAL:
       case PublicationModesEnum.NEXT_NIGHT:
         return this.publishScheduled(publishContext);
       case PublicationModesEnum.NIGHT_CRINGE:

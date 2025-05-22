@@ -112,15 +112,7 @@ export class UserModeratedPostService {
     publishContext: ScheduledPostContextInterface
   ): Promise<void> {
     try {
-      if (!ctx.session.userVoted) {
-        await ctx.api.sendMessage(
-          userId,
-          'Привет!\nОцени пожалуйста этот пост\n' +
-          'Голосование продлится 2 часа, после чего пост будет либо отклонен, либо опубликован\n' +
-          'Если не хочешь чтобы тебя просили оценивать посты, нажми кнопку "Не хочу оценивать посты" ' +
-          'и больше таких сообщений не будет'
-        );
-      }
+
       const message = await ctx.api.copyMessage(
         userId,
         this.baseConfigService.userRequestMemeChannel,
@@ -136,7 +128,7 @@ export class UserModeratedPostService {
     } catch (e) {
       await this.userService.changeUserModeratedMode(userId, false);
     } finally {
-      await firstValueFrom(timer(500));
+      await firstValueFrom(timer(1000));
     }
   }
 
@@ -201,13 +193,12 @@ export class UserModeratedPostService {
 
     if (+post.likes >= +post.dislikes || +post.dislikes === 0) {
       isApprovedPost = true;
-      const caption = this.getCaptionByUserModeratedPost(+post.likes, +post.dislikes);
       await this.userModeratedPostEntity.update({id: post.id}, {isApproved: true});
       this.userModeratedPostSubject.next({
         mode: post.mode,
         requestChannelMessageId: post.requestChannelMessageId,
         processedByModerator: post.processedByModerator,
-        caption,
+        caption: post.caption,
         isUserPost: false,
         hash: post.hash,
       });
@@ -242,14 +233,4 @@ export class UserModeratedPostService {
     }
   }
 
-  private getCaptionByUserModeratedPost(likes: number, dislikes: number): string {
-    let text = '#одобрено';
-    if (likes) {
-      text += `  👍 ${likes}`;
-    }
-    if (dislikes) {
-      text += `   👎 ${dislikes}`;
-    }
-    return text;
-  }
 }
