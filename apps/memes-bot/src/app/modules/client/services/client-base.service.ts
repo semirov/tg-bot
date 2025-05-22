@@ -326,21 +326,35 @@ export class ClientBaseService implements OnModuleInit {
 
   // 21:00 МСК
   @Cron(CronExpression.EVERY_DAY_AT_6PM)
-  public async postDailyBestMeme() {
+  public async postDailyBestMeme(alternateChatId?: number) {
     try {
       // Получаем сущность канала с мемами
       const memeChannel = await this.telegramClient.getEntity(
         bigInt(this.baseConfigService.memeChanelId)
       );
 
-      // Получаем сообщения за последние 24 часа
+      // Рассчитываем временные рамки
+      const now = Math.floor(Date.now() / 1000);
+      const twentyFourHoursAgo = now - 86400;
+
+      // Получаем сообщения с конца (новые сначала)
       const messages = await this.telegramClient.getMessages(memeChannel, {
-        limit: 100,
-        offsetDate: Math.floor(Date.now() / 1000) - 86400 // 24 часа назад
+        limit: 100, // Достаточно для покрытия 24 часов в активном канале
       });
 
       if (messages.length === 0) {
-        Logger.log('No messages found in meme channel for last 24h', ClientBaseService.name);
+        Logger.log('No messages found in meme channel', ClientBaseService.name);
+        return;
+      }
+
+      // Фильтруем сообщения за последние 24 часа
+      const recentMessages = messages.filter(msg =>
+        msg.date && msg.date >= twentyFourHoursAgo
+      );
+
+      if (recentMessages.length === 0) {
+        Logger.log(`Found ${messages.length} messages, but none in last 24 hours. Oldest message: ${new Date(messages[messages.length-1].date * 1000)}`,
+          ClientBaseService.name);
         return;
       }
 
@@ -352,7 +366,7 @@ export class ClientBaseService implements OnModuleInit {
       let bestByReactions = null;
       let maxReactions = 0;
 
-      for (const message of messages) {
+      for (const message of recentMessages) {
         if (!message) continue;
 
         // Обработка просмотров
@@ -380,45 +394,36 @@ export class ClientBaseService implements OnModuleInit {
         return;
       }
 
-
       // Проверяем, один ли это пост
       if (bestByViews?.id === bestByReactions?.id) {
-        // Если один пост лидирует и по просмотрам и по реакциям
         Logger.log(`Posting single best message with ${maxViews} views and ${maxReactions} reactions`,
           ClientBaseService.name);
-        await this.copyMessage(bestByViews.id);
+        await this.copyMessage(bestByViews.id, false, alternateChatId);
       } else {
-        // Если разные посты лидируют по разным метрикам
         if (bestByViews) {
           Logger.log(`Posting best by views: ${maxViews} views`, ClientBaseService.name);
-          await this.copyMessage(bestByViews.id);
+          await this.copyMessage(bestByViews.id, true, alternateChatId);
         }
         if (bestByReactions) {
           Logger.log(`Posting best by reactions: ${maxReactions} reactions`, ClientBaseService.name);
-          await this.copyMessage(bestByReactions.id);
+          await this.copyMessage(bestByReactions.id, false, alternateChatId);
         }
       }
 
     } catch (error) {
       Logger.error(`Error posting daily best meme: ${error}`, ClientBaseService.name);
-
-      // Дополнительная обработка ошибок
-      if (error.message.includes('Could not find the input entity')) {
-        Logger.error('Make sure the bot has access to both channels', ClientBaseService.name);
-      } else if (error.message.includes('message to forward not found')) {
-        Logger.error('The message may have been deleted', ClientBaseService.name);
-      }
-
       throw error;
     }
   }
 
-  private async copyMessage(messageId: number): Promise<void> {
+  private async copyMessage(messageId: number, silent: boolean, alternateChatId?: number): Promise<void> {
     try {
       await this.bot.api.copyMessage(
-        this.baseConfigService.bestMemeChanelId,
+        alternateChatId || this.baseConfigService.bestMemeChanelId,
         this.baseConfigService.memeChanelId,
-        messageId
+        messageId, {
+          disable_notification: silent
+        }
       );
     } catch (e) {
       Logger.error(`Cannot copy message ${messageId}`, ClientBaseService.name );

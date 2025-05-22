@@ -66,7 +66,7 @@ export class AdminMenuService implements OnModuleInit {
       })
       .row()
       .text('Лучший пост в канал', async (ctx) => {
-        await this.clientBaseService.postDailyBestMeme();
+        await this.clientBaseService.postDailyBestMeme(ctx.from.id);
       })
       .row()
       .text('Меню модератора', (ctx) =>
