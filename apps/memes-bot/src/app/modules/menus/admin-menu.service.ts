@@ -48,6 +48,10 @@ export class AdminMenuService implements OnModuleInit {
         ctx.conversation.enter(ConversationsEnum.ADD_MODERATOR_CONVERSATION)
       )
       .row()
+      .text('Управление лимитом мемов', (ctx) => ctx.menu.nav('meme-limit-control'))
+      .row()
+      .text('Управление лимитом мемов', (ctx) => ctx.menu.nav('meme-limit-control'))
+      .row()
       .text('Сетка публикаций', async (ctx) => this.showPublicationGrid(ctx))
       .row()
       .text(
@@ -189,8 +193,54 @@ export class AdminMenuService implements OnModuleInit {
       .row()
       .text('Назад', (ctx) => ctx.menu.nav('moderators-list'));
 
+    const memeLimitControlMenu = new Menu<BotContext>('meme-limit-control')
+      .text('Выбери пользователя', async (ctx) => {
+        ctx.session.memeLimitControlState = 'select-user';
+        ctx.menu.nav('meme-limit-select-user');
+      })
+      .row()
+      .back('Назад');
+
+    const memeLimitSelectUserMenu = new Menu<BotContext>('meme-limit-select-user').dynamic(async () => {
+      const users = await this.userService.repository.find({
+        where: { isBanned: false },
+        order: { lastActivity: 'DESC' },
+        take: 50
+      });
+      
+      const range = new MenuRange<BotContext>();
+      for (const user of users) {
+        range
+          .text(`@${user.username}`, (ctx) => {
+            ctx.session.memeLimitUserId = user.id;
+            ctx.menu.nav('meme-limit-options');
+          })
+          .row();
+      }
+      range.back('Назад');
+      return range;
+    });
+
+    const memeLimitOptionsMenu = new Menu<BotContext>('meme-limit-options')
+      .text('Снять лимит на 24 часа', async (ctx) => {
+        await this.userService.disableMemeLimitForUser(ctx.session.memeLimitUserId, 24);
+        await ctx.reply(`Лимит мемов снят для пользователя на 24 часа`);
+        ctx.menu.nav(AdminMenusEnum.ADMIN_START_MENU);
+      })
+      .row()
+      .text('Снять лимит на 1 час', async (ctx) => {
+        await this.userService.disableMemeLimitForUser(ctx.session.memeLimitUserId, 1);
+        await ctx.reply(`Лимит мемов снят для пользователя на 1 час`);
+        ctx.menu.nav(AdminMenusEnum.ADMIN_START_MENU);
+      })
+      .row()
+      .back('Назад');
+
     menu.register(moderatorsListMenu);
     menu.register(moderatorSettingMenu);
+    menu.register(memeLimitControlMenu);
+    menu.register(memeLimitSelectUserMenu);
+    menu.register(memeLimitOptionsMenu);
 
     return menu;
   }

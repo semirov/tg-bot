@@ -22,6 +22,8 @@ export interface SessionDataInterface {
   captchaValues?: CaptchaValuesInterface;
   approveJoinRequest?: number;
   userVoted?: boolean;
+  memeLimitControlState?: string;
+  memeLimitUserId?: number;
 }
 
 export type BotContext = Context &

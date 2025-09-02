@@ -108,4 +108,12 @@ export class UserRequestService {
 
     return { total: total || 0, week: week || 0 };
   }
+
+  public async countUserMemeRequestsLast24h(userId: number): Promise<number> {
+    const count = await this.repository.countBy({
+      user: { id: userId },
+      createdAt: MoreThan<Date>(sub(new Date(), { days: 1 })),
+    });
+    return count || 0;
+  }
 }

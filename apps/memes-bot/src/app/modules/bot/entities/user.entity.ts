@@ -58,6 +58,9 @@ export class UserEntity {
   @Column('boolean', { default: true })
   canBeModeratePosts: boolean;
 
+  @Column('timestamp', { nullable: true })
+  memeLimitDisabledUntil: Date;
+
   @OneToMany(() => UserRequestEntity, (postRequest) => postRequest.user)
   postRequests: UserRequestEntity[];
 

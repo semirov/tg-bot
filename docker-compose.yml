@@ -3,7 +3,7 @@ version: '3'
 services:
 
   test_database:
-    container_name: ha_pg_database
+    container_name: pg_database
     image: postgres
     environment:
       - POSTGRES_USER=postgress

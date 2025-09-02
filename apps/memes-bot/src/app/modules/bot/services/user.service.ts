@@ -42,6 +42,22 @@ export class UserService {
     );
   }
 
+  public async disableMemeLimitForUser(userId: number, hours: number): Promise<void> {
+    const untilDate = new Date();
+    untilDate.setHours(untilDate.getHours() + hours);
+    await this.userRepository.update(
+      { id: userId },
+      { memeLimitDisabledUntil: untilDate }
+    );
+  }
+
+  public async isMemeLimitDisabled(userId: number): Promise<boolean> {
+    const user = await this.userRepository.findOneBy({ id: userId });
+    return user?.memeLimitDisabledUntil
+      ? user.memeLimitDisabledUntil > new Date()
+      : false;
+  }
+
   public getUsersForPostModerate(): Promise<Pick<UserEntity, 'id'>[]> {
     return this.userRepository.find({
       select: { id: true },

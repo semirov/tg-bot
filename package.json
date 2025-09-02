@@ -5,8 +5,8 @@
   "scripts": {
     "start:memes-bot": "nx serve memes-bot",
     "build:memes-bot": "nx build memes-bot",
-    "docker:memes-bot:build": "docker build --platform linux/amd64 -f ./apps/memes-bot/Dockerfile -t  cr.yandex/crp8g8jm3p8d780a8hk3/telegram-bot:0.36.0 .",
-    "docker:memes-bot:push": "docker push cr.yandex/crp8g8jm3p8d780a8hk3/telegram-bot:0.37.0",
+    "docker:memes-bot:build": "docker build --platform linux/amd64 -f ./apps/memes-bot/Dockerfile -t  cr.yandex/crp8g8jm3p8d780a8hk3/telegram-bot:0.4.0 .",
+    "docker:memes-bot:push": "docker push cr.yandex/crp8g8jm3p8d780a8hk3/telegram-bot:0.4.0",
     "docker:memes-bot:publish": "npm run docker:memes-bot:build && npm run docker:memes-bot:push"
   },
   "private": true,

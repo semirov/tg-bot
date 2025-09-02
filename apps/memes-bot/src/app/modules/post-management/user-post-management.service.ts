@@ -3,25 +3,23 @@ import { BotContext } from '../bot/interfaces/bot-context.interface';
 import { Inject, Logger, OnModuleInit } from '@nestjs/common';
 import { BOT } from '../bot/providers/bot.provider';
 import { Bot, Composer, InlineKeyboard } from 'grammy';
-import { ConversationsEnum } from './constants/conversations.enum';
 import { Menu } from '@grammyjs/menu';
 import { BaseConfigService } from '../config/base-config.service';
 import { UserService } from '../bot/services/user.service';
 import { UserPermissionEnum } from '../bot/constants/user-permission.enum';
 import { PublicationModesEnum } from './constants/publication-modes.enum';
 import { PostModerationMenusEnum } from './constants/post-moderation-menus.enum';
-import { add, format, formatDistance, getUnixTime } from 'date-fns';
+import { add, format, formatDistance } from 'date-fns';
 import { UserRequestService } from '../bot/services/user-request.service';
-import {
-  PostSchedulerService,
-  ScheduledPostContextInterface,
-} from '../bot/services/post-scheduler.service';
+import { PostSchedulerService, ScheduledPostContextInterface } from '../bot/services/post-scheduler.service';
 import { SettingsService } from '../bot/services/settings.service';
 import { CringeManagementService } from '../bot/services/cringe-management.service';
 import { DeduplicationService } from '../bot/services/deduplication.service';
 import * as console from 'node:console';
 import { ru } from 'date-fns/locale';
+import { Injectable } from '@nestjs/common';
 
+@Injectable()
 export class UserPostManagementService implements OnModuleInit {
   constructor(
     @Inject(BOT) private bot: Bot<BotContext>,
@@ -34,21 +32,51 @@ export class UserPostManagementService implements OnModuleInit {
     private deduplicationService: DeduplicationService
   ) {}
 
-  /**
-   * Меню публикации одобренного поста
-   */
   private moderatedPostMenu: Menu<BotContext>;
   private replyToBotContext: Composer<BotContext>;
-
-
-
   private duplicateMenu: Menu<BotContext>;
+
+  private limitMenu: Menu<BotContext>;
 
   public onModuleInit(): void {
     this.buildModeratedPostMenu();
     this.buildDuplicateMenu();  // Добавляем создание меню для дубликатов
+    this.limitMenu = this.buildLimitMenu();
+    this.bot.use(this.limitMenu);
     this.prepareReplyToBotContext();
     this.handleAdminUserResponse();
+
+    // Обработчик кнопки снятия лимита с улучшенной проверкой и логированием
+    this.bot.callbackQuery(/^admin_lift_limit_(\d+)$/, async (ctx) => {
+      try {
+        const userId = parseInt(ctx.match[1]);
+        const moderatorId = ctx.callbackQuery.from.id;
+
+        if (!this.userService.checkPermission(ctx, UserPermissionEnum.IS_BASE_MODERATOR)) {
+          await ctx.answerCallbackQuery('Недостаточно прав для снятия лимита');
+          return;
+        }
+
+        await this.userService.disableMemeLimitForUser(userId, 24);
+
+        Logger.log(
+          `Moderator ${moderatorId} lifted limit for user ${userId}`,
+          UserPostManagementService.name
+        );
+
+        await ctx.answerCallbackQuery('Лимит снят на 24 часа');
+        await ctx.editMessageText(
+          `${ctx.callbackQuery.message.text}\n\n✅ Лимит снят модератором @${ctx.callbackQuery.from.username}`,
+          { reply_markup: null }
+        );
+      } catch (error) {
+        Logger.error(
+          `Failed to lift limit: ${error.message}`,
+          UserPostManagementService.name
+        );
+        await ctx.answerCallbackQuery('Ошибка при снятии лимита');
+      }
+    });
   }
 
 
@@ -147,9 +175,155 @@ export class UserPostManagementService implements OnModuleInit {
   }
 
 
+  private buildLimitMenu(): Menu<BotContext> {
+    return new Menu<BotContext>('limit-menu', { autoAnswer: false })
+      .text('🔓 Снять лимит', async (ctx) => {
+        try {
+          const message = await this.userRequestService.repository.findOne({
+            where: { userRequestChannelMessageId: ctx.callbackQuery.message.message_id },
+            relations: { user: true }
+          });
+
+          if (!message) {
+            Logger.error(
+              `Message not found for message_id: ${ctx.callbackQuery.message.message_id}`,
+              UserPostManagementService.name
+            );
+            await ctx.answerCallbackQuery('Ошибка: сообщение не найдено');
+            return;
+          }
+
+          if (!this.userService.checkPermission(ctx, UserPermissionEnum.IS_BASE_MODERATOR)) {
+            await ctx.answerCallbackQuery('Недостаточно прав');
+            return;
+          }
+
+          if (!message.user) {
+            Logger.error(
+              `User not found for message: ${message.id}`,
+              UserPostManagementService.name
+            );
+            await ctx.answerCallbackQuery('Ошибка: пользователь не найден');
+            return;
+          }
+
+          await this.userService.disableMemeLimitForUser(message.user.id, 24);
+
+          // Проверяем на дубликаты после снятия лимита
+          let hasDuplicate = false;
+          if (ctx.callbackQuery.message?.photo) {
+            const hash = await this.deduplicationService.getPostImageHash(ctx.callbackQuery.message.photo);
+            if (hash) {
+              const duplicates = await this.deduplicationService.checkDuplicate(hash);
+              if (duplicates.some(d => d.distance >= 0.5)) {
+                hasDuplicate = true;
+              } else {
+                const scheduledDup = await this.checkScheduledDuplicates(hash);
+                if (scheduledDup) {
+                  hasDuplicate = true;
+                }
+              }
+            }
+          }
+
+          // Обновляем запись в БД
+          await this.userRequestService.repository.update(
+            { userRequestChannelMessageId: ctx.callbackQuery.message.message_id },
+            { possibleDuplicate: hasDuplicate }
+          );
+
+          // Показываем соответствующее меню
+          const menuToUse = hasDuplicate ? this.duplicateMenu : this.moderatedPostMenu;
+          await ctx.editMessageReplyMarkup({ reply_markup: menuToUse });
+
+          await this.bot.api.sendMessage(
+            message.user.id,
+            '✅ Админ снял для тебя ограничение на публикацию постов на текущие сутки',
+            { reply_to_message_id: message.originalMessageId }
+          );
+
+          await ctx.answerCallbackQuery('Лимит снят на 24 часа');
+        } catch (error) {
+          Logger.error(
+            `Error in limit menu handler: ${error.message}`,
+            UserPostManagementService.name
+          );
+          await ctx.answerCallbackQuery('Произошла ошибка');
+        }
+      });
+  }
+
   public async handleUserMemeRequest(ctx: BotContext): Promise<void> {
     try {
       await ctx.react('👍');
+
+      // Проверка лимита мемов для всех пользователей
+      const user = await this.userService.repository.findOne({
+        where: { id: ctx.message.from.id },
+      });
+
+      const isLimitDisabled = user.memeLimitDisabledUntil && new Date() < user.memeLimitDisabledUntil;
+      const isAdmin = this.userService.checkPermission(ctx, UserPermissionEnum.IS_BASE_MODERATOR);
+      const todayMemeCount = await this.userRequestService.countUserMemeRequestsLast24h(user.id);
+
+      if (!isLimitDisabled && todayMemeCount >= 5) {
+        const remainingTime = formatDistance(
+          add(new Date(), { days: 1 }),
+          new Date(),
+          { locale: ru, addSuffix: true }
+        );
+
+        const message = `🚫 Лимит превышен!\n\n` +
+          `Ты уже прислал ${todayMemeCount}/5 постов за последние 24 часа.\n` +
+          `Новый лимит будет доступен ${remainingTime}.\n\n`;
+
+        await ctx.reply(message, {
+          reply_to_message_id: ctx.message.message_id,
+          parse_mode: 'HTML'
+        });
+
+        if (!isAdmin) {
+          return;
+        }
+
+        // Сохраняем запрос в БД без проверки на дубликаты
+        const savedRequest = await this.userRequestService.repository.insert({
+          user: user,
+          isAnonymousPublishing: false,
+          originalMessageId: ctx.message.message_id,
+          userRequestChannelMessageId: null,
+          possibleDuplicate: false
+        });
+
+        // Копируем сообщение в канал запросов
+        const channelMessage = await ctx.api.copyMessage(
+          this.baseConfigService.userRequestMemeChannel,
+          ctx.message.chat.id,
+          ctx.message.message_id,
+          { disable_notification: true }
+        );
+
+        // Обновляем запись с ID сообщения в канале
+        await this.userRequestService.repository.update(savedRequest.identifiers[0].id, {
+          userRequestChannelMessageId: channelMessage.message_id
+        });
+
+        // Показываем меню с кнопкой снятия лимита
+        await ctx.api.editMessageReplyMarkup(
+          this.baseConfigService.userRequestMemeChannel,
+          channelMessage.message_id,
+          { reply_markup: this.buildLimitMenu() }
+        );
+        return;
+      }
+
+      // Логируем случаи переопределения лимита
+      if (isLimitDisabled) {
+        Logger.log(
+          `User ${user.id} posted with disabled limit (until ${user.memeLimitDisabledUntil})`,
+          UserPostManagementService.name
+        );
+      }
     } catch (e) {
       await ctx.reply('Мы все получили и скоро ответим');
       Logger.warn(
@@ -555,8 +729,9 @@ export class UserPostManagementService implements OnModuleInit {
           await this.onModeratorRejectActions(ctx);
           ctx.menu.nav(PostModerationMenusEnum.REJECT);
         }
-      })
-      .row();
+      });
+
+    // Основное меню модерации содержит только кнопки одобрить/отклонить
 
     const approvedSubmenu = new Menu<BotContext>(PostModerationMenusEnum.APPROVAL, {
       autoAnswer: false,
@@ -1051,3 +1226,4 @@ export class UserPostManagementService implements OnModuleInit {
     });
   }
 }
+
