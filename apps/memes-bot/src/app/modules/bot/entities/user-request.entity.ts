@@ -36,6 +36,9 @@ export class UserRequestEntity {
   @Column('timestamptz', { nullable: true })
   moderatedAt: Date;
 
+  @Column('text', { nullable: true })
+  fileUniqueId: string;
+
   @Column('bigint', { nullable: true })
   restoredBy: number;
 

@@ -1,26 +1,23 @@
-import { Conversation, createConversation } from '@grammyjs/conversations';
-import { BotContext } from '../bot/interfaces/bot-context.interface';
-import { Inject, Logger, OnModuleInit } from '@nestjs/common';
-import { BOT } from '../bot/providers/bot.provider';
-import { Bot, Composer, InlineKeyboard } from 'grammy';
 import { Menu } from '@grammyjs/menu';
-import { BaseConfigService } from '../config/base-config.service';
-import { UserService } from '../bot/services/user.service';
-import { UserPermissionEnum } from '../bot/constants/user-permission.enum';
-import { PublicationModesEnum } from './constants/publication-modes.enum';
-import { PostModerationMenusEnum } from './constants/post-moderation-menus.enum';
+import { Inject, Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { add, format, formatDistance } from 'date-fns';
-import { UserRequestService } from '../bot/services/user-request.service';
+import { ru } from 'date-fns/locale';
+import { Bot, Composer, InlineKeyboard } from 'grammy';
+import { UserPermissionEnum } from '../bot/constants/user-permission.enum';
+import { BotContext } from '../bot/interfaces/bot-context.interface';
+import { BOT } from '../bot/providers/bot.provider';
+import { CringeManagementService } from '../bot/services/cringe-management.service';
+import { DeduplicationService } from '../bot/services/deduplication.service';
 import {
   PostSchedulerService,
   ScheduledPostContextInterface,
 } from '../bot/services/post-scheduler.service';
 import { SettingsService } from '../bot/services/settings.service';
-import { CringeManagementService } from '../bot/services/cringe-management.service';
-import { DeduplicationService } from '../bot/services/deduplication.service';
-import * as console from 'node:console';
-import { ru } from 'date-fns/locale';
-import { Injectable } from '@nestjs/common';
+import { UserRequestService } from '../bot/services/user-request.service';
+import { UserService } from '../bot/services/user.service';
+import { BaseConfigService } from '../config/base-config.service';
+import { PostModerationMenusEnum } from './constants/post-moderation-menus.enum';
+import { PublicationModesEnum } from './constants/publication-modes.enum';
 
 @Injectable()
 export class UserPostManagementService implements OnModuleInit {
@@ -258,11 +255,64 @@ export class UserPostManagementService implements OnModuleInit {
     try {
       await ctx.react('👍');
 
-      // Проверка лимита мемов (сообщений с медиа: изображения/видео) для всех пользователей
+      // Получаем пользователя
       const user = await this.userService.repository.findOne({
         where: { id: ctx.message.from.id },
       });
 
+      // Получаем fileUniqueId для изображения, если оно есть
+      let fileUniqueId = null;
+      if (ctx.message?.photo) {
+        fileUniqueId = ctx.message.photo[ctx.message.photo.length - 1].file_unique_id;
+      }
+
+      // Проверяем, есть ли уже пост с таким fileUniqueId перед выполнением любых других действий
+      if (fileUniqueId) {
+        const existingPost = await this.userRequestService.repository.findOne({
+          where: { fileUniqueId: fileUniqueId },
+        });
+
+        if (existingPost) {
+          // Выводим информацию в консоль
+          Logger.log(
+            `Найден пост с таким же fileUniqueId: ${fileUniqueId}. ID существующего поста: ${existingPost.id}`,
+            UserPostManagementService.name
+          );
+
+          // Проверяем статус существующего поста
+          let statusMessage = '';
+          if (existingPost.isPublished) {
+            statusMessage = 'Этот пост уже был опубликован ранее';
+          } else if (existingPost.isApproved === true) {
+            statusMessage = 'Этот пост уже прошел модерацию и находится в очереди на публикацию';
+          } else if (existingPost.isApproved === false) {
+            statusMessage = 'Этот пост уже был отклонен модераторами';
+          } else {
+            statusMessage = 'Этот пост уже находится на модерации';
+          }
+
+          // Автоматически отклоняем пост
+          await ctx.reply(`${statusMessage} и не может быть опубликован повторно.`, {
+            reply_to_message_id: ctx.message.message_id,
+          });
+
+          // Сохраняем информацию о запросе в БД с отметкой об отклонении
+          await this.userRequestService.repository.insert({
+            user: user,
+            isAnonymousPublishing: false,
+            originalMessageId: ctx.message.message_id,
+            userRequestChannelMessageId: null,
+            fileUniqueId: fileUniqueId,
+            isApproved: false,
+            isDuplicate: true,
+          });
+
+          await this.userService.updateUserLastActivity(ctx);
+          return;
+        }
+      }
+
+      // Проверка лимита мемов (сообщений с медиа: изображения/видео) для всех пользователей
       // Добавляем подробное логирование для отладки
       Logger.log(
         `Checking meme limit for user ${user.id} (${user.username || 'no username'})`,
@@ -293,18 +343,13 @@ export class UserPostManagementService implements OnModuleInit {
         });
 
         const message =
-          `🚫 Лимит превышен!\n\n` +
-          `Ты уже прислал ${todayMemeCount}/5 постов за последние 24 часа.\n` +
-          `Новый лимит будет доступен ${remainingTime}.\n\n`;
+          `Ты можешь предложить максимум 5 постов в сутки\n\n` +
+          `Новый лимит будет доступен ${remainingTime}`;
 
         await ctx.reply(message, {
           reply_to_message_id: ctx.message.message_id,
           parse_mode: 'HTML',
         });
-
-        if (!isAdmin) {
-          return;
-        }
 
         // Сохраняем запрос в БД без проверки на дубликаты
         const savedRequest = await this.userRequestService.repository.insert({
@@ -313,6 +358,7 @@ export class UserPostManagementService implements OnModuleInit {
           originalMessageId: ctx.message.message_id,
           userRequestChannelMessageId: null,
           possibleDuplicate: false,
+          fileUniqueId: fileUniqueId, // Добавляем fileUniqueId в запись
         });
 
         // Копируем сообщение в канал запросов
@@ -352,9 +398,16 @@ export class UserPostManagementService implements OnModuleInit {
       );
     }
 
+    // Получаем пользователя еще раз после блока try-catch
     const user = await this.userService.repository.findOne({
       where: { id: ctx.message.from.id },
     });
+
+    // Получаем fileUniqueId для изображения, если оно есть (повторно, так как переменная может быть недоступна)
+    let fileUniqueId = null;
+    if (ctx.message?.photo) {
+      fileUniqueId = ctx.message.photo[ctx.message.photo.length - 1].file_unique_id;
+    }
 
     const { first_name, last_name, username, is_bot, is_premium } = ctx.message.from;
 
@@ -520,6 +573,7 @@ export class UserPostManagementService implements OnModuleInit {
       userRequestChannelMessageId: message.message_id,
       possibleDuplicate: hasPossibleDuplicate,
       scheduledDuplicateId: scheduledDuplicate?.postId, // Сохраняем ID запланированного дубликата
+      fileUniqueId: fileUniqueId,
     });
 
     await this.userService.updateUserLastActivity(ctx);
@@ -919,9 +973,17 @@ export class UserPostManagementService implements OnModuleInit {
       },
     });
 
+    // Получаем fileUniqueId из сообщения в канале модераторов
+    let fileUniqueId = null;
+    if (ctx.callbackQuery?.message?.photo) {
+      fileUniqueId =
+        ctx.callbackQuery.message.photo[ctx.callbackQuery.message.photo.length - 1].file_unique_id;
+    }
+
     await this.userRequestService.repository.update(
       { id: message.id },
       {
+        fileUniqueId,
         isApproved: false,
         processedByModerator: { id: ctx.callbackQuery.from.id },
         moderatedAt: new Date(),
