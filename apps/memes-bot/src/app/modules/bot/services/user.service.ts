@@ -1,9 +1,9 @@
-import { Injectable } from '@nestjs/common';
-import { BotContext } from '../interfaces/bot-context.interface';
+import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { UserEntity } from '../entities/user.entity';
 import { InsertResult, Repository } from 'typeorm';
 import { UserPermissionEnum } from '../constants/user-permission.enum';
+import { UserEntity } from '../entities/user.entity';
+import { BotContext } from '../interfaces/bot-context.interface';
 
 @Injectable()
 export class UserService {
@@ -43,19 +43,64 @@ export class UserService {
   }
 
   public async disableMemeLimitForUser(userId: number, hours: number): Promise<void> {
-    const untilDate = new Date();
-    untilDate.setHours(untilDate.getHours() + hours);
-    await this.userRepository.update(
-      { id: userId },
-      { memeLimitDisabledUntil: untilDate }
-    );
+    try {
+      const untilDate = new Date();
+      untilDate.setHours(untilDate.getHours() + hours);
+
+      // Добавляем логирование для отладки
+      Logger.log(`Disabling meme limit for user ${userId} until ${untilDate}`, UserService.name);
+
+      const result = await this.userRepository.update(
+        { id: userId },
+        { memeLimitDisabledUntil: untilDate }
+      );
+
+      // Проверяем, была ли обновлена запись
+      if (result.affected === 0) {
+        Logger.warn(
+          `No user found with id ${userId} when trying to disable meme limit`,
+          UserService.name
+        );
+      } else {
+        Logger.log(`Successfully disabled meme limit for user ${userId}`, UserService.name);
+      }
+    } catch (error) {
+      Logger.error(
+        `Failed to disable meme limit for user ${userId}: ${error.message}`,
+        UserService.name
+      );
+      throw error;
+    }
   }
 
   public async isMemeLimitDisabled(userId: number): Promise<boolean> {
-    const user = await this.userRepository.findOneBy({ id: userId });
-    return user?.memeLimitDisabledUntil
-      ? user.memeLimitDisabledUntil > new Date()
-      : false;
+    try {
+      const user = await this.userRepository.findOneBy({ id: userId });
+
+      if (!user) {
+        Logger.warn(
+          `User with id ${userId} not found when checking meme limit status`,
+          UserService.name
+        );
+        return false;
+      }
+
+      const isDisabled = user?.memeLimitDisabledUntil
+        ? user.memeLimitDisabledUntil > new Date()
+        : false;
+
+      Logger.log(
+        `Meme limit for user ${userId} is ${isDisabled ? 'disabled' : 'enabled'} (until ${
+          user.memeLimitDisabledUntil
+        })`,
+        UserService.name
+      );
+
+      return isDisabled;
+    } catch (error) {
+      Logger.error(`Error checking meme limit status for user ${userId}: ${error.message}`, UserService.name);
+      return false;
+    }
   }
 
   public getUsersForPostModerate(): Promise<Pick<UserEntity, 'id'>[]> {
@@ -97,7 +142,6 @@ export class UserService {
         if (ctx?.callbackQuery) {
           ctx.answerCallbackQuery('У тебя нет прав, чтобы нажимать эту кнопку');
         }
-        return false;
     }
   }
 }

@@ -1,10 +1,10 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { UserRequestEntity } from '../entities/user-request.entity';
-import { MoreThan, Repository } from 'typeorm';
-import { BotContext } from '../interfaces/bot-context.interface';
 import { intervalToDuration, sub } from 'date-fns';
 import * as ruPlural from 'plural-ru';
+import { MoreThan, Repository } from 'typeorm';
+import { UserRequestEntity } from '../entities/user-request.entity';
+import { BotContext } from '../interfaces/bot-context.interface';
 
 @Injectable()
 export class UserRequestService {
@@ -110,10 +110,17 @@ export class UserRequestService {
   }
 
   public async countUserMemeRequestsLast24h(userId: number): Promise<number> {
+    // Улучшенная логика подсчета с более точной фильтрацией
+    const twentyFourHoursAgo = sub(new Date(), { hours: 24 });
+
+    // Подсчитываем только сообщения с медиа (изображения/видео)
+    // Фильтруем по isTextRequest: false, что означает сообщения с медиа
     const count = await this.repository.countBy({
       user: { id: userId },
-      createdAt: MoreThan<Date>(sub(new Date(), { days: 1 })),
+      createdAt: MoreThan<Date>(twentyFourHoursAgo),
+      isTextRequest: false, // Не учитываем текстовые запросы
     });
+
     return count || 0;
   }
 }
