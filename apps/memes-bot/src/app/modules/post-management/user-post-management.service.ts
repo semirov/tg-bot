@@ -3,14 +3,13 @@ import { BotContext } from '../bot/interfaces/bot-context.interface';
 import { Inject, Logger, OnModuleInit } from '@nestjs/common';
 import { BOT } from '../bot/providers/bot.provider';
 import { Bot, Composer, InlineKeyboard } from 'grammy';
-import { ConversationsEnum } from './constants/conversations.enum';
 import { Menu } from '@grammyjs/menu';
 import { BaseConfigService } from '../config/base-config.service';
 import { UserService } from '../bot/services/user.service';
 import { UserPermissionEnum } from '../bot/constants/user-permission.enum';
 import { PublicationModesEnum } from './constants/publication-modes.enum';
 import { PostModerationMenusEnum } from './constants/post-moderation-menus.enum';
-import { add, format, formatDistance, getUnixTime } from 'date-fns';
+import { add, format, formatDistance } from 'date-fns';
 import { UserRequestService } from '../bot/services/user-request.service';
 import {
   PostSchedulerService,
@@ -21,7 +20,9 @@ import { CringeManagementService } from '../bot/services/cringe-management.servi
 import { DeduplicationService } from '../bot/services/deduplication.service';
 import * as console from 'node:console';
 import { ru } from 'date-fns/locale';
+import { Injectable } from '@nestjs/common';
 
+@Injectable()
 export class UserPostManagementService implements OnModuleInit {
   constructor(
     @Inject(BOT) private bot: Bot<BotContext>,
@@ -34,23 +35,49 @@ export class UserPostManagementService implements OnModuleInit {
     private deduplicationService: DeduplicationService
   ) {}
 
-  /**
-   * Меню публикации одобренного поста
-   */
   private moderatedPostMenu: Menu<BotContext>;
   private replyToBotContext: Composer<BotContext>;
-
-
-
   private duplicateMenu: Menu<BotContext>;
+
+  private limitMenu: Menu<BotContext>;
 
   public onModuleInit(): void {
     this.buildModeratedPostMenu();
-    this.buildDuplicateMenu();  // Добавляем создание меню для дубликатов
+    this.buildDuplicateMenu(); // Добавляем создание меню для дубликатов
+    this.limitMenu = this.buildLimitMenu();
+    this.bot.use(this.limitMenu);
     this.prepareReplyToBotContext();
     this.handleAdminUserResponse();
-  }
 
+    // Обработчик кнопки снятия лимита с улучшенной проверкой и логированием
+    this.bot.callbackQuery(/^admin_lift_limit_(\d+)$/, async (ctx) => {
+      try {
+        const userId = parseInt(ctx.match[1]);
+        const moderatorId = ctx.callbackQuery.from.id;
+
+        if (!this.userService.checkPermission(ctx, UserPermissionEnum.IS_BASE_MODERATOR)) {
+          await ctx.answerCallbackQuery('Недостаточно прав для снятия лимита');
+          return;
+        }
+
+        await this.userService.disableMemeLimitForUser(userId, 24);
+
+        Logger.log(
+          `Moderator ${moderatorId} lifted limit for user ${userId}`,
+          UserPostManagementService.name
+        );
+
+        await ctx.answerCallbackQuery('Лимит снят на 24 часа');
+        await ctx.editMessageText(
+          `${ctx.callbackQuery.message.text}\n\n✅ Лимит снят модератором @${ctx.callbackQuery.from.username}`,
+          { reply_markup: null }
+        );
+      } catch (error) {
+        Logger.error(`Failed to lift limit: ${error.message}`, UserPostManagementService.name);
+        await ctx.answerCallbackQuery('Ошибка при снятии лимита');
+      }
+    });
+  }
 
   public async handleUserTextRequest(ctx: BotContext): Promise<void> {
     try {
@@ -99,7 +126,7 @@ export class UserPostManagementService implements OnModuleInit {
         // Добавляем уточнение, что пользователь ответил на это сообщение
         await this.bot.api.sendMessage(
           this.baseConfigService.userRequestMemeChannel,
-          "👆 Пользователь ответил на это сообщение:",
+          '👆 Пользователь ответил на это сообщение:',
           { disable_notification: true }
         );
       } catch (e) {
@@ -111,7 +138,7 @@ export class UserPostManagementService implements OnModuleInit {
         // Если не удалось переслать, то хотя бы поясняем в тексте
         await this.bot.api.sendMessage(
           this.baseConfigService.userRequestMemeChannel,
-          "Пользователь ответил на сообщение, но его не удалось переслать. Возможно, это слишком старое сообщение.",
+          'Пользователь ответил на сообщение, но его не удалось переслать. Возможно, это слишком старое сообщение.',
           { disable_notification: true }
         );
       }
@@ -139,17 +166,184 @@ export class UserPostManagementService implements OnModuleInit {
       originalMessageId: ctx.message.message_id,
       userRequestChannelMessageId: message.message_id,
       isTextRequest: true,
-      replyToMessageId: ctx.message.reply_to_message?.message_id // Сохраняем ID сообщения, на которое был ответ
+      replyToMessageId: ctx.message.reply_to_message?.message_id, // Сохраняем ID сообщения, на которое был ответ
     });
 
     await this.userService.updateUserLastActivity(ctx);
-
   }
 
+  private buildLimitMenu(): Menu<BotContext> {
+    return new Menu<BotContext>('limit-menu', { autoAnswer: false }).text(
+      '🔓 Снять лимит',
+      async (ctx) => {
+        try {
+          const message = await this.userRequestService.repository.findOne({
+            where: { userRequestChannelMessageId: ctx.callbackQuery.message.message_id },
+            relations: { user: true },
+          });
+
+          if (!message) {
+            Logger.error(
+              `Message not found for message_id: ${ctx.callbackQuery.message.message_id}`,
+              UserPostManagementService.name
+            );
+            await ctx.answerCallbackQuery('Ошибка: сообщение не найдено');
+            return;
+          }
+
+          if (!this.userService.checkPermission(ctx, UserPermissionEnum.IS_BASE_MODERATOR)) {
+            await ctx.answerCallbackQuery('Недостаточно прав');
+            return;
+          }
+
+          if (!message.user) {
+            Logger.error(
+              `User not found for message: ${message.id}`,
+              UserPostManagementService.name
+            );
+            await ctx.answerCallbackQuery('Ошибка: пользователь не найден');
+            return;
+          }
+
+          await this.userService.disableMemeLimitForUser(message.user.id, 24);
+
+          // Проверяем на дубликаты после снятия лимита
+          let hasDuplicate = false;
+          if (ctx.callbackQuery.message?.photo) {
+            const hash = await this.deduplicationService.getPostImageHash(
+              ctx.callbackQuery.message.photo
+            );
+            if (hash) {
+              const duplicates = await this.deduplicationService.checkDuplicate(hash);
+              if (duplicates.some((d) => d.distance >= 0.5)) {
+                hasDuplicate = true;
+              } else {
+                const scheduledDup = await this.checkScheduledDuplicates(hash);
+                if (scheduledDup) {
+                  hasDuplicate = true;
+                }
+              }
+            }
+          }
+
+          // Обновляем запись в БД
+          await this.userRequestService.repository.update(
+            { userRequestChannelMessageId: ctx.callbackQuery.message.message_id },
+            { possibleDuplicate: hasDuplicate }
+          );
+
+          // Показываем соответствующее меню
+          const menuToUse = hasDuplicate ? this.duplicateMenu : this.moderatedPostMenu;
+          await ctx.editMessageReplyMarkup({ reply_markup: menuToUse });
+
+          await this.bot.api.sendMessage(
+            message.user.id,
+            '✅ Админ снял для тебя ограничение на публикацию постов на текущие сутки',
+            { reply_to_message_id: message.originalMessageId }
+          );
+
+          await ctx.answerCallbackQuery('Лимит снят на 24 часа');
+        } catch (error) {
+          Logger.error(
+            `Error in limit menu handler: ${error.message}`,
+            UserPostManagementService.name
+          );
+          await ctx.answerCallbackQuery('Произошла ошибка');
+        }
+      }
+    );
+  }
 
   public async handleUserMemeRequest(ctx: BotContext): Promise<void> {
     try {
       await ctx.react('👍');
+
+      // Проверка лимита мемов (сообщений с медиа: изображения/видео) для всех пользователей
+      const user = await this.userService.repository.findOne({
+        where: { id: ctx.message.from.id },
+      });
+
+      // Добавляем подробное логирование для отладки
+      Logger.log(
+        `Checking meme limit for user ${user.id} (${user.username || 'no username'})`,
+        UserPostManagementService.name
+      );
+
+      const now = new Date();
+      const isLimitDisabled = user.memeLimitDisabledUntil && now < user.memeLimitDisabledUntil;
+
+      Logger.log(
+        `User limit status - disabled: ${isLimitDisabled}, limit disabled until: ${user.memeLimitDisabledUntil}`,
+        UserPostManagementService.name
+      );
+
+      const isAdmin = this.userService.checkPermission(ctx, UserPermissionEnum.IS_BASE_MODERATOR);
+      // Подсчитываем только сообщения с медиа (изображения/видео) за последние 24 часа
+      const todayMemeCount = await this.userRequestService.countUserMemeRequestsLast24h(user.id);
+
+      Logger.log(
+        `User ${user.id} has sent ${todayMemeCount} media messages (memes) in the last 24 hours`,
+        UserPostManagementService.name
+      );
+
+      if (!isLimitDisabled && todayMemeCount >= 5) {
+        const remainingTime = formatDistance(add(now, { days: 1 }), now, {
+          locale: ru,
+          addSuffix: true,
+        });
+
+        const message =
+          `🚫 Лимит превышен!\n\n` +
+          `Ты уже прислал ${todayMemeCount}/5 постов за последние 24 часа.\n` +
+          `Новый лимит будет доступен ${remainingTime}.\n\n`;
+
+        await ctx.reply(message, {
+          reply_to_message_id: ctx.message.message_id,
+          parse_mode: 'HTML',
+        });
+
+        if (!isAdmin) {
+          return;
+        }
+
+        // Сохраняем запрос в БД без проверки на дубликаты
+        const savedRequest = await this.userRequestService.repository.insert({
+          user: user,
+          isAnonymousPublishing: false,
+          originalMessageId: ctx.message.message_id,
+          userRequestChannelMessageId: null,
+          possibleDuplicate: false,
+        });
+
+        // Копируем сообщение в канал запросов
+        const channelMessage = await ctx.api.copyMessage(
+          this.baseConfigService.userRequestMemeChannel,
+          ctx.message.chat.id,
+          ctx.message.message_id,
+          { disable_notification: true }
+        );
+
+        // Обновляем запись с ID сообщения в канале
+        await this.userRequestService.repository.update(savedRequest.identifiers[0].id, {
+          userRequestChannelMessageId: channelMessage.message_id,
+        });
+
+        // Показываем меню с кнопкой снятия лимита
+        await ctx.api.editMessageReplyMarkup(
+          this.baseConfigService.userRequestMemeChannel,
+          channelMessage.message_id,
+          { reply_markup: this.buildLimitMenu() }
+        );
+        return;
+      }
+
+      // Логируем случаи переопределения лимита
+      if (isLimitDisabled) {
+        Logger.log(
+          `User ${user.id} posted with disabled limit (until ${user.memeLimitDisabledUntil})`,
+          UserPostManagementService.name
+        );
+      }
     } catch (e) {
       await ctx.reply('Мы все получили и скоро ответим');
       Logger.warn(
@@ -207,16 +401,13 @@ export class UserPostManagementService implements OnModuleInit {
           // Если нет совпадений среди опубликованных, проверяем в запланированных
           scheduledDuplicate = await this.checkScheduledDuplicates(hash);
 
-
           if (scheduledDuplicate && this.isValidDate(scheduledDuplicate.scheduledDate)) {
             const matchPercentage = Math.round(scheduledDuplicate.distance * 100);
 
             try {
-              const formattedDate = format(
-                scheduledDuplicate.scheduledDate,
-                'dd.LL.yy в ~HH:mm',
-                { locale: ru }
-              );
+              const formattedDate = format(scheduledDuplicate.scheduledDate, 'dd.LL.yy в ~HH:mm', {
+                locale: ru,
+              });
 
               // Добавляем информацию о запланированном дубликате
               userText += `\n🕒 Похожий пост (${matchPercentage}%) запланирован на ${formattedDate}`;
@@ -253,22 +444,19 @@ export class UserPostManagementService implements OnModuleInit {
       }
     }
 
-// Если есть потенциальный дубликат среди запланированных
+    // Если есть потенциальный дубликат среди запланированных
     if (hasPossibleDuplicate && scheduledDuplicate && !bestMatch) {
       try {
         // Проверяем валидность даты перед форматированием
         if (this.isValidDate(scheduledDuplicate.scheduledDate)) {
-          const formattedDate = format(
-            scheduledDuplicate.scheduledDate,
-            'dd.LL.yy в ~HH:mm',
-            { locale: ru }
-          );
+          const formattedDate = format(scheduledDuplicate.scheduledDate, 'dd.LL.yy в ~HH:mm', {
+            locale: ru,
+          });
 
-          const timeDistance = formatDistance(
-            scheduledDuplicate.scheduledDate,
-            new Date(),
-            { locale: ru, addSuffix: false }
-          );
+          const timeDistance = formatDistance(scheduledDuplicate.scheduledDate, new Date(), {
+            locale: ru,
+            addSuffix: false,
+          });
 
           // Отправляем сообщение о запланированном посте с деталями
           await this.bot.api.sendMessage(
@@ -287,7 +475,9 @@ export class UserPostManagementService implements OnModuleInit {
 
         // Пытаемся получить и переслать запланированный пост
         try {
-          const scheduledPost = await this.postSchedulerService.getScheduledPostById(scheduledDuplicate.postId);
+          const scheduledPost = await this.postSchedulerService.getScheduledPostById(
+            scheduledDuplicate.postId
+          );
           if (scheduledPost && scheduledPost.requestChannelMessageId) {
             await this.bot.api.forwardMessage(
               this.baseConfigService.userRequestMemeChannel,
@@ -335,8 +525,6 @@ export class UserPostManagementService implements OnModuleInit {
     await this.userService.updateUserLastActivity(ctx);
   }
 
-
-
   /**
    * Проверяет наличие похожих постов среди запланированных
    */
@@ -350,7 +538,6 @@ export class UserPostManagementService implements OnModuleInit {
     try {
       // Получаем все запланированные посты
       const scheduledPosts = await this.postSchedulerService.getAllScheduledPosts();
-
 
       if (!scheduledPosts || scheduledPosts.length === 0) return null;
 
@@ -368,7 +555,7 @@ export class UserPostManagementService implements OnModuleInit {
             potentialDuplicates.push({
               postId: post.id,
               distance: distance,
-              scheduledDate: post.publishDate
+              scheduledDate: post.publishDate,
             });
           }
         }
@@ -391,7 +578,7 @@ export class UserPostManagementService implements OnModuleInit {
     }
   }
 
-// Вспомогательная функция для проверки валидности даты
+  // Вспомогательная функция для проверки валидности даты
   private isValidDate(date: any): boolean {
     if (!date) return false;
 
@@ -402,10 +589,7 @@ export class UserPostManagementService implements OnModuleInit {
     return !isNaN(dateObj.getTime());
   }
 
-
-
-
-// Обновляем метод buildDuplicateMenu, чтобы он также мог обрабатывать запланированные дубликаты
+  // Обновляем метод buildDuplicateMenu, чтобы он также мог обрабатывать запланированные дубликаты
   private buildDuplicateMenu() {
     return new Menu<BotContext>('duplicate-check-menu', { autoAnswer: false })
       .text('✅ Дубликат', async (ctx) => {
@@ -419,7 +603,9 @@ export class UserPostManagementService implements OnModuleInit {
           // Проверяем, является ли это дубликатом запланированного поста
           if (message.scheduledDuplicateId) {
             // Получаем информацию о запланированном посте
-            const scheduledPost = await this.postSchedulerService.getScheduledPostById(message.scheduledDuplicateId);
+            const scheduledPost = await this.postSchedulerService.getScheduledPostById(
+              message.scheduledDuplicateId
+            );
 
             if (scheduledPost && this.isValidDate(scheduledPost.publishDate)) {
               const scheduledDateFormatted = format(
@@ -432,7 +618,7 @@ export class UserPostManagementService implements OnModuleInit {
               await this.bot.api.sendMessage(
                 message.user.id,
                 `Похожий пост уже запланирован к публикации ${scheduledDateFormatted}.\nТы можешь предложить что-нибудь другое`,
-                {reply_to_message_id: message.originalMessageId}
+                { reply_to_message_id: message.originalMessageId }
               );
             } else {
               // Стандартное сообщение, если не удалось получить детали о запланированном посте
@@ -449,7 +635,9 @@ export class UserPostManagementService implements OnModuleInit {
             );
 
             // Находим дубликат снова и пересылаем его
-            const hash = await this.deduplicationService.getPostImageHash(ctx.callbackQuery.message.photo);
+            const hash = await this.deduplicationService.getPostImageHash(
+              ctx.callbackQuery.message.photo
+            );
             if (hash) {
               const duplicates = await this.deduplicationService.checkDuplicate(hash);
               if (duplicates.length > 0) {
@@ -504,14 +692,14 @@ export class UserPostManagementService implements OnModuleInit {
             {
               possibleDuplicate: false, // Подтверждаем, что это НЕ дубликат
               scheduledDuplicateId: null, // Очищаем ссылку на запланированный дубликат
-              checkedByModerator: ctx.callbackQuery.from.id
+              checkedByModerator: ctx.callbackQuery.from.id,
             }
           );
 
           // Заменяем меню на стандартное меню модерации
           try {
             await ctx.editMessageReplyMarkup({
-              reply_markup: this.moderatedPostMenu
+              reply_markup: this.moderatedPostMenu,
             });
           } catch (error) {
             Logger.error(
@@ -528,7 +716,7 @@ export class UserPostManagementService implements OnModuleInit {
                 originalMessage.chat.id,
                 originalMessage.message_id,
                 {
-                  reply_markup: this.moderatedPostMenu
+                  reply_markup: this.moderatedPostMenu,
                 }
               );
             } catch (secondError) {
@@ -555,8 +743,9 @@ export class UserPostManagementService implements OnModuleInit {
           await this.onModeratorRejectActions(ctx);
           ctx.menu.nav(PostModerationMenusEnum.REJECT);
         }
-      })
-      .row();
+      });
+
+    // Основное меню модерации содержит только кнопки одобрить/отклонить
 
     const approvedSubmenu = new Menu<BotContext>(PostModerationMenusEnum.APPROVAL, {
       autoAnswer: false,
@@ -597,7 +786,9 @@ export class UserPostManagementService implements OnModuleInit {
       .text('Кринж', async (ctx) => this.onPublishActions(ctx, PublicationModesEnum.NIGHT_CRINGE))
       .text('Сейчас', async (ctx) => this.onPublishActions(ctx, PublicationModesEnum.NOW_SILENT))
       .row()
-      .text('Ближайший слот', async (ctx) => this.onPublishActions(ctx, PublicationModesEnum.NEXT_INTERVAL))
+      .text('Ближайший слот', async (ctx) =>
+        this.onPublishActions(ctx, PublicationModesEnum.NEXT_INTERVAL)
+      )
       .row()
       .text('Ночью', async (ctx) => this.onPublishActions(ctx, PublicationModesEnum.NEXT_NIGHT))
       .text('Утром', async (ctx) => this.onPublishActions(ctx, PublicationModesEnum.NEXT_MORNING))
@@ -767,8 +958,6 @@ export class UserPostManagementService implements OnModuleInit {
       hash: imageHash,
     };
 
-
-
     switch (mode) {
       case PublicationModesEnum.NOW_SILENT:
         return this.onPublishNow(publishContext);
@@ -793,11 +982,7 @@ export class UserPostManagementService implements OnModuleInit {
 
       try {
         // убираем реакцию у пользователя
-        await this.bot.api.setMessageReaction(
-          message.user.id,
-          message.originalMessageId,
-          []
-        );
+        await this.bot.api.setMessageReaction(message.user.id, message.originalMessageId, []);
       } catch (e) {
         Logger.warn(
           `Cannot remove reaction message for user message for bot ${ctx.me.id}`,
@@ -826,7 +1011,6 @@ export class UserPostManagementService implements OnModuleInit {
       }
     });
   }
-
 
   public async onPublishNow(publishContext: ScheduledPostContextInterface) {
     const message = await this.userRequestService.repository.findOne({
@@ -1040,14 +1224,17 @@ export class UserPostManagementService implements OnModuleInit {
 
   private prepareReplyToBotContext(): void {
     this.replyToBotContext = this.bot.filter(async (ctx: BotContext) => {
-      if ( !ctx?.channelPost?.reply_to_message && !ctx?.message?.reply_to_message) {
+      if (!ctx?.channelPost?.reply_to_message && !ctx?.message?.reply_to_message) {
         return false;
       }
       const message = await this.userRequestService.repository.findOne({
-        where: { userRequestChannelMessageId: ctx?.channelPost?.reply_to_message?.message_id || ctx?.message?.reply_to_message?.message_id },
+        where: {
+          userRequestChannelMessageId:
+            ctx?.channelPost?.reply_to_message?.message_id ||
+            ctx?.message?.reply_to_message?.message_id,
+        },
       });
       return !!message;
-
     });
   }
 }
