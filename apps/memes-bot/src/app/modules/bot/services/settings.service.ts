@@ -1,11 +1,11 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { BotContext } from '../interfaces/bot-context.interface';
 import { InjectRepository } from '@nestjs/typeorm';
-import { IsNull, Not, Repository } from 'typeorm';
-import { SettingsEntity } from '../entities/settings.entity';
-import { BOT } from '../providers/bot.provider';
 import { Bot } from 'grammy';
+import { IsNull, Not, Repository } from 'typeorm';
 import { BaseConfigService } from '../../config/base-config.service';
+import { SettingsEntity } from '../entities/settings.entity';
+import { BotContext } from '../interfaces/bot-context.interface';
+import { BOT } from '../providers/bot.provider';
 
 @Injectable()
 export class SettingsService {
@@ -32,6 +32,20 @@ export class SettingsService {
     return channelSettings?.joinLink || channelLink;
   }
 
+  public async channelBestLinkUrl(): Promise<string> {
+    const channelInfo = await this.bot.api.getChat(this.baseConfigService.bestMemeChanelId);
+    const channelLink = channelInfo['username']
+      ? `https://t.me/${channelInfo['username']}`
+      : channelInfo['invite_link'];
+    const channelSettings = await this.channelSettings();
+    return channelSettings?.joinLink || channelLink;
+  }
+
+  public async channelBestChannelName(): Promise<string> {
+    const channelInfo = await this.bot.api.getChat(this.baseConfigService.bestMemeChanelId);
+    return channelInfo['username'] || 'Лучшие мемы за сутки';
+  }
+
   public async cringeChannelHtmlLink(): Promise<string> {
     const channelInfo = await this.bot.api.getChat(this.baseConfigService.cringeMemeChannelId);
     const channelLink = channelInfo['username']
@@ -45,9 +59,7 @@ export class SettingsService {
     const channelSettings = await this.channelSettings();
 
     if (channelSettings?.joinLink && channelSettings?.postLinkText) {
-      return `<a href="${channelSettings?.joinLink}">${
-        channelSettings?.postLinkText
-      }</a>`;
+      return `<a href="${channelSettings?.joinLink}">${channelSettings?.postLinkText}</a>`;
     }
 
     return '';

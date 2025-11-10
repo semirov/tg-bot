@@ -15,6 +15,7 @@ import {
 import { SettingsService } from '../bot/services/settings.service';
 import { UserRequestService } from '../bot/services/user-request.service';
 import { UserService } from '../bot/services/user.service';
+import { ClientBaseService } from '../client/services/client-base.service';
 import { BaseConfigService } from '../config/base-config.service';
 import { PostModerationMenusEnum } from './constants/post-moderation-menus.enum';
 import { PublicationModesEnum } from './constants/publication-modes.enum';
@@ -29,7 +30,8 @@ export class UserPostManagementService implements OnModuleInit {
     private postSchedulerService: PostSchedulerService,
     private settingsService: SettingsService,
     private cringeManagementService: CringeManagementService,
-    private deduplicationService: DeduplicationService
+    private deduplicationService: DeduplicationService,
+    private clientBaseService: ClientBaseService
   ) {}
 
   private moderatedPostMenu: Menu<BotContext>;
@@ -45,6 +47,7 @@ export class UserPostManagementService implements OnModuleInit {
     this.bot.use(this.limitMenu);
     this.prepareReplyToBotContext();
     this.handleAdminUserResponse();
+    this.observeDailyBesetMemes();
 
     // Обработчик кнопки снятия лимита с улучшенной проверкой и логированием
     this.bot.callbackQuery(/^admin_lift_limit_(\d+)$/, async (ctx) => {
@@ -72,6 +75,75 @@ export class UserPostManagementService implements OnModuleInit {
       } catch (error) {
         Logger.error(`Failed to lift limit: ${error.message}`, UserPostManagementService.name);
         await ctx.answerCallbackQuery('Ошибка при снятии лимита');
+      }
+    });
+  }
+
+  public observeDailyBesetMemes(): void {
+    this.clientBaseService.bestMemesDaily$.subscribe(async (ctx) => {
+      const { byLikePostMemeId, byViewPostMemeId } = ctx;
+
+      // Собираем все ID лучших постов
+      const bestPostIds = [byLikePostMemeId, byViewPostMemeId].filter(
+        (id) => id !== undefined
+      ) as number[];
+
+      // Находим посты в user-request.entity по publishedMessageId
+      const bestUserPosts = await this.userRequestService.repository
+        .createQueryBuilder('userRequest')
+        .leftJoinAndSelect('userRequest.user', 'user')
+        .where('userRequest.publishedMessageId IN (:...ids)', { ids: bestPostIds })
+        .andWhere('userRequest.isPublished = :isPublished', { isPublished: true })
+        .getMany();
+
+      // Группируем посты по пользователям
+      const postsByUser = new Map<number, typeof bestUserPosts>();
+      for (const post of bestUserPosts) {
+        if (post.user) {
+          if (!postsByUser.has(post.user.id)) {
+            postsByUser.set(post.user.id, []);
+          }
+          postsByUser.get(post.user.id)!.push(post);
+        }
+      }
+
+      // Для каждого пользователя отправляем уведомление и репостим посты
+      for (const [userId, userPosts] of postsByUser) {
+        try {
+          // Формируем сообщение для пользователя
+          let messageText = '';
+          if (userPosts.length === 1) {
+            messageText = '🎉 Поздравляем! Твой пост стал одним из лучших за сутки!';
+          } else {
+            messageText = '🎉 Поздравляем! Твои посты стали лучшими за сутки!';
+          }
+
+          const keyboard = new InlineKeyboard();
+
+          const bestMemeUrl = await this.settingsService.channelBestLinkUrl();
+          const bestChannelName = await this.settingsService.channelBestChannelName();
+
+          keyboard.url(bestChannelName, bestMemeUrl);
+
+          // Отправляем уведомление пользователю
+          await this.bot.api.sendMessage(userId, messageText, { reply_markup: keyboard });
+
+          // Репостим каждый пост пользователя
+          for (const post of userPosts) {
+            if (post.publishedMessageId) {
+              await this.bot.api.forwardMessage(
+                userId,
+                this.baseConfigService.memeChanelId,
+                post.publishedMessageId
+              );
+            }
+          }
+        } catch (error) {
+          Logger.error(
+            `Failed to notify user ${userId} about best post: ${error.message}`,
+            UserPostManagementService.name
+          );
+        }
       }
     });
   }
