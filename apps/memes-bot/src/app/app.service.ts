@@ -59,7 +59,12 @@ export class AppService implements OnModuleInit {
           .row()
           .url('Пук и кек', 'https://t.me/filipp_memes')
           .row()
-          .url('Два мема в сутки (или один)', 'https://t.me/filipp_memes_best');
+          .url('Два мема в сутки (или один)', 'https://t.me/filipp_memes_best')
+          .row()
+          .url(
+            'Вертикали нанимают 😉',
+            'https://yandex.ru/jobs/vacancies?services=verticals&services=autoru&services=travel&services=realty&professions=backend-developer&professions=ml-developer&professions=frontend-developer&professions=mob-app-developer-android&professions=mob-app-developer-ios&professions=full-stack-developer&professions=analyst-developer&professions=analyst&professions=marketing-analyst&professions=product-manager&professions=tech-manager&professions=project-manager-business'
+          );
 
         await ctx.reply(text, {
           parse_mode: 'HTML',

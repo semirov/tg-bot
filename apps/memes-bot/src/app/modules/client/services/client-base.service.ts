@@ -1,18 +1,25 @@
-import { Inject, Injectable, Logger, OnModuleInit } from '@nestjs/common';
-import { Api, TelegramClient } from 'telegram';
-import { StringSession } from 'telegram/sessions';
-import { BaseConfigService } from '../../config/base-config.service';
-import { BOT } from '../../bot/providers/bot.provider';
-import { Bot, InlineKeyboard } from 'grammy';
-import { BotContext } from '../../bot/interfaces/bot-context.interface';
 import { Conversation, createConversation } from '@grammyjs/conversations';
-import { firstValueFrom, Observable, Subject } from 'rxjs';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
-import { ClientSessionEntity } from '../entities/client-session.entity';
-import { NewMessage, NewMessageEvent } from 'telegram/events';
-import * as bigInt from 'big-integer';
+import { Inject, Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
+import { InjectRepository } from '@nestjs/typeorm';
+import * as bigInt from 'big-integer';
+import { Bot, InlineKeyboard } from 'grammy';
+import { firstValueFrom, Observable, Subject } from 'rxjs';
+import { Api, TelegramClient } from 'telegram';
+import { NewMessage, NewMessageEvent } from 'telegram/events';
+import { StringSession } from 'telegram/sessions';
+import { Repository } from 'typeorm';
+import { BotContext } from '../../bot/interfaces/bot-context.interface';
+import { BOT } from '../../bot/providers/bot.provider';
+import { BaseConfigService } from '../../config/base-config.service';
+import { ClientSessionEntity } from '../entities/client-session.entity';
+
+export type BestMemeContext = {
+  byViewPostMemeId?: number;
+  byLikePostMemeId?: number;
+  byViewPostBestMemeId?: number;
+  byLikePostBestMemeId?: number;
+};
 
 @Injectable()
 export class ClientBaseService implements OnModuleInit {
@@ -29,6 +36,7 @@ export class ClientBaseService implements OnModuleInit {
   private telegramClient: TelegramClient;
 
   private observerChannelPostSubject = new Subject<BotContext>();
+  private bestMemesDailytSubject = new Subject<BestMemeContext>();
 
   async onModuleInit(): Promise<void> {
     this.registerConversations();
@@ -39,6 +47,10 @@ export class ClientBaseService implements OnModuleInit {
 
   public get observerChannelPost$(): Observable<BotContext> {
     return this.observerChannelPostSubject.asObservable();
+  }
+
+  public get bestMemesDaily$(): Observable<BestMemeContext> {
+    return this.bestMemesDailytSubject.asObservable();
   }
 
   public async toggleChannelObserver(): Promise<void> {
@@ -243,12 +255,10 @@ export class ClientBaseService implements OnModuleInit {
       id: groupId,
       timer: setTimeout(async () => {
         if (!(await this.isAdPost(event))) {
-          await event.message.forwardTo(
-            bigInt(this.baseConfigService.observerChannel)
-          );
+          await event.message.forwardTo(bigInt(this.baseConfigService.observerChannel));
         }
         this.lastProcessedGroup = undefined;
-      }, 800) // Оптимальная задержка для альбомов
+      }, 800), // Оптимальная задержка для альбомов
     };
 
     return true;
@@ -262,10 +272,10 @@ export class ClientBaseService implements OnModuleInit {
       this.baseConfigService.memeChanelId,
       this.baseConfigService.cringeMemeChannelId,
       this.baseConfigService.observerChannel,
-      this.baseConfigService.bestMemeChanelId
-    ].map(id => bigInt(id));
+      this.baseConfigService.bestMemeChanelId,
+    ].map((id) => bigInt(id));
 
-    if (ownChannels.some(channelId => channelId.equals(event.chatId))) {
+    if (ownChannels.some((channelId) => channelId.equals(event.chatId))) {
       return;
     }
 
@@ -327,6 +337,7 @@ export class ClientBaseService implements OnModuleInit {
   // 21:00 МСК
   @Cron(CronExpression.EVERY_DAY_AT_6PM)
   public async postDailyBestMeme(alternateChatId?: number) {
+    const context: BestMemeContext = {};
     try {
       // Получаем сущность канала с мемами
       const memeChannel = await this.telegramClient.getEntity(
@@ -348,13 +359,17 @@ export class ClientBaseService implements OnModuleInit {
       }
 
       // Фильтруем сообщения за последние 24 часа
-      const recentMessages = messages.filter(msg =>
-        msg.date && msg.date >= twentyFourHoursAgo && this.hasMediaContent(msg)
+      const recentMessages = messages.filter(
+        (msg) => msg.date && msg.date >= twentyFourHoursAgo && this.hasMediaContent(msg)
       );
 
       if (recentMessages.length === 0) {
-        Logger.log(`Found ${messages.length} messages, but none in last 24 hours. Oldest message: ${new Date(messages[messages.length-1].date * 1000)}`,
-          ClientBaseService.name);
+        Logger.log(
+          `Found ${messages.length} messages, but none in last 24 hours. Oldest message: ${new Date(
+            messages[messages.length - 1].date * 1000
+          )}`,
+          ClientBaseService.name
+        );
         return;
       }
 
@@ -374,18 +389,22 @@ export class ClientBaseService implements OnModuleInit {
         if (views > maxViews) {
           maxViews = views;
           bestByViews = message;
+          context.byViewPostMemeId = message.id;
         }
 
         // Обработка реакций
         let reactionsCount = 0;
         if (message.reactions) {
-          reactionsCount = message.reactions.results
-            .reduce((sum, reaction) => sum + reaction.count, 0);
+          reactionsCount = message.reactions.results.reduce(
+            (sum, reaction) => sum + reaction.count,
+            0
+          );
         }
 
         if (reactionsCount > maxReactions) {
           maxReactions = reactionsCount;
           bestByReactions = message;
+          context.byLikePostMemeId = message.id;
         }
       }
 
@@ -396,37 +415,59 @@ export class ClientBaseService implements OnModuleInit {
 
       // Проверяем, один ли это пост
       if (bestByViews?.id === bestByReactions?.id) {
-        Logger.log(`Posting single best message with ${maxViews} views and ${maxReactions} reactions`,
-          ClientBaseService.name);
-        await this.copyMessage(bestByViews.id, false, alternateChatId);
+        Logger.log(
+          `Posting single best message with ${maxViews} views and ${maxReactions} reactions`,
+          ClientBaseService.name
+        );
+        context.byViewPostBestMemeId = await this.copyMessage(
+          bestByViews.id,
+          false,
+          alternateChatId
+        );
       } else {
         if (bestByViews) {
           Logger.log(`Posting best by views: ${maxViews} views`, ClientBaseService.name);
           await this.copyMessage(bestByViews.id, true, alternateChatId);
         }
         if (bestByReactions) {
-          Logger.log(`Posting best by reactions: ${maxReactions} reactions`, ClientBaseService.name);
-          await this.copyMessage(bestByReactions.id, false, alternateChatId);
+          Logger.log(
+            `Posting best by reactions: ${maxReactions} reactions`,
+            ClientBaseService.name
+          );
+          context.byLikePostBestMemeId = await this.copyMessage(
+            bestByReactions.id,
+            false,
+            alternateChatId
+          );
         }
       }
-
+      if (!alternateChatId) {
+        this.bestMemesDailytSubject.next(context);
+      }
     } catch (error) {
       Logger.error(`Error posting daily best meme: ${error}`, ClientBaseService.name);
+      this.bestMemesDailytSubject.next({ byLikePostMemeId: 37, byViewPostMemeId: 37 });
       throw error;
     }
   }
 
-  private async copyMessage(messageId: number, silent: boolean, alternateChatId?: number): Promise<void> {
+  private async copyMessage(
+    messageId: number,
+    silent: boolean,
+    alternateChatId?: number
+  ): Promise<number> {
     try {
-      await this.bot.api.copyMessage(
+      const message = await this.bot.api.copyMessage(
         alternateChatId || this.baseConfigService.bestMemeChanelId,
         this.baseConfigService.memeChanelId,
-        messageId, {
-          disable_notification: silent
+        messageId,
+        {
+          disable_notification: silent,
         }
       );
+      return message.message_id;
     } catch (e) {
-      Logger.error(`Cannot copy message ${messageId}`, ClientBaseService.name );
+      Logger.error(`Cannot copy message ${messageId}`, ClientBaseService.name);
     }
   }
 
@@ -454,12 +495,11 @@ export class ClientBaseService implements OnModuleInit {
     return !!(
       message.photo ||
       message.video ||
-      (message.media && (
-        message.media instanceof Api.MessageMediaPhoto ||
-        message.media instanceof Api.MessageMediaDocument &&
-        message.media.document instanceof Api.Document &&
-        message.media.document.mimeType.startsWith('video/')
-      ))
+      (message.media &&
+        (message.media instanceof Api.MessageMediaPhoto ||
+          (message.media instanceof Api.MessageMediaDocument &&
+            message.media.document instanceof Api.Document &&
+            message.media.document.mimeType.startsWith('video/'))))
     );
   }
 
