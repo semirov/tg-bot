@@ -1,6 +1,8 @@
 export interface YearGeneralStatistics {
   totalMemes: number;
   memesFromUsers: number;
+  memesFromObservatory: number;
+  totalProposedByUsers: number;
   cringeMemes: number;
   duplicatesFound: number;
   year: number;

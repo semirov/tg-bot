@@ -11,6 +11,7 @@ import { UserRequestEntity } from '../../bot/entities/user-request.entity';
 import { BotContext } from '../../bot/interfaces/bot-context.interface';
 import { BOT } from '../../bot/providers/bot.provider';
 import { BaseConfigService } from '../../config/base-config.service';
+import { ObservatoryPostEntity } from '../../observatory/entities/observatory-post.entity';
 import { YearResultEntity } from '../entities/year-result.entity';
 import {
   UserYearStatistics,
@@ -33,6 +34,8 @@ export class YearResultsService {
     private publishedPostHashesRepository: Repository<PublishedPostHashesEntity>,
     @InjectRepository(PostSchedulerEntity)
     private postSchedulerRepository: Repository<PostSchedulerEntity>,
+    @InjectRepository(ObservatoryPostEntity)
+    private observatoryPostRepository: Repository<ObservatoryPostEntity>,
     @Inject(BOT) private bot: Bot<BotContext>,
     private baseConfigService: BaseConfigService
   ) {}
@@ -52,12 +55,26 @@ export class YearResultsService {
       .andWhere('userRequest.publishedAt <= :endDate', { endDate })
       .getCount();
 
-    // Постов от людей (предложка)
+    // Всего предложено постов пользователями
+    const totalProposedByUsers = await this.userRequestRepository
+      .createQueryBuilder('userRequest')
+      .where('userRequest.createdAt >= :startDate', { startDate })
+      .andWhere('userRequest.createdAt <= :endDate', { endDate })
+      .getCount();
+
+    // Опубликовано постов от людей (предложка)
     const memesFromUsers = await this.userRequestRepository
       .createQueryBuilder('userRequest')
       .where('userRequest.isPublished = true')
       .andWhere('userRequest.publishedAt >= :startDate', { startDate })
       .andWhere('userRequest.publishedAt <= :endDate', { endDate })
+      .getCount();
+
+    // Постов из обсерватории
+    const memesFromObservatory = await this.observatoryPostRepository
+      .createQueryBuilder('observatory')
+      .where('observatory.publishedMessageId IS NOT NULL')
+      .andWhere('observatory.isApproved = true')
       .getCount();
 
     // Кринж
@@ -227,6 +244,8 @@ export class YearResultsService {
     return {
       totalMemes,
       memesFromUsers,
+      memesFromObservatory,
+      totalProposedByUsers,
       cringeMemes,
       duplicatesFound,
       year,
@@ -533,35 +552,83 @@ export class YearResultsService {
     const year = general.year;
     let text = `🎉 <b>Итоги ${year} года</b>\n\n`;
 
-    text += `За этот год было опубликовано <b>${general.totalMemes}</b> ${this.getPostsWord(
+    // Основная статистика: всего постов в канале
+    text += `За этот год в канале было опубликовано <b>${
       general.totalMemes
-    )}`;
+    }</b> ${this.getPostsWord(general.totalMemes)}. `;
 
-    if (general.totalAuthors > 0) {
-      text += `. <b>${general.totalAuthors}</b> ${this.getAuthorsWord(general.totalAuthors)} ${
-        general.totalAuthors === 1 ? 'предлагал' : 'предлагали'
-      } свои посты, создавая контент для канала`;
+    // Статистика по обсерватории
+    if (general.memesFromObservatory > 0) {
+      const observatoryPercent = Math.round(
+        (general.memesFromObservatory / general.totalMemes) * 100
+      );
+      text += `Из них <b>${general.memesFromObservatory}</b> ${this.getPostsWord(
+        general.memesFromObservatory
+      )} (<b>${observatoryPercent}%</b>) ${
+        general.memesFromObservatory === 1 ? 'был найден' : 'были найдены'
+      } обсерваторией. `;
     }
 
+    // Статистика по пользовательским постам
+    if (general.totalProposedByUsers > 0) {
+      text += `Пользователи предложили <b>${general.totalProposedByUsers}</b> ${this.getPostsWord(
+        general.totalProposedByUsers
+      )}`;
+
+      if (general.memesFromUsers > 0) {
+        const userPublishedPercent = Math.round(
+          (general.memesFromUsers / general.totalProposedByUsers) * 100
+        );
+        const userFromTotalPercent = Math.round(
+          (general.memesFromUsers / general.totalMemes) * 100
+        );
+
+        text += `, из которых было опубликовано <b>${general.memesFromUsers}</b> (<b>${userPublishedPercent}%</b>), что составило <b>${userFromTotalPercent}%</b> от общего числа постов в канале`;
+      }
+
+      text += `. `;
+    }
+
+    // Количество авторов
+    if (general.totalAuthors > 0) {
+      text += `<b>${general.totalAuthors}</b> ${this.getAuthorsWord(general.totalAuthors)} ${
+        general.totalAuthors === 1 ? 'создавал' : 'создавали'
+      } контент для канала. `;
+    }
+
+    // Активные дни
     if (general.activeDaysWithMemes > 0) {
-      text += `. Посты предлагались в течение <b>${
+      text += `Посты предлагались в течение <b>${
         general.activeDaysWithMemes
       }</b> ${this.getDaysWord(general.activeDaysWithMemes)}`;
     }
 
-    if (general.cringeMemes > 0) {
-      text += `. <b>${general.cringeMemes}</b> ${this.getPostsWord(general.cringeMemes)} ${
-        general.cringeMemes === 1 ? 'попал' : 'попали'
-      } в кринж`;
-    }
+    // Кринж и дубликаты
+    const hasCringeOrDuplicates = general.cringeMemes > 0 || general.duplicatesFound > 0;
 
-    if (general.duplicatesFound > 0) {
-      text += `, а система нашла <b>${general.duplicatesFound}</b> ${
-        general.duplicatesFound === 1 ? 'дубликат' : 'дубликатов'
-      }`;
-    }
+    if (hasCringeOrDuplicates) {
+      text += `. `;
 
-    text += `.`;
+      if (general.cringeMemes > 0) {
+        text += `<b>${general.cringeMemes}</b> ${this.getPostsWord(general.cringeMemes)} ${
+          general.cringeMemes === 1 ? 'попал' : 'попали'
+        } в кринж`;
+
+        if (general.duplicatesFound > 0) {
+          text += `, а система нашла <b>${general.duplicatesFound}</b> ${
+            general.duplicatesFound === 1 ? 'дубликат' : 'дубликатов'
+          }`;
+        }
+      } else if (general.duplicatesFound > 0) {
+        text += `Система нашла <b>${general.duplicatesFound}</b> ${
+          general.duplicatesFound === 1 ? 'дубликат' : 'дубликатов'
+        }`;
+      }
+
+      text += `.`;
+    } else {
+      text += `. `;
+    }
 
     if (general.mostProductiveDay && general.mostProductiveDayCount) {
       const productiveDate = format(new Date(general.mostProductiveDay), 'd MMMM', {
@@ -675,7 +742,7 @@ export class YearResultsService {
       }
     }
 
-    text += `\n\n❤️ Спасибо вам, что провели этот год с мемами! Без вас этот год был бы гораздо хуже.\n\n`;
+    text += `\n\n Спасибо вам, что провели этот год с мемами! Без вас этот год был бы гораздо хуже ❤️\n\n`;
     text += `#итоги_года`;
 
     return text;
@@ -926,7 +993,7 @@ export class YearResultsService {
     percentile: number,
     totalUsers: number
   ): string {
-    let text = `<b>Твои итоги ${year} года</b>\n\n`;
+    let text = `<b>Твои итоги ${year} года 🎉</b>\n\n`;
 
     // Проверяем что дата валидна
     if (user.firstProposalDate && !isNaN(new Date(user.firstProposalDate).getTime())) {
@@ -1030,7 +1097,7 @@ export class YearResultsService {
       text += ` `;
     }
 
-    text += `\n\nСпасибо, что был со мной в этом году. 🙏`;
+    text += `\n\nСпасибо, что был со мной в этом году 🙏`;
 
     return text;
   }
