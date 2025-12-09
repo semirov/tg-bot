@@ -43,7 +43,7 @@ export class SettingsService {
 
   public async channelBestChannelName(): Promise<string> {
     const channelInfo = await this.bot.api.getChat(this.baseConfigService.bestMemeChanelId);
-    return channelInfo['username'] || 'Лучшие мемы за сутки';
+    return channelInfo.title || channelInfo['username'] || 'Лучшие мемы за сутки';
   }
 
   public async cringeChannelHtmlLink(): Promise<string> {
