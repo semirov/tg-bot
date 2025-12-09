@@ -1,6 +1,12 @@
 export interface YearGeneralStatistics {
+  totalModeratedMessages: number;
   totalMemes: number;
   memesFromUsers: number;
+  memesFromObservatory: number;
+  totalProposedByUsers: number;
+  textMessagesToAdmin: number;
+  adminRepliedToMessages: number;
+  adminReplyPercentage: number;
   cringeMemes: number;
   duplicatesFound: number;
   year: number;
@@ -14,6 +20,10 @@ export interface YearGeneralStatistics {
   leastActiveMonthCount?: number;
   mostPopularPublicationMode?: string;
   duplicatesPercentage?: number;
+  averageTimeToModeration?: number; // в минутах
+  averageTimeFromModerationToPublication?: number; // в часах
+  longestQueueDate?: Date;
+  longestQueueLength?: number;
   topDuplicateUser?: {
     username: string;
     firstName: string;
