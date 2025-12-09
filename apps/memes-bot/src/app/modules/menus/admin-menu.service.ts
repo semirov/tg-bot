@@ -1,21 +1,22 @@
-import { Inject, Injectable, Logger, OnModuleInit } from '@nestjs/common';
-import { BOT } from '../bot/providers/bot.provider';
-import { Bot, InlineKeyboard } from 'grammy';
-import { BotContext } from '../bot/interfaces/bot-context.interface';
-import { Menu, MenuRange } from '@grammyjs/menu';
-import { AdminMenusEnum } from './constants/bot-menus.enum';
-import { UserService } from '../bot/services/user.service';
-import { BaseConfigService } from '../config/base-config.service';
 import { Conversation, createConversation } from '@grammyjs/conversations';
-import { UserEntity } from '../bot/entities/user.entity';
+import { Menu, MenuRange } from '@grammyjs/menu';
+import { Inject, Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { add, format, getUnixTime, set } from 'date-fns';
-import { ClientBaseService } from '../client/services/client-base.service';
-import { ConversationsEnum } from '../post-management/constants/conversations.enum';
-import { PostSchedulerService } from '../bot/services/post-scheduler.service';
-import { PublicationModesEnum } from '../post-management/constants/publication-modes.enum';
-import { PostSchedulerEntity } from '../bot/entities/post-scheduler.entity';
-import { SchedulerCommonService } from '../common/scheduler-common.service';
 import { utcToZonedTime } from 'date-fns-tz';
+import { Bot, InlineKeyboard } from 'grammy';
+import { PostSchedulerEntity } from '../bot/entities/post-scheduler.entity';
+import { UserEntity } from '../bot/entities/user.entity';
+import { BotContext } from '../bot/interfaces/bot-context.interface';
+import { BOT } from '../bot/providers/bot.provider';
+import { PostSchedulerService } from '../bot/services/post-scheduler.service';
+import { UserService } from '../bot/services/user.service';
+import { ClientBaseService } from '../client/services/client-base.service';
+import { SchedulerCommonService } from '../common/scheduler-common.service';
+import { BaseConfigService } from '../config/base-config.service';
+import { ConversationsEnum } from '../post-management/constants/conversations.enum';
+import { PublicationModesEnum } from '../post-management/constants/publication-modes.enum';
+import { YearResultsService } from '../year-results/services/year-results.service';
+import { AdminMenusEnum } from './constants/bot-menus.enum';
 
 @Injectable()
 export class AdminMenuService implements OnModuleInit {
@@ -24,7 +25,8 @@ export class AdminMenuService implements OnModuleInit {
     private userService: UserService,
     private baseConfigService: BaseConfigService,
     private clientBaseService: ClientBaseService,
-    private postSchedulerService: PostSchedulerService
+    private postSchedulerService: PostSchedulerService,
+    private yearResultsService: YearResultsService
   ) {}
 
   onModuleInit() {
@@ -35,6 +37,28 @@ export class AdminMenuService implements OnModuleInit {
         ConversationsEnum.ADD_MODERATOR_CONVERSATION
       )
     );
+
+    // Регистрируем команды для итогов года
+    this.bot.command('year_result', async (ctx) => {
+      if (!ctx.from) return;
+      const user = await this.userService.findById(ctx.from.id);
+
+      if (!ctx.config.isOwner) {
+        await ctx.reply('У вас нет прав для выполнения этой команды');
+        return;
+      }
+      await this.showYearResults(ctx);
+    });
+
+    this.bot.command('year_result_publish', async (ctx) => {
+      if (!ctx.from) return;
+      const user = await this.userService.findById(ctx.from.id);
+      if (!ctx.config.isOwner) {
+        await ctx.reply('У вас нет прав для выполнения этой команды');
+        return;
+      }
+      await this.publishYearResults(ctx);
+    });
   }
 
   public buildStartAdminMenu(
@@ -201,25 +225,27 @@ export class AdminMenuService implements OnModuleInit {
       .row()
       .back('Назад');
 
-    const memeLimitSelectUserMenu = new Menu<BotContext>('meme-limit-select-user').dynamic(async () => {
-      const users = await this.userService.repository.find({
-        where: { isBanned: false },
-        order: { lastActivity: 'DESC' },
-        take: 50
-      });
-      
-      const range = new MenuRange<BotContext>();
-      for (const user of users) {
-        range
-          .text(`@${user.username}`, (ctx) => {
-            ctx.session.memeLimitUserId = user.id;
-            ctx.menu.nav('meme-limit-options');
-          })
-          .row();
+    const memeLimitSelectUserMenu = new Menu<BotContext>('meme-limit-select-user').dynamic(
+      async () => {
+        const users = await this.userService.repository.find({
+          where: { isBanned: false },
+          order: { lastActivity: 'DESC' },
+          take: 50,
+        });
+
+        const range = new MenuRange<BotContext>();
+        for (const user of users) {
+          range
+            .text(`@${user.username}`, (ctx) => {
+              ctx.session.memeLimitUserId = user.id;
+              ctx.menu.nav('meme-limit-options');
+            })
+            .row();
+        }
+        range.back('Назад');
+        return range;
       }
-      range.back('Назад');
-      return range;
-    });
+    );
 
     const memeLimitOptionsMenu = new Menu<BotContext>('meme-limit-options')
       .text('Снять лимит на 24 часа', async (ctx) => {
@@ -385,5 +411,151 @@ export class AdminMenuService implements OnModuleInit {
 
     message += '\n';
     return message;
+  }
+
+  /**
+   * Показывает предпросмотр итогов года
+   */
+  private async showYearResults(ctx: BotContext): Promise<void> {
+    try {
+      await ctx.reply('Генерирую итоги года...');
+
+      const currentYear = new Date().getFullYear();
+      const preview = await this.yearResultsService.generateYearResults(currentYear);
+
+      // Отправляем общую статистику в том же формате, что будет опубликована
+      const generalMessage = this.yearResultsService.formatGeneralStatistics(
+        preview.general,
+        preview.users
+      );
+      await ctx.reply('<b>📊 Предпросмотр общей статистики для канала:</b>\n\n' + generalMessage, {
+        parse_mode: 'HTML',
+      });
+
+      // Показываем персональные сообщения пользователей
+      if (preview.users.length > 0) {
+        await ctx.reply(
+          `<b>📨 Персональные сообщения (${preview.users.length}):</b>\n\nИспользуйте кнопки для навигации`,
+          { parse_mode: 'HTML' }
+        );
+
+        ctx.session.yearResultsPreview = preview;
+        ctx.session.yearResultsCurrentUserIndex = 0;
+
+        await this.sendUserDetailWithNavigation(ctx, preview, 0);
+      }
+
+      await ctx.reply('Для публикации итогов используйте команду /year_result_publish', {
+        parse_mode: 'HTML',
+      });
+    } catch (error) {
+      Logger.error('Error showing year results:', error);
+      await ctx.reply('Произошла ошибка при генерации итогов года');
+    }
+  }
+
+  /**
+   * Отправляет детали пользователя с навигацией
+   */
+  private async sendUserDetailWithNavigation(
+    ctx: BotContext,
+    preview: any,
+    index: number
+  ): Promise<void> {
+    const user = preview.users[index];
+    const year = preview.general.year;
+
+    // Получаем все результаты для расчета процентиля
+    const allResults = await this.yearResultsService['yearResultRepository'].find({
+      where: { year },
+      order: { totalPublished: 'DESC' },
+    });
+
+    // Вычисляем позицию пользователя в рейтинге
+    const userPosition = allResults.findIndex((r) => r.userId === user.userId) + 1;
+    const percentile = Math.round(
+      ((allResults.length - userPosition + 1) / allResults.length) * 100
+    );
+
+    // Используем тот же метод форматирования, что и для отправки пользователям
+    const message = this.yearResultsService['formatPersonalMessage'](
+      user,
+      year,
+      percentile,
+      allResults.length
+    );
+
+    const keyboard = new InlineKeyboard();
+
+    if (index > 0) {
+      keyboard.text('⬅️ Предыдущий', `year_user_prev_${index}`);
+    }
+
+    keyboard.text(`${index + 1}/${preview.users.length}`, 'year_user_count');
+
+    if (index < preview.users.length - 1) {
+      keyboard.text('Следующий ➡️', `year_user_next_${index}`);
+    }
+
+    await ctx.reply(
+      `<b>📨 Предпросмотр сообщения для ${this.formatUserName(user)}:</b>\n\n${message}`,
+      {
+        parse_mode: 'HTML',
+        reply_markup: keyboard,
+      }
+    );
+
+    // Регистрируем обработчики для навигации
+    this.bot.callbackQuery(/year_user_prev_(\d+)/, async (ctx) => {
+      const currentIndex = parseInt(ctx.match[1]);
+      const newIndex = currentIndex - 1;
+      await ctx.answerCallbackQuery();
+      await this.sendUserDetailWithNavigation(ctx, ctx.session.yearResultsPreview, newIndex);
+    });
+
+    this.bot.callbackQuery(/year_user_next_(\d+)/, async (ctx) => {
+      const currentIndex = parseInt(ctx.match[1]);
+      const newIndex = currentIndex + 1;
+      await ctx.answerCallbackQuery();
+      await this.sendUserDetailWithNavigation(ctx, ctx.session.yearResultsPreview, newIndex);
+    });
+
+    this.bot.callbackQuery('year_user_count', async (ctx) => {
+      await ctx.answerCallbackQuery();
+    });
+  }
+
+  /**
+   * Форматирует имя пользователя
+   */
+  private formatUserName(user: any): string {
+    if (user.username) {
+      return `@${user.username}`;
+    }
+    return [user.firstName, user.lastName].filter((item) => !!item).join(' ');
+  }
+
+  /**
+   * Публикует итоги года
+   */
+  private async publishYearResults(ctx: BotContext): Promise<void> {
+    try {
+      await ctx.reply('Публикую итоги года...');
+
+      const currentYear = new Date().getFullYear();
+
+      // Публикуем общую статистику в канал
+      await this.yearResultsService.publishGeneralStatistics(currentYear);
+      await ctx.reply('✅ Общая статистика опубликована в канал');
+
+      // Отправляем персональную статистику пользователям
+      await this.yearResultsService.publishPersonalStatistics(currentYear);
+      await ctx.reply('✅ Персональная статистика отправлена пользователям');
+
+      await ctx.reply('🎉 Итоги года успешно опубликованы!');
+    } catch (error) {
+      Logger.error('Error publishing year results:', error);
+      await ctx.reply('Произошла ошибка при публикации итогов года');
+    }
   }
 }

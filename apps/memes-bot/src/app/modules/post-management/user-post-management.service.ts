@@ -305,9 +305,16 @@ export class UserPostManagementService implements OnModuleInit {
           const menuToUse = hasDuplicate ? this.duplicateMenu : this.moderatedPostMenu;
           await ctx.editMessageReplyMarkup({ reply_markup: menuToUse });
 
+          // Отправляем пользователю уведомление с его постом
+          await this.bot.api.forwardMessage(
+            message.user.id,
+            this.baseConfigService.userRequestMemeChannel,
+            ctx.callbackQuery.message.message_id
+          );
+
           await this.bot.api.sendMessage(
             message.user.id,
-            '✅ Админ снял для тебя ограничение на публикацию постов на текущие сутки',
+            '✅ Админ снял для тебя ограничение на публикацию постов на текущие сутки. Можешь отправить этот пост еще раз.',
             { reply_to_message_id: message.originalMessageId }
           );
 
@@ -336,6 +343,70 @@ export class UserPostManagementService implements OnModuleInit {
       let fileUniqueId = null;
       if (ctx.message?.photo) {
         fileUniqueId = ctx.message.photo[ctx.message.photo.length - 1].file_unique_id;
+      }
+
+      const now = new Date();
+      const isLimitDisabled = user.memeLimitDisabledUntil && now < user.memeLimitDisabledUntil;
+      // Подсчитываем только сообщения с медиа (изображения/видео) за последние 24 часа
+      const todayMemeCount = await this.userRequestService.countUserMemeRequestsLast24h(user.id);
+
+      Logger.log(
+        `User ${user.id} has sent ${todayMemeCount} media messages (memes) in the last 24 hours`,
+        UserPostManagementService.name
+      );
+
+      if (!isLimitDisabled && todayMemeCount >= 5) {
+        const remainingTime = formatDistance(add(now, { days: 1 }), now, {
+          locale: ru,
+          addSuffix: true,
+        });
+
+        const message =
+          `Ты можешь предложить максимум 5 постов в сутки\n\n` +
+          `Новый лимит будет доступен ${remainingTime}`;
+
+        await ctx.reply(message, {
+          reply_to_message_id: ctx.message.message_id,
+          parse_mode: 'HTML',
+        });
+
+        // Сохраняем запрос в БД без проверки на дубликаты
+        const savedRequest = await this.userRequestService.repository.insert({
+          user: user,
+          isAnonymousPublishing: false,
+          originalMessageId: ctx.message.message_id,
+          userRequestChannelMessageId: null,
+          possibleDuplicate: false,
+          fileUniqueId: fileUniqueId, // Добавляем fileUniqueId в запись
+        });
+
+        // Копируем сообщение в канал запросов
+        const channelMessage = await ctx.api.copyMessage(
+          this.baseConfigService.userRequestMemeChannel,
+          ctx.message.chat.id,
+          ctx.message.message_id,
+          { disable_notification: true }
+        );
+
+        // Обновляем запись с ID сообщения в канале
+        await this.userRequestService.repository.update(savedRequest.identifiers[0].id, {
+          userRequestChannelMessageId: channelMessage.message_id,
+        });
+
+        // Закрепляем сообщение в канале запросов
+        await this.bot.api.pinChatMessage(
+          this.baseConfigService.userRequestMemeChannel,
+          channelMessage.message_id,
+          { disable_notification: true }
+        );
+
+        // Показываем меню с кнопкой снятия лимита
+        await ctx.api.editMessageReplyMarkup(
+          this.baseConfigService.userRequestMemeChannel,
+          channelMessage.message_id,
+          { reply_markup: this.buildLimitMenu() }
+        );
+        return;
       }
 
       // Проверяем, есть ли уже пост с таким fileUniqueId перед выполнением любых других действий
@@ -390,70 +461,6 @@ export class UserPostManagementService implements OnModuleInit {
         `Checking meme limit for user ${user.id} (${user.username || 'no username'})`,
         UserPostManagementService.name
       );
-
-      const now = new Date();
-      const isLimitDisabled = user.memeLimitDisabledUntil && now < user.memeLimitDisabledUntil;
-
-      Logger.log(
-        `User limit status - disabled: ${isLimitDisabled}, limit disabled until: ${user.memeLimitDisabledUntil}`,
-        UserPostManagementService.name
-      );
-
-      const isAdmin = this.userService.checkPermission(ctx, UserPermissionEnum.IS_BASE_MODERATOR);
-      // Подсчитываем только сообщения с медиа (изображения/видео) за последние 24 часа
-      const todayMemeCount = await this.userRequestService.countUserMemeRequestsLast24h(user.id);
-
-      Logger.log(
-        `User ${user.id} has sent ${todayMemeCount} media messages (memes) in the last 24 hours`,
-        UserPostManagementService.name
-      );
-
-      if (!isLimitDisabled && todayMemeCount >= 5) {
-        const remainingTime = formatDistance(add(now, { days: 1 }), now, {
-          locale: ru,
-          addSuffix: true,
-        });
-
-        const message =
-          `Ты можешь предложить максимум 5 постов в сутки\n\n` +
-          `Новый лимит будет доступен ${remainingTime}`;
-
-        await ctx.reply(message, {
-          reply_to_message_id: ctx.message.message_id,
-          parse_mode: 'HTML',
-        });
-
-        // Сохраняем запрос в БД без проверки на дубликаты
-        const savedRequest = await this.userRequestService.repository.insert({
-          user: user,
-          isAnonymousPublishing: false,
-          originalMessageId: ctx.message.message_id,
-          userRequestChannelMessageId: null,
-          possibleDuplicate: false,
-          fileUniqueId: fileUniqueId, // Добавляем fileUniqueId в запись
-        });
-
-        // Копируем сообщение в канал запросов
-        const channelMessage = await ctx.api.copyMessage(
-          this.baseConfigService.userRequestMemeChannel,
-          ctx.message.chat.id,
-          ctx.message.message_id,
-          { disable_notification: true }
-        );
-
-        // Обновляем запись с ID сообщения в канале
-        await this.userRequestService.repository.update(savedRequest.identifiers[0].id, {
-          userRequestChannelMessageId: channelMessage.message_id,
-        });
-
-        // Показываем меню с кнопкой снятия лимита
-        await ctx.api.editMessageReplyMarkup(
-          this.baseConfigService.userRequestMemeChannel,
-          channelMessage.message_id,
-          { reply_markup: this.buildLimitMenu() }
-        );
-        return;
-      }
 
       // Логируем случаи переопределения лимита
       if (isLimitDisabled) {

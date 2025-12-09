@@ -5,9 +5,10 @@ import { ObservatoryModule } from '../observatory/observatory.module';
 import { BotModule } from '../bot/bot.module';
 import { MonthlyStatService } from './service/monthly-stat.service';
 import { AppConfigModule } from '../config/app-config.module';
+import { YearResultsModule } from '../year-results/year-results.module';
 
 @Module({
-  imports: [PostManagementModule, ObservatoryModule, BotModule, AppConfigModule],
+  imports: [PostManagementModule, ObservatoryModule, BotModule, AppConfigModule, YearResultsModule],
   providers: [CronService, MonthlyStatService],
 })
 export class CronModule {}

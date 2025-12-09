@@ -1,27 +1,29 @@
 import { Module } from '@nestjs/common';
 
-import { AppService } from './app.service';
+import { ScheduleModule } from '@nestjs/schedule';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import { SessionEntity } from './modules/bot/session/session.entity';
-import { MenuModule } from './modules/menus/menu.module';
+import { AppService } from './app.service';
 import { BotModule } from './modules/bot/bot.module';
-import { AppConfigModule } from './modules/config/app-config.module';
-import { BaseConfigService } from './modules/config/base-config.service';
+import { CringePostEntity } from './modules/bot/entities/cringe-post.entity';
+import { PostSchedulerEntity } from './modules/bot/entities/post-scheduler.entity';
+import { PublishedPostHashesEntity } from './modules/bot/entities/published-post-hashes.entity';
+import { SettingsEntity } from './modules/bot/entities/settings.entity';
 import { UserRequestEntity } from './modules/bot/entities/user-request.entity';
 import { UserEntity } from './modules/bot/entities/user.entity';
+import { SessionEntity } from './modules/bot/session/session.entity';
 import { ClientModule } from './modules/client/client.module';
 import { ClientSessionEntity } from './modules/client/entities/client-session.entity';
-import { ObservatoryModule } from './modules/observatory/observatory.module';
-import { ObservatoryPostEntity } from './modules/observatory/entities/observatory-post.entity';
-import { PostManagementModule } from './modules/post-management/post-management.module';
-import { PostSchedulerEntity } from './modules/bot/entities/post-scheduler.entity';
+import { AppConfigModule } from './modules/config/app-config.module';
+import { BaseConfigService } from './modules/config/base-config.service';
 import { CronModule } from './modules/cron/cron.module';
-import { ScheduleModule } from '@nestjs/schedule';
-import { SettingsEntity } from './modules/bot/entities/settings.entity';
-import { CringePostEntity } from './modules/bot/entities/cringe-post.entity';
-import { PublishedPostHashesEntity } from './modules/bot/entities/published-post-hashes.entity';
-import { UserModeratedPostEntity } from './modules/observatory/entities/user-moderated-post.entity';
+import { MenuModule } from './modules/menus/menu.module';
+import { ObservatoryPostEntity } from './modules/observatory/entities/observatory-post.entity';
 import { UserMessageModeratedPostEntity } from './modules/observatory/entities/user-message-moderated-post.entity';
+import { UserModeratedPostEntity } from './modules/observatory/entities/user-moderated-post.entity';
+import { ObservatoryModule } from './modules/observatory/observatory.module';
+import { PostManagementModule } from './modules/post-management/post-management.module';
+import { YearResultEntity } from './modules/year-results/entities/year-result.entity';
+import { YearResultsModule } from './modules/year-results/year-results.module';
 
 @Module({
   imports: [
@@ -50,6 +52,7 @@ import { UserMessageModeratedPostEntity } from './modules/observatory/entities/u
           PublishedPostHashesEntity,
           UserModeratedPostEntity,
           UserMessageModeratedPostEntity,
+          YearResultEntity,
         ],
         synchronize: true,
         extra: configService.useSSL
@@ -66,6 +69,7 @@ import { UserMessageModeratedPostEntity } from './modules/observatory/entities/u
     MenuModule,
     ClientModule,
     CronModule,
+    YearResultsModule,
   ],
   controllers: [],
   providers: [AppService],

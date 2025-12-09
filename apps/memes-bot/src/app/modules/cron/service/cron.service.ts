@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { Cron, Interval } from '@nestjs/schedule';
 import {
   PostSchedulerService,
@@ -9,15 +9,19 @@ import { ObservatoryService } from '../../observatory/services/observatory.servi
 import { CringeManagementService } from '../../bot/services/cringe-management.service';
 import { PublicationModesEnum } from '../../post-management/constants/publication-modes.enum';
 import { MonthlyStatService } from './monthly-stat.service';
+import { YearResultsService } from '../../year-results/services/year-results.service';
 
 @Injectable()
 export class CronService {
+  private readonly logger = new Logger(CronService.name);
+
   constructor(
     private postSchedulerService: PostSchedulerService,
     private userPostManagementService: UserPostManagementService,
     private observatoryService: ObservatoryService,
     private cringeManagementService: CringeManagementService,
-    private monthlyStatService: MonthlyStatService
+    private monthlyStatService: MonthlyStatService,
+    private yearResultsService: YearResultsService
   ) {}
 
   @Interval(60000)
@@ -29,6 +33,23 @@ export class CronService {
   @Cron('0 17 9 * *')
   async onCronTime(): Promise<void> {
     this.monthlyStatService.publishMonthlyStatistic();
+  }
+
+  /**
+   * Генерация итогов года 25 декабря в 10:00
+   * Формат: секунды минуты часы день месяц день_недели
+   * Месяцы: 0-11 (0=январь, 11=декабрь)
+   */
+  @Cron('0 0 10 25 11 *')
+  async generateYearResults(): Promise<void> {
+    try {
+      const currentYear = new Date().getFullYear();
+      this.logger.log(`Starting automatic year results generation for ${currentYear}`);
+      await this.yearResultsService.generateAndSendPreviewToOwner(currentYear);
+      this.logger.log(`Year results generation completed for ${currentYear}`);
+    } catch (error) {
+      this.logger.error('Failed to generate year results:', error);
+    }
   }
 
   async handleNextScheduledPost(): Promise<void> {

@@ -1,5 +1,6 @@
-import { Context, SessionFlavor } from 'grammy';
 import { ConversationFlavor } from '@grammyjs/conversations';
+import { Context, SessionFlavor } from 'grammy';
+import { YearResultsPreview } from '../../year-results/interfaces/year-statistics.interface';
 import { UserEntity } from '../entities/user.entity';
 
 export type BotConfig = { config: { user: UserEntity; isOwner: boolean } };
@@ -24,6 +25,8 @@ export interface SessionDataInterface {
   userVoted?: boolean;
   memeLimitControlState?: string;
   memeLimitUserId?: number;
+  yearResultsPreview?: YearResultsPreview;
+  yearResultsCurrentUserIndex?: number;
 }
 
 export type BotContext = Context &
