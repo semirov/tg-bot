@@ -47,22 +47,23 @@ export class YearResultsService {
     const startDate = new Date(year, 0, 1);
     const endDate = new Date(year, 11, 31, 23, 59, 59);
 
-    // Всего постов (опубликованных)
-    const totalMemes = await this.userRequestRepository
-      .createQueryBuilder('userRequest')
-      .where('userRequest.isPublished = true')
-      .andWhere('userRequest.publishedAt >= :startDate', { startDate })
-      .andWhere('userRequest.publishedAt <= :endDate', { endDate })
-      .getCount();
-
-    // Всего предложено постов пользователями
+    // Всего предложено постов пользователями (включая текстовые сообщения)
     const totalProposedByUsers = await this.userRequestRepository
       .createQueryBuilder('userRequest')
       .where('userRequest.createdAt >= :startDate', { startDate })
       .andWhere('userRequest.createdAt <= :endDate', { endDate })
       .getCount();
 
-    // Опубликовано постов от людей (предложка)
+    // Всего постов обсерватории (модерированных)
+    const totalObservatoryPosts = await this.observatoryPostRepository
+      .createQueryBuilder('observatory')
+      .where('observatory.isApproved IS NOT NULL')
+      .getCount();
+
+    // Общее количество сообщений через модерацию
+    const totalModeratedMessages = totalProposedByUsers + totalObservatoryPosts;
+
+    // Опубликовано постов от пользователей за год (из UserRequest)
     const memesFromUsers = await this.userRequestRepository
       .createQueryBuilder('userRequest')
       .where('userRequest.isPublished = true')
@@ -70,12 +71,39 @@ export class YearResultsService {
       .andWhere('userRequest.publishedAt <= :endDate', { endDate })
       .getCount();
 
-    // Постов из обсерватории
-    const memesFromObservatory = await this.observatoryPostRepository
-      .createQueryBuilder('observatory')
-      .where('observatory.publishedMessageId IS NOT NULL')
-      .andWhere('observatory.isApproved = true')
+    // Постов из обсерватории за год (из PostScheduler где isUserPost = false и isPublished = true)
+    const memesFromObservatory = await this.postSchedulerRepository
+      .createQueryBuilder('scheduler')
+      .where('scheduler.isPublished = true')
+      .andWhere('scheduler.isUserPost = false')
+      .andWhere('scheduler.publishDate >= :startDate', { startDate })
+      .andWhere('scheduler.publishDate <= :endDate', { endDate })
       .getCount();
+
+    // Всего опубликованных постов в канале за год
+    const totalMemes = memesFromUsers + memesFromObservatory;
+
+    // Текстовые сообщения админу (без медиа)
+    const textMessagesToAdmin = await this.userRequestRepository
+      .createQueryBuilder('userRequest')
+      .where('userRequest.isTextRequest = true')
+      .andWhere('userRequest.createdAt >= :startDate', { startDate })
+      .andWhere('userRequest.createdAt <= :endDate', { endDate })
+      .getCount();
+
+    // Сообщения с ответом админа
+    const adminRepliedToMessages = await this.userRequestRepository
+      .createQueryBuilder('userRequest')
+      .where('userRequest.replyToMessageId IS NOT NULL')
+      .andWhere('userRequest.createdAt >= :startDate', { startDate })
+      .andWhere('userRequest.createdAt <= :endDate', { endDate })
+      .getCount();
+
+    // Процент ответов админа
+    const adminReplyPercentage =
+      textMessagesToAdmin > 0
+        ? Math.round((adminRepliedToMessages / textMessagesToAdmin) * 100)
+        : 0;
 
     // Кринж
     const cringeMemes = await this.cringePostRepository
@@ -241,11 +269,69 @@ export class YearResultsService {
         }
       : undefined;
 
+    // Среднее время от создания до модерации (в минутах)
+    const avgTimeToModerationResult = await this.userRequestRepository
+      .createQueryBuilder('userRequest')
+      .select(
+        'AVG(EXTRACT(EPOCH FROM (userRequest.moderatedAt - userRequest.createdAt)) / 60)',
+        'avgMinutes'
+      )
+      .where('userRequest.moderatedAt IS NOT NULL')
+      .andWhere('userRequest.createdAt >= :startDate', { startDate })
+      .andWhere('userRequest.createdAt <= :endDate', { endDate })
+      .getRawOne();
+
+    const averageTimeToModeration = avgTimeToModerationResult?.avgMinutes
+      ? Math.round(parseFloat(avgTimeToModerationResult.avgMinutes))
+      : undefined;
+
+    // Среднее время от модерации до публикации (в часах)
+    const avgTimeFromModerationResult = await this.userRequestRepository
+      .createQueryBuilder('userRequest')
+      .select(
+        'AVG(EXTRACT(EPOCH FROM (userRequest.publishedAt - userRequest.moderatedAt)) / 3600)',
+        'avgHours'
+      )
+      .where('userRequest.isPublished = true')
+      .andWhere('userRequest.moderatedAt IS NOT NULL')
+      .andWhere('userRequest.publishedAt IS NOT NULL')
+      .andWhere('userRequest.createdAt >= :startDate', { startDate })
+      .andWhere('userRequest.createdAt <= :endDate', { endDate })
+      .getRawOne();
+
+    const averageTimeFromModerationToPublication = avgTimeFromModerationResult?.avgHours
+      ? Math.round(parseFloat(avgTimeFromModerationResult.avgHours))
+      : undefined;
+
+    // Самая длинная очередь на публикацию
+    const longestQueueResult = await this.postSchedulerRepository
+      .createQueryBuilder('scheduler')
+      .select('DATE(scheduler.publishDate)', 'date')
+      .addSelect('COUNT(*)', 'queue_length')
+      .where('scheduler.createdAt >= :startDate', { startDate })
+      .andWhere('scheduler.createdAt <= :endDate', { endDate })
+      .andWhere('scheduler.isUserPost = true')
+      .groupBy('DATE(scheduler.publishDate)')
+      .orderBy('queue_length', 'DESC')
+      .limit(1)
+      .getRawOne();
+
+    const longestQueueDate = longestQueueResult?.date
+      ? new Date(longestQueueResult.date)
+      : undefined;
+    const longestQueueLength = longestQueueResult?.queue_length
+      ? parseInt(longestQueueResult.queue_length)
+      : undefined;
+
     return {
+      totalModeratedMessages,
       totalMemes,
       memesFromUsers,
       memesFromObservatory,
       totalProposedByUsers,
+      textMessagesToAdmin,
+      adminRepliedToMessages,
+      adminReplyPercentage,
       cringeMemes,
       duplicatesFound,
       year,
@@ -259,6 +345,10 @@ export class YearResultsService {
       leastActiveMonthCount,
       mostPopularPublicationMode,
       duplicatesPercentage,
+      averageTimeToModeration,
+      averageTimeFromModerationToPublication,
+      longestQueueDate,
+      longestQueueLength,
       topDuplicateUser,
     };
   }
@@ -589,6 +679,23 @@ export class YearResultsService {
       text += `. `;
     }
 
+    // Текстовые сообщения админу
+    if (general.textMessagesToAdmin > 0) {
+      text += `Админу ${general.textMessagesToAdmin === 1 ? 'написали' : 'написали'} <b>${
+        general.textMessagesToAdmin
+      }</b> ${this.getTimesWord(general.textMessagesToAdmin)}`;
+
+      if (general.adminRepliedToMessages > 0) {
+        text += `, на <b>${general.adminRepliedToMessages}</b> ${
+          general.adminRepliedToMessages === 1
+            ? 'обращение'
+            : this.getAppealWord(general.adminRepliedToMessages)
+        } админ дал ответ (<b>${general.adminReplyPercentage}%</b>)`;
+      }
+
+      text += `. `;
+    }
+
     // Количество авторов
     if (general.totalAuthors > 0) {
       text += `<b>${general.totalAuthors}</b> ${this.getAuthorsWord(general.totalAuthors)} ${
@@ -679,6 +786,66 @@ export class YearResultsService {
       text += `.`;
     }
 
+    // Общее количество через модерацию (перед временными метриками)
+    if (general.totalModeratedMessages > 0) {
+      text += `\n\nЧерез модерацию прошло <b>${
+        general.totalModeratedMessages
+      }</b> ${this.getPostsWord(
+        general.totalModeratedMessages
+      )} — ваших обращений, предложенных постов и постов обсерватории.`;
+    }
+
+    // Добавляем статистику по времени модерации и публикации
+    if (
+      general.averageTimeToModeration !== undefined ||
+      general.averageTimeFromModerationToPublication !== undefined
+    ) {
+      text += `\n\n`;
+
+      if (general.averageTimeToModeration !== undefined) {
+        const minutes = general.averageTimeToModeration;
+        if (minutes < 60) {
+          text += `В среднем админ принимал решение публиковать или нет за <b>${minutes}</b> ${this.getMinutesWord(
+            minutes
+          )}. `;
+        } else {
+          const hours = Math.round(minutes / 60);
+          text += `В среднем админ принимал решение публиковать или нет за <b>${hours}</b> ${this.getHoursWord(
+            hours
+          )}. `;
+        }
+      }
+
+      if (general.averageTimeFromModerationToPublication !== undefined) {
+        const hours = general.averageTimeFromModerationToPublication;
+        if (hours < 24) {
+          text += `От момента принятия решения до публикации в среднем проходило <b>${hours}</b> ${this.getHoursWord(
+            hours
+          )}.`;
+        } else {
+          const days = Math.floor(hours / 24);
+          const remainingHours = hours % 24;
+          text += `От момента принятия решения до публикации в среднем проходило <b>${days}</b> ${this.getDaysWord(
+            days
+          )}`;
+          if (remainingHours > 0) {
+            text += ` и <b>${remainingHours}</b> ${this.getHoursWord(remainingHours)}`;
+          }
+          text += `.`;
+        }
+      }
+
+      // Самая длинная очередь
+      if (general.longestQueueDate && general.longestQueueLength) {
+        const queueDate = format(new Date(general.longestQueueDate), 'd MMMM', { locale: ru });
+        text += ` Самая длинная очередь на публикацию была <b>${queueDate}</b> — <b>${
+          general.longestQueueLength
+        }</b> ${this.getPostsWord(general.longestQueueLength)} ${
+          general.longestQueueLength === 1 ? 'ожидал' : 'ожидали'
+        } своей очереди.`;
+      }
+    }
+
     // Добавляем обезличенные данные о лидерах
     if (users.length > 0) {
       text += `\n`;
@@ -740,9 +907,14 @@ export class YearResultsService {
           persistent.user.totalPublished === 1 ? 'публикуется' : 'публикуются'
         }, но он не сдаётся и продолжает!`;
       }
+
+      // Информация о персональных итогах
+      text += `\n\n<b>${users.length}</b> ${
+        users.length === 1 ? 'человеку были' : 'людям были'
+      } отправлены персональные итоги года через бота`;
     }
 
-    text += `\n\n Спасибо вам, что провели этот год с мемами! Без вас этот год был бы гораздо хуже ❤️\n\n`;
+    text += `\n\nСпасибо вам, что провели этот год с мемами! Без вас этот год был бы гораздо хуже ❤️\n\n`;
     text += `#итоги_года`;
 
     return text;
@@ -1169,6 +1341,28 @@ export class YearResultsService {
   }
 
   /**
+   * Возвращает правильное склонение слова "минута"
+   */
+  private getMinutesWord(count: number): string {
+    const lastDigit = count % 10;
+    const lastTwoDigits = count % 100;
+
+    if (lastTwoDigits >= 11 && lastTwoDigits <= 19) {
+      return 'минут';
+    }
+
+    if (lastDigit === 1) {
+      return 'минуту';
+    }
+
+    if (lastDigit >= 2 && lastDigit <= 4) {
+      return 'минуты';
+    }
+
+    return 'минут';
+  }
+
+  /**
    * Возвращает правильное склонение слова "автор"
    */
   private getAuthorsWord(count: number): string {
@@ -1188,5 +1382,49 @@ export class YearResultsService {
     }
 
     return 'авторов';
+  }
+
+  /**
+   * Возвращает правильное склонение слова "раз"
+   */
+  private getTimesWord(count: number): string {
+    const lastDigit = count % 10;
+    const lastTwoDigits = count % 100;
+
+    if (lastTwoDigits >= 11 && lastTwoDigits <= 19) {
+      return 'раз';
+    }
+
+    if (lastDigit === 1) {
+      return 'раз';
+    }
+
+    if (lastDigit >= 2 && lastDigit <= 4) {
+      return 'раза';
+    }
+
+    return 'раз';
+  }
+
+  /**
+   * Возвращает правильное склонение слова "обращение"
+   */
+  private getAppealWord(count: number): string {
+    const lastDigit = count % 10;
+    const lastTwoDigits = count % 100;
+
+    if (lastTwoDigits >= 11 && lastTwoDigits <= 19) {
+      return 'обращений';
+    }
+
+    if (lastDigit === 1) {
+      return 'обращение';
+    }
+
+    if (lastDigit >= 2 && lastDigit <= 4) {
+      return 'обращения';
+    }
+
+    return 'обращений';
   }
 }
