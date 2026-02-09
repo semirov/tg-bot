@@ -11,6 +11,8 @@
   },
   "private": true,
   "dependencies": {
+    "@aws-sdk/client-s3": "3.985.0",
+    "@aws-sdk/lib-storage": "3.985.0",
     "@grammyjs/conversations": "1.2.0",
     "@grammyjs/menu": "1.2.1",
     "@grammyjs/runner": "2.0.3",

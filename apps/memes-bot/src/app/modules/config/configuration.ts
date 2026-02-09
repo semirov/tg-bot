@@ -4,6 +4,7 @@ export default () => ({
   BOT_TOKEN: process.env.BOT_TOKEN,
   BOT_OWNER_ID: process.env.BOT_OWNER_ID,
   MANAGED_CHANNEL: process.env.MANAGED_CHANNEL,
+  BEST_MANAGED_CHANNEL: process.env.BEST_MANAGED_CHANNEL,
   USER_REQUEST_CHANNEL: process.env.USER_REQUEST_CHANNEL,
   OBSERVER_CHANNEL: process.env.USER_REQUEST_CHANNEL,
   CRINGE_CHANNEL: process.env.CRINGE_CHANNEL,
@@ -14,5 +15,10 @@ export default () => ({
   DATABASE_NAME: process.env.DATABASE_NAME,
   APP_API_ID: process.env.APP_API_ID,
   APP_API_HASH: process.env.APP_API_HASH,
-  TG_ENV: process.env.TG_ENV || 'prod'
+  TG_ENV: process.env.TG_ENV || 'prod',
+  S3_ENDPOINT: process.env.S3_ENDPOINT,
+  S3_REGION: process.env.S3_REGION || 'ru-central1',
+  S3_BUCKET: process.env.S3_BUCKET,
+  S3_ACCESS_KEY_ID: process.env.S3_ACCESS_KEY_ID,
+  S3_SECRET_ACCESS_KEY: process.env.S3_SECRET_ACCESS_KEY,
 });
