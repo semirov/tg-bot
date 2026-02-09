@@ -8,6 +8,7 @@ import { conversations } from '@grammyjs/conversations';
 import { Logger } from '@nestjs/common';
 import { NextFunction } from 'grammy/out/composer';
 import { run, sequentialize } from '@grammyjs/runner';
+import { ChannelPostMiddleware } from '../../s3/middleware/channel-post.middleware';
 
 export const BOT = 'APP_BOT_TOKEN';
 
@@ -21,7 +22,8 @@ export const BOT_PROVIDER = {
   useFactory: async (
     config: BaseConfigService,
     configMiddleware: BotConfigMiddleware,
-    sessionManagerService: SessionManagerService
+    sessionManagerService: SessionManagerService,
+    channelPostMiddleware: ChannelPostMiddleware
   ) => {
     const bot = new Bot(config.botToken, { client: { environment: config.tgEnv } });
 
@@ -48,6 +50,9 @@ export const BOT_PROVIDER = {
     );
 
     bot.use(configMiddleware.configMiddleware());
+
+    // Добавляем middleware для обработки постов из каналов
+    bot.use(channelPostMiddleware.middleware());
 
     bot.use(async (ctx: BotContext, next) => {
       if (ctx.config?.user?.isBanned) {
@@ -82,5 +87,5 @@ export const BOT_PROVIDER = {
 
     return bot;
   },
-  inject: [BaseConfigService, BotConfigMiddleware, SessionManagerService],
+  inject: [BaseConfigService, BotConfigMiddleware, SessionManagerService, ChannelPostMiddleware],
 };

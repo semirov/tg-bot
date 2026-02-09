@@ -1,28 +1,30 @@
+import { HttpModule } from '@nestjs/axios';
 import { Module } from '@nestjs/common';
-import { BOT_PROVIDER } from './providers/bot.provider';
-import { AppConfigModule } from '../config/app-config.module';
-import { BotConfigMiddleware } from './providers/bot-config.middleware';
-import { SessionManagerService } from './session/session-manager.service';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import { SessionEntity } from './session/session.entity';
-import { UserService } from './services/user.service';
-import { UserEntity } from './entities/user.entity';
-import { UserRequestEntity } from './entities/user-request.entity';
-import { UserRequestService } from './services/user-request.service';
-import { PostSchedulerEntity } from './entities/post-scheduler.entity';
-import { PostSchedulerService } from './services/post-scheduler.service';
-import { SettingsService } from './services/settings.service';
-import { SettingsEntity } from './entities/settings.entity';
+import { AppConfigModule } from '../config/app-config.module';
+import { S3Module } from '../s3/s3.module';
 import { CringePostEntity } from './entities/cringe-post.entity';
+import { PostSchedulerEntity } from './entities/post-scheduler.entity';
+import { PublishedPostHashesEntity } from './entities/published-post-hashes.entity';
+import { SettingsEntity } from './entities/settings.entity';
+import { UserRequestEntity } from './entities/user-request.entity';
+import { UserEntity } from './entities/user.entity';
+import { BotConfigMiddleware } from './providers/bot-config.middleware';
+import { BOT_PROVIDER } from './providers/bot.provider';
 import { CringeManagementService } from './services/cringe-management.service';
 import { DeduplicationService } from './services/deduplication.service';
-import { HttpModule } from '@nestjs/axios';
-import { PublishedPostHashesEntity } from './entities/published-post-hashes.entity';
+import { PostSchedulerService } from './services/post-scheduler.service';
+import { SettingsService } from './services/settings.service';
+import { UserRequestService } from './services/user-request.service';
+import { UserService } from './services/user.service';
+import { SessionManagerService } from './session/session-manager.service';
+import { SessionEntity } from './session/session.entity';
 
 @Module({
   imports: [
     AppConfigModule,
     HttpModule,
+    S3Module,
     TypeOrmModule.forFeature([
       SessionEntity,
       UserEntity,
