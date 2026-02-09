@@ -1,4 +1,4 @@
-FROM node:18 as builder
+FROM node:20 as builder
 # Choose a workdir
 WORKDIR /usr/src/app
 COPY nx.json .
@@ -14,7 +14,7 @@ RUN npm run build:memes-bot
 
 RUN npm prune --production
 
-FROM node:18-alpine
+FROM node:20-alpine
 ENV NODE_ENV=production
 
 WORKDIR /usr/memes-bot

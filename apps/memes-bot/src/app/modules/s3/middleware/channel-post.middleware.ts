@@ -11,9 +11,17 @@ export class ChannelPostMiddleware {
 
   middleware() {
     return async (ctx: Context, next: NextFunction) => {
+      // Логируем все события для отладки
+      if (ctx.channelPost) {
+        this.logger.log(
+          `Channel post received from chat ${ctx.channelPost.chat.id}, has photo: ${!!ctx
+            .channelPost.photo}`
+        );
+      }
+
       // Обрабатываем только посты из каналов с фото
       if (ctx.channelPost && ctx.channelPost.photo) {
-        this.logger.log(`Received channel post from chat ${ctx.channelPost.chat.id}`);
+        this.logger.log(`Processing channel post from chat ${ctx.channelPost.chat.id}`);
         await this.memeUploadService.handleChannelPost(ctx);
       }
 
