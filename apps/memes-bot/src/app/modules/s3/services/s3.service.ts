@@ -16,16 +16,32 @@ export class S3Service {
   private readonly bucket: string;
 
   constructor(private configService: BaseConfigService) {
-    this.bucket = this.configService.s3Bucket;
+    try {
+      this.bucket = this.configService.s3Bucket;
 
-    this.s3Client = new S3Client({
-      endpoint: this.configService.s3Endpoint,
-      region: this.configService.s3Region,
-      credentials: {
-        accessKeyId: this.configService.s3AccessKeyId,
-        secretAccessKey: this.configService.s3SecretAccessKey,
-      },
-    });
+      this.logger.log('Initializing S3 client...');
+      this.logger.log(`S3 Endpoint: ${this.configService.s3Endpoint}`);
+      this.logger.log(`S3 Region: ${this.configService.s3Region}`);
+      this.logger.log(`S3 Bucket: ${this.bucket}`);
+
+      this.s3Client = new S3Client({
+        endpoint: this.configService.s3Endpoint,
+        region: this.configService.s3Region,
+        credentials: {
+          accessKeyId: this.configService.s3AccessKeyId,
+          secretAccessKey: this.configService.s3SecretAccessKey,
+        },
+      });
+
+      this.logger.log('S3 client initialized successfully');
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error(`Failed to initialize S3 client: ${errorMessage}`);
+      this.logger.error(
+        'Please check S3 environment variables: S3_ENDPOINT, S3_REGION, S3_BUCKET, S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY'
+      );
+      throw error;
+    }
   }
 
   /**
@@ -85,6 +101,8 @@ export class S3Service {
   async uploadLastMemeFromBuffer(imageBuffer: Buffer): Promise<void> {
     try {
       const key = 'last-meme/meme.img';
+      this.logger.log(`Starting upload to S3: ${key}, size: ${imageBuffer.length} bytes`);
+
       const command = new PutObjectCommand({
         Bucket: this.bucket,
         Key: key,
@@ -128,8 +146,13 @@ export class S3Service {
       throw new Error('Best memes array must contain 1 or 2 images');
     }
 
+    this.logger.log(`Starting upload of ${imageBuffers.length} best meme(s) to S3`);
+
     try {
       // Загружаем первый мем
+      this.logger.log(
+        `Uploading best meme 1/${imageBuffers.length}: best-meme/first.img, size: ${imageBuffers[0].length} bytes`
+      );
       const firstCommand = new PutObjectCommand({
         Bucket: this.bucket,
         Key: 'best-meme/first.img',
@@ -141,6 +164,9 @@ export class S3Service {
 
       // Если есть второй мем, загружаем его
       if (imageBuffers.length === 2) {
+        this.logger.log(
+          `Uploading best meme 2/2: best-meme/second.img, size: ${imageBuffers[1].length} bytes`
+        );
         const secondCommand = new PutObjectCommand({
           Bucket: this.bucket,
           Key: 'best-meme/second.img',
@@ -150,6 +176,8 @@ export class S3Service {
         await this.s3Client.send(secondCommand);
         this.logger.log(`Successfully uploaded image to best-meme/second.img`);
       }
+
+      this.logger.log(`Completed upload of ${imageBuffers.length} best meme(s)`);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       const errorStack = error instanceof Error ? error.stack : undefined;
