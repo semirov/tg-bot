@@ -21,4 +21,7 @@ export default () => ({
   S3_BUCKET: process.env.S3_BUCKET,
   S3_ACCESS_KEY_ID: process.env.S3_ACCESS_KEY_ID,
   S3_SECRET_ACCESS_KEY: process.env.S3_SECRET_ACCESS_KEY,
+  MONITOR_BOT_TOKEN: process.env.MONITOR_BOT_TOKEN,
+  MONITOR_MAIN_CHANNEL: process.env.MANAGED_CHANNEL,
+  MONITOR_BEST_CHANNEL: process.env.BEST_MANAGED_CHANNEL,
 });

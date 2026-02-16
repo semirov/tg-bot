@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 
 import { ScheduleModule } from '@nestjs/schedule';
+import { ThrottlerModule } from '@nestjs/throttler';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AppService } from './app.service';
 import { BotModule } from './modules/bot/bot.module';
@@ -11,6 +12,8 @@ import { SettingsEntity } from './modules/bot/entities/settings.entity';
 import { UserRequestEntity } from './modules/bot/entities/user-request.entity';
 import { UserEntity } from './modules/bot/entities/user.entity';
 import { SessionEntity } from './modules/bot/session/session.entity';
+import { ChannelMonitorModule } from './modules/channel-monitor/channel-monitor.module';
+import { ChannelMemeEntity } from './modules/channel-monitor/entities/channel-meme.entity';
 import { ClientModule } from './modules/client/client.module';
 import { ClientSessionEntity } from './modules/client/entities/client-session.entity';
 import { AppConfigModule } from './modules/config/app-config.module';
@@ -31,7 +34,14 @@ import { YearResultsModule } from './modules/year-results/year-results.module';
     AppConfigModule,
     BotModule,
     ObservatoryModule,
+    ChannelMonitorModule,
     ScheduleModule.forRoot(),
+    ThrottlerModule.forRoot([
+      {
+        ttl: 60000, // 60 секунд
+        limit: 10, // 10 запросов
+      },
+    ]),
     TypeOrmModule.forRootAsync({
       imports: [AppConfigModule],
       useFactory: (configService: BaseConfigService) => ({
@@ -54,6 +64,7 @@ import { YearResultsModule } from './modules/year-results/year-results.module';
           UserModeratedPostEntity,
           UserMessageModeratedPostEntity,
           YearResultEntity,
+          ChannelMemeEntity,
         ],
         synchronize: true,
         extra: configService.useSSL
