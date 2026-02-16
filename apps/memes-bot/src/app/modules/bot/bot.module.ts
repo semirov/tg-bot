@@ -2,7 +2,6 @@ import { HttpModule } from '@nestjs/axios';
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AppConfigModule } from '../config/app-config.module';
-import { S3Module } from '../s3/s3.module';
 import { CringePostEntity } from './entities/cringe-post.entity';
 import { PostSchedulerEntity } from './entities/post-scheduler.entity';
 import { PublishedPostHashesEntity } from './entities/published-post-hashes.entity';
@@ -24,7 +23,6 @@ import { SessionEntity } from './session/session.entity';
   imports: [
     AppConfigModule,
     HttpModule,
-    S3Module,
     TypeOrmModule.forFeature([
       SessionEntity,
       UserEntity,

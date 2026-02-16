@@ -5,7 +5,6 @@ import { Logger } from '@nestjs/common';
 import { Bot, BotError, GrammyError, HttpError, session } from 'grammy';
 import { NextFunction } from 'grammy/out/composer';
 import { BaseConfigService } from '../../config/base-config.service';
-import { ChannelPostMiddleware } from '../../s3/middleware/channel-post.middleware';
 import { BotContext, SessionDataInterface } from '../interfaces/bot-context.interface';
 import { SessionManagerService } from '../session/session-manager.service';
 import { BotConfigMiddleware } from './bot-config.middleware';
@@ -22,8 +21,7 @@ export const BOT_PROVIDER = {
   useFactory: async (
     config: BaseConfigService,
     configMiddleware: BotConfigMiddleware,
-    sessionManagerService: SessionManagerService,
-    channelPostMiddleware: ChannelPostMiddleware
+    sessionManagerService: SessionManagerService
   ) => {
     const bot = new Bot(config.botToken, { client: { environment: config.tgEnv } });
 
@@ -50,9 +48,6 @@ export const BOT_PROVIDER = {
     );
 
     bot.use(configMiddleware.configMiddleware());
-
-    // Добавляем middleware для обработки постов из каналов
-    bot.use(channelPostMiddleware.middleware());
 
     // Логирование всех обновлений для отладки
     bot.use(async (ctx, next) => {
@@ -98,5 +93,5 @@ export const BOT_PROVIDER = {
 
     return bot;
   },
-  inject: [BaseConfigService, BotConfigMiddleware, SessionManagerService, ChannelPostMiddleware],
+  inject: [BaseConfigService, BotConfigMiddleware, SessionManagerService],
 };

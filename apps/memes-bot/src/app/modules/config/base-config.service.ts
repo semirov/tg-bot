@@ -88,4 +88,16 @@ export class BaseConfigService {
   get s3SecretAccessKey(): string {
     return this.configService.getOrThrow<string>('S3_SECRET_ACCESS_KEY');
   }
+
+  get monitorBotToken(): string {
+    return this.configService.getOrThrow<string>('MONITOR_BOT_TOKEN');
+  }
+
+  get monitorMainChannel(): string {
+    return this.configService.getOrThrow<string>('MONITOR_MAIN_CHANNEL');
+  }
+
+  get monitorBestChannel(): string {
+    return this.configService.getOrThrow<string>('MONITOR_BEST_CHANNEL');
+  }
 }
