@@ -1,13 +1,13 @@
-import { Bot, BotError, GrammyError, HttpError, session } from 'grammy';
-import { BaseConfigService } from '../../config/base-config.service';
-import { BotConfigMiddleware } from './bot-config.middleware';
-import { TypeormAdapter } from '@grammyjs/storage-typeorm';
-import { SessionManagerService } from '../session/session-manager.service';
-import { BotContext, SessionDataInterface } from '../interfaces/bot-context.interface';
 import { conversations } from '@grammyjs/conversations';
-import { Logger } from '@nestjs/common';
-import { NextFunction } from 'grammy/out/composer';
 import { run, sequentialize } from '@grammyjs/runner';
+import { TypeormAdapter } from '@grammyjs/storage-typeorm';
+import { Logger } from '@nestjs/common';
+import { Bot, BotError, GrammyError, HttpError, session } from 'grammy';
+import { NextFunction } from 'grammy/out/composer';
+import { BaseConfigService } from '../../config/base-config.service';
+import { BotContext, SessionDataInterface } from '../interfaces/bot-context.interface';
+import { SessionManagerService } from '../session/session-manager.service';
+import { BotConfigMiddleware } from './bot-config.middleware';
 
 export const BOT = 'APP_BOT_TOKEN';
 
@@ -48,6 +48,17 @@ export const BOT_PROVIDER = {
     );
 
     bot.use(configMiddleware.configMiddleware());
+
+    // Логирование всех обновлений для отладки
+    bot.use(async (ctx, next) => {
+      if (ctx.channelPost) {
+        Logger.log(
+          `[BOT_PROVIDER] Received channel_post update from chat ${ctx.channelPost.chat.id}`,
+          'BotProvider'
+        );
+      }
+      await next();
+    });
 
     bot.use(async (ctx: BotContext, next) => {
       if (ctx.config?.user?.isBanned) {

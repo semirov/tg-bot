@@ -68,4 +68,24 @@ export class BaseConfigService {
   get tgEnv(): 'prod' | 'test' {
     return this.configService.getOrThrow<'prod' | 'test'>('TG_ENV');
   }
+
+  get s3Endpoint(): string {
+    return this.configService.getOrThrow<string>('S3_ENDPOINT');
+  }
+
+  get s3Region(): string {
+    return this.configService.getOrThrow<string>('S3_REGION');
+  }
+
+  get s3Bucket(): string {
+    return this.configService.getOrThrow<string>('S3_BUCKET');
+  }
+
+  get s3AccessKeyId(): string {
+    return this.configService.getOrThrow<string>('S3_ACCESS_KEY_ID');
+  }
+
+  get s3SecretAccessKey(): string {
+    return this.configService.getOrThrow<string>('S3_SECRET_ACCESS_KEY');
+  }
 }
