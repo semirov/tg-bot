@@ -34,13 +34,14 @@ export class ChannelMonitorBotService implements OnModuleInit {
 
       this.bot = new Bot(botToken, { client: { environment: this.configService.tgEnv } });
 
-      // Обработчик для постов из основного канала
+      // Обработчик для постов из каналов
       this.bot.on('channel_post:photo', async (ctx) => {
-        await this.handleChannelPost(ctx, 'main');
+        await this.handleChannelPost(ctx);
       });
 
       this.logger.log('Channel Monitor Bot initialized successfully');
-      this.logger.log(`Monitoring channels: ${this.mainChannelId}, ${this.bestChannelId}`);
+      this.logger.log(`Monitoring main channel: ${this.mainChannelId}`);
+      this.logger.log(`Monitoring best channel: ${this.bestChannelId}`);
     } catch (error) {
       this.logger.error('Failed to initialize bot:', error);
       throw error;
@@ -60,7 +61,7 @@ export class ChannelMonitorBotService implements OnModuleInit {
     }
   }
 
-  private async handleChannelPost(ctx: Context, channelType: 'main' | 'best') {
+  private async handleChannelPost(ctx: Context) {
     try {
       const message = ctx.channelPost;
 
@@ -70,12 +71,21 @@ export class ChannelMonitorBotService implements OnModuleInit {
 
       const chatId = message.chat.id.toString();
 
-      // Проверяем, что сообщение из нужного канала
-      if (channelType === 'main' && chatId !== this.mainChannelId) {
-        return;
-      }
+      this.logger.log(`Received photo from chat: ${chatId}`);
+      this.logger.log(`Main channel ID: ${this.mainChannelId}`);
+      this.logger.log(`Best channel ID: ${this.bestChannelId}`);
 
-      if (channelType === 'best' && chatId !== this.bestChannelId) {
+      // Определяем тип канала по chatId
+      let channelType: 'main' | 'best';
+      if (chatId === this.mainChannelId) {
+        channelType = 'main';
+        this.logger.log('Identified as MAIN channel');
+      } else if (chatId === this.bestChannelId) {
+        channelType = 'best';
+        this.logger.log('Identified as BEST channel');
+      } else {
+        this.logger.warn(`Received message from UNKNOWN channel: ${chatId}`);
+        this.logger.warn(`Expected main: ${this.mainChannelId} or best: ${this.bestChannelId}`);
         return;
       }
 
