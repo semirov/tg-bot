@@ -17,11 +17,14 @@ import { UserRequestService } from '../bot/services/user-request.service';
 import { UserService } from '../bot/services/user.service';
 import { ClientBaseService } from '../client/services/client-base.service';
 import { BaseConfigService } from '../config/base-config.service';
+import { MattermostService } from '../mattermost/mattermost.service';
 import { PostModerationMenusEnum } from './constants/post-moderation-menus.enum';
 import { PublicationModesEnum } from './constants/publication-modes.enum';
 
 @Injectable()
 export class UserPostManagementService implements OnModuleInit {
+  private readonly logger = new Logger(UserPostManagementService.name);
+
   constructor(
     @Inject(BOT) private bot: Bot<BotContext>,
     private baseConfigService: BaseConfigService,
@@ -31,7 +34,8 @@ export class UserPostManagementService implements OnModuleInit {
     private settingsService: SettingsService,
     private cringeManagementService: CringeManagementService,
     private deduplicationService: DeduplicationService,
-    private clientBaseService: ClientBaseService
+    private clientBaseService: ClientBaseService,
+    private mattermostService: MattermostService
   ) {}
 
   private moderatedPostMenu: Menu<BotContext>;
@@ -1229,6 +1233,65 @@ export class UserPostManagementService implements OnModuleInit {
       publishContext.hash,
       publishedMessage.message_id
     );
+  }
+
+  /**
+   * Отправляет пост в Mattermost параллельно с основной публикацией в Telegram.
+   */
+  private async sendToMattermost(requestChannelMessageId: number, caption: string): Promise<void> {
+    try {
+      const fileUrl = await this.getTelegramFileUrl(requestChannelMessageId);
+      await this.mattermostService.sendPostWithFile({
+        message: caption,
+        fileUrl,
+        fileName: `meme_${requestChannelMessageId}`,
+      });
+    } catch (error) {
+      this.logger.error('Failed to send to Mattermost:', error);
+    }
+  }
+
+  /**
+   * Получает прямую ссылку на файл из Telegram по ID сообщения в буферном канале.
+   * Использует grammy bot.api.forwardMessage для получения структуры сообщения с file_id.
+   */
+  private async getTelegramFileUrl(messageId: number): Promise<string | undefined> {
+    try {
+      const chatId = this.baseConfigService.userRequestMemeChannel;
+      const token = this.baseConfigService.botToken;
+
+      // Используем bot.api.forwardMessage чтобы получить структуру сообщения
+      // (возвращает Message с photo/video/document и file_id)
+      const forwarded = await this.bot.api.forwardMessage(chatId, chatId, messageId, {
+        disable_notification: true,
+      });
+
+      let fileId: string | undefined;
+
+      if (forwarded.photo) {
+        fileId = forwarded.photo[forwarded.photo.length - 1].file_id;
+      } else if (forwarded.video) {
+        fileId = forwarded.video.file_id;
+      } else if (forwarded.document) {
+        fileId = forwarded.document.file_id;
+      } else if (forwarded.animation) {
+        fileId = forwarded.animation.file_id;
+      }
+
+      if (!fileId) return undefined;
+
+      const file = await this.bot.api.getFile(fileId);
+      if (!file?.file_path) return undefined;
+
+      const tgEnv = this.baseConfigService.tgEnv;
+      if (tgEnv === 'test') {
+        return `https://api.telegram.org/file/bot${token}/test/${file.file_path}`;
+      }
+      return `https://api.telegram.org/file/bot${token}/${file.file_path}`;
+    } catch (error) {
+      this.logger.error('Failed to get Telegram file URL:', error);
+      return undefined;
+    }
   }
 
   private async publishNightCringeScheduled(

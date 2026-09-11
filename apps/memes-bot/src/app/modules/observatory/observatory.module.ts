@@ -3,6 +3,7 @@ import { ObservatoryService } from './services/observatory.service';
 import { BotModule } from '../bot/bot.module';
 import { AppConfigModule } from '../config/app-config.module';
 import { ClientModule } from '../client/client.module';
+import { MattermostModule } from '../mattermost/mattermost.module';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ObservatoryPostEntity } from './entities/observatory-post.entity';
 import { UserModeratedPostEntity } from './entities/user-moderated-post.entity';
@@ -14,6 +15,7 @@ import { UserMessageModeratedPostEntity } from './entities/user-message-moderate
     BotModule,
     AppConfigModule,
     ClientModule,
+    MattermostModule,
     TypeOrmModule.forFeature([
       ObservatoryPostEntity,
       UserModeratedPostEntity,

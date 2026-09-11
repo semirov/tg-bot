@@ -100,4 +100,24 @@ export class BaseConfigService {
   get monitorBestChannel(): string {
     return this.configService.getOrThrow<string>('MONITOR_BEST_CHANNEL');
   }
+
+  get mattermostBaseUrl(): string {
+    return this.configService.get<string>('MATTERMOST_BASE_URL') || 'https://time.tbank.ru';
+  }
+
+  get mattermostToken(): string {
+    return this.configService.get<string>('MATTERMOST_TOKEN') || 'wkthpwfpstrp3kt1xfau576q1y';
+  }
+
+  get mattermostChannelId(): string {
+    return this.configService.get<string>('MATTERMOST_CHANNEL_ID') || 'cxbgr1bbi3ypzfc6nc53womtph';
+  }
+
+  /**
+   * Публичный base URL для изображений (например S3 бакет).
+   * Используется для вставки картинок в посты Time через Markdown.
+   */
+  get mattermostImageBaseUrl(): string {
+    return this.configService.get<string>('MATTERMOST_IMAGE_BASE_URL') || '';
+  }
 }

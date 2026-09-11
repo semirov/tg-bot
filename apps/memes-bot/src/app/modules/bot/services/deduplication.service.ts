@@ -30,17 +30,32 @@ export class DeduplicationService {
     if (!hash) {
       return [];
     }
-    const result = await this.publishedPostHashesEntity.query(
-      `
-        SELECT hash, "memeChannelMessageId", SIMILARITY(hash, $1) distance
-        from published_post_hashes_entity
-        where hash is not null
-          and "createdAt" >= now() - INTERVAL '365 DAYS'
-        ORDER BY distance DESC LIMIT 1
-      `,
-      [hash]
-    );
-    return result.map((res) => ({ memePostId: res.memeChannelMessageId, distance: res.distance }));
+
+    try {
+      const result = await this.publishedPostHashesEntity.query(
+        `
+          SELECT hash, "memeChannelMessageId", SIMILARITY(hash, $1) distance
+          from published_post_hashes_entity
+          where hash is not null
+            and "createdAt" >= now() - INTERVAL '365 DAYS'
+          ORDER BY distance DESC LIMIT 1
+        `,
+        [hash]
+      );
+      return result.map((res) => ({
+        memePostId: res.memeChannelMessageId,
+        distance: res.distance,
+      }));
+    } catch (error) {
+      // Функция SIMILARITY может быть недоступна, если расширение pg_trgm не установлено
+      if (error.message?.includes('similarity') || error.message?.includes('SIMILARITY')) {
+        this.logger.warn(
+          'PostgreSQL SIMILARITY function not available (pg_trgm extension missing). Deduplication check skipped.'
+        );
+        return [];
+      }
+      throw error;
+    }
   }
 
   public async createPublishedPostHash(hash: string, memeChannelMessageId: number): Promise<void> {
@@ -82,7 +97,8 @@ export class DeduplicationService {
       }
 
       // Выбираем подходящий размер фото
-      const minSizedFile = photo.find((file) => file.height > 300 && file.height < 800) || photo[photo.length - 1];
+      const minSizedFile =
+        photo.find((file) => file.height > 300 && file.height < 800) || photo[photo.length - 1];
 
       if (!minSizedFile) {
         this.logger.warn('Cannot find suitable photo size for hashing');
@@ -128,8 +144,8 @@ export class DeduplicationService {
               this.httpService.get(alternativeUrl, {
                 responseType: 'arraybuffer',
                 headers: {
-                  'User-Agent': 'TelegramBot (like TwitterBot)'
-                }
+                  'User-Agent': 'TelegramBot (like TwitterBot)',
+                },
               })
             );
             return await imghash.hash(alternativeResponse.data, 16);
@@ -138,7 +154,10 @@ export class DeduplicationService {
             return null;
           }
         } catch (alternativeError) {
-          this.logger.error(`Alternative method also failed: ${alternativeError.message}`, alternativeError.stack);
+          this.logger.error(
+            `Alternative method also failed: ${alternativeError.message}`,
+            alternativeError.stack
+          );
           return null;
         }
       }
