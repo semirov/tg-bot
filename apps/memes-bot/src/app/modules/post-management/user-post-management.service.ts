@@ -18,6 +18,7 @@ import { UserService } from '../bot/services/user.service';
 import { ClientBaseService } from '../client/services/client-base.service';
 import { BaseConfigService } from '../config/base-config.service';
 import { MattermostService } from '../mattermost/mattermost.service';
+import { TrollService } from '../troll/services/troll.service';
 import { PostModerationMenusEnum } from './constants/post-moderation-menus.enum';
 import { PublicationModesEnum } from './constants/publication-modes.enum';
 
@@ -35,7 +36,8 @@ export class UserPostManagementService implements OnModuleInit {
     private cringeManagementService: CringeManagementService,
     private deduplicationService: DeduplicationService,
     private clientBaseService: ClientBaseService,
-    private mattermostService: MattermostService
+    private mattermostService: MattermostService,
+    private trollService: TrollService
   ) {}
 
   private moderatedPostMenu: Menu<BotContext>;
@@ -1233,6 +1235,9 @@ export class UserPostManagementService implements OnModuleInit {
       publishContext.hash,
       publishedMessage.message_id
     );
+
+    // Редко сообщаем активным чатам о новом меме (не блокирует публикацию).
+    void this.trollService.maybeAnnounceMeme(publishContext.caption);
   }
 
   /**

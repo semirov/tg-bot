@@ -120,4 +120,49 @@ export class BaseConfigService {
   get mattermostImageBaseUrl(): string {
     return this.configService.get<string>('MATTERMOST_IMAGE_BASE_URL') || '';
   }
+
+  get deepseekApiKey(): string {
+    return (
+      this.configService.get<string>('DEEPSEEK_API_KEY') || 'sk-105e8bed3b134e63ae767d805bdb3d07'
+    );
+  }
+
+  get deepseekBaseUrl(): string {
+    return this.configService.get<string>('DEEPSEEK_BASE_URL') || 'https://api.deepseek.com';
+  }
+
+  get deepseekModel(): string {
+    return this.configService.get<string>('DEEPSEEK_MODEL') || 'deepseek-chat';
+  }
+
+  /** Вероятность язвительного подкола в ответ на обычное сообщение (0..1). */
+  get trollSarcasmChance(): number {
+    return this.getNumber('TROLL_SARCASM_CHANCE', 0.05);
+  }
+
+  /** Вероятность сообщения в чат при публикации мема в канал (0..1). */
+  get trollMemeAnnounceChance(): number {
+    return this.getNumber('TROLL_MEME_ANNOUNCE_CHANCE', 0.1);
+  }
+
+  /** Порог вероятности, при котором бот описывает статью УК РФ (0..1). */
+  get trollCriminalThreshold(): number {
+    return this.getNumber('TROLL_CRIMINAL_THRESHOLD', 0.5);
+  }
+
+  /** Час начала дневного времени (МСК) для публикации мемных сообщений в чат. */
+  get trollDaytimeStart(): number {
+    return this.getNumber('TROLL_DAYTIME_START', 9);
+  }
+
+  /** Час окончания дневного времени (МСК). */
+  get trollDaytimeEnd(): number {
+    return this.getNumber('TROLL_DAYTIME_END', 21);
+  }
+
+  private getNumber(key: string, fallback: number): number {
+    const raw = this.configService.get<string>(key);
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) ? parsed : fallback;
+  }
 }

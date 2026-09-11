@@ -29,6 +29,8 @@ import { S3Module } from './modules/s3/s3.module';
 import { YearResultEntity } from './modules/year-results/entities/year-result.entity';
 import { YearResultsModule } from './modules/year-results/year-results.module';
 import { MattermostModule } from './modules/mattermost/mattermost.module';
+import { TrollChatEntity } from './modules/troll/entities/troll-chat.entity';
+import { TrollModule } from './modules/troll/troll.module';
 
 @Module({
   imports: [
@@ -66,6 +68,7 @@ import { MattermostModule } from './modules/mattermost/mattermost.module';
           UserMessageModeratedPostEntity,
           YearResultEntity,
           ChannelMemeEntity,
+          TrollChatEntity,
         ],
         synchronize: true,
         extra: configService.useSSL
@@ -85,6 +88,7 @@ import { MattermostModule } from './modules/mattermost/mattermost.module';
     YearResultsModule,
     S3Module,
     MattermostModule,
+    TrollModule,
   ],
   controllers: [],
   providers: [AppService],

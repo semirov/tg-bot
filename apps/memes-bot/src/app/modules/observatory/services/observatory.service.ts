@@ -23,6 +23,7 @@ import { CringeManagementService } from '../../bot/services/cringe-management.se
 import { DeduplicationService } from '../../bot/services/deduplication.service';
 import { UserModeratedPostService } from './user-moderated-post.service';
 import { MattermostService } from '../../mattermost/mattermost.service';
+import { TrollService } from '../../troll/services/troll.service';
 
 @Injectable()
 export class ObservatoryService implements OnModuleInit {
@@ -40,7 +41,8 @@ export class ObservatoryService implements OnModuleInit {
     private cringeManagementService: CringeManagementService,
     private deduplicationService: DeduplicationService,
     private userModeratedPostService: UserModeratedPostService,
-    private mattermostService: MattermostService
+    private mattermostService: MattermostService,
+    private trollService: TrollService
   ) {}
 
   /**
@@ -238,6 +240,9 @@ export class ObservatoryService implements OnModuleInit {
       publishContext.hash,
       publishedMessage.message_id
     );
+
+    // Редко сообщаем активным чатам о новом меме (не блокирует публикацию).
+    void this.trollService.maybeAnnounceMeme(publishContext.caption);
   }
 
   /**
