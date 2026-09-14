@@ -20,6 +20,10 @@ export class TrollChatEntity {
   @Column('bigint', { nullable: true })
   addedByUserId: number;
 
+  /** Время последнего /sumarize в чате — для общего кулдауна (1 час). */
+  @Column('timestamp', { nullable: true })
+  lastSummaryAt: Date | null;
+
   @Column('timestamp', { default: 'NOW' })
   createdAt: Date;
 

@@ -1,5 +1,7 @@
 export enum AdminMenusEnum {
   ADMIN_START_MENU = 'ADMIN_START_MENU',
+  TROLL_SETTINGS_MENU = 'TROLL_SETTINGS_MENU',
+  TROLL_CHATS_MENU = 'TROLL_CHATS_MENU',
 }
 
 export enum ModeratorMenusEnum {

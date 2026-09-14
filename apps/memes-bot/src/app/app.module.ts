@@ -30,6 +30,9 @@ import { YearResultEntity } from './modules/year-results/entities/year-result.en
 import { YearResultsModule } from './modules/year-results/year-results.module';
 import { MattermostModule } from './modules/mattermost/mattermost.module';
 import { TrollChatEntity } from './modules/troll/entities/troll-chat.entity';
+import { TrollMessageEntity } from './modules/troll/entities/troll-message.entity';
+import { TrollPredictionEntity } from './modules/troll/entities/troll-prediction.entity';
+import { TrollSettingsEntity } from './modules/troll/entities/troll-settings.entity';
 import { TrollModule } from './modules/troll/troll.module';
 
 @Module({
@@ -69,6 +72,9 @@ import { TrollModule } from './modules/troll/troll.module';
           YearResultEntity,
           ChannelMemeEntity,
           TrollChatEntity,
+          TrollSettingsEntity,
+          TrollMessageEntity,
+          TrollPredictionEntity,
         ],
         synchronize: true,
         extra: configService.useSSL

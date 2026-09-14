@@ -140,6 +140,31 @@ export class BaseConfigService {
     return this.getNumber('TROLL_SARCASM_CHANCE', 0.05);
   }
 
+  /** Минимальная пауза между случайными подколами в одном чате, сек. */
+  get trollSarcasmCooldown(): number {
+    return this.getNumber('TROLL_SARCASM_COOLDOWN', 300);
+  }
+
+  /** Вероятность кривляния (переделывания слова) в ответ на сообщение (0..1). */
+  get trollMirrorChance(): number {
+    return this.getNumber('TROLL_MIRROR_CHANCE', 0.05);
+  }
+
+  /** Минимальная пауза между кривляниями в одном чате, сек. */
+  get trollMirrorCooldown(): number {
+    return this.getNumber('TROLL_MIRROR_COOLDOWN', 300);
+  }
+
+  /** Вероятность реакции-эмодзи (🤡/💩) на сообщение (0..1). */
+  get trollReactionChance(): number {
+    return this.getNumber('TROLL_REACTION_CHANCE', 0.05);
+  }
+
+  /** Минимальная пауза между реакциями в одном чате, сек. */
+  get trollReactionCooldown(): number {
+    return this.getNumber('TROLL_REACTION_COOLDOWN', 60);
+  }
+
   /** Вероятность сообщения в чат при публикации мема в канал (0..1). */
   get trollMemeAnnounceChance(): number {
     return this.getNumber('TROLL_MEME_ANNOUNCE_CHANCE', 0.1);
@@ -150,6 +175,11 @@ export class BaseConfigService {
     return this.getNumber('TROLL_CRIMINAL_THRESHOLD', 0.5);
   }
 
+  /** Порог «почти наверняка» для статьи УК РФ (0..1). */
+  get trollCriminalHighThreshold(): number {
+    return this.getNumber('TROLL_CRIMINAL_HIGH_THRESHOLD', 0.8);
+  }
+
   /** Час начала дневного времени (МСК) для публикации мемных сообщений в чат. */
   get trollDaytimeStart(): number {
     return this.getNumber('TROLL_DAYTIME_START', 9);
@@ -158,6 +188,26 @@ export class BaseConfigService {
   /** Час окончания дневного времени (МСК). */
   get trollDaytimeEnd(): number {
     return this.getNumber('TROLL_DAYTIME_END', 21);
+  }
+
+  /** Минимальная пауза между проверками по УК РФ в одном чате, сек. */
+  get trollAnalyzeCooldown(): number {
+    return this.getNumber('TROLL_ANALYZE_COOLDOWN', 15);
+  }
+
+  /** Окно накопления обращений к боту перед общим ответом, сек (дебаунс). */
+  get trollJerkBatchWindow(): number {
+    return this.getNumber('TROLL_JERK_BATCH_WINDOW', 15);
+  }
+
+  /** Глобальный лимит запросов к DeepSeek в сутки. */
+  get trollDailyRequestLimit(): number {
+    return this.getNumber('TROLL_DAILY_REQUEST_LIMIT', 2000);
+  }
+
+  /** Максимальная длина пользовательского текста для модели. */
+  get trollMaxInputChars(): number {
+    return this.getNumber('TROLL_MAX_INPUT_CHARS', 500);
   }
 
   private getNumber(key: string, fallback: number): number {

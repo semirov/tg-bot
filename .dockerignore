@@ -1,0 +1,11 @@
+node_modules
+dist
+tmp
+.git
+.idea
+.vscode
+*.env
+.server-creds
+.test-token
+postgress_backup.*
+coverage

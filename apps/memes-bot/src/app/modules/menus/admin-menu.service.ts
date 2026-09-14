@@ -1,5 +1,5 @@
 import { Conversation, createConversation } from '@grammyjs/conversations';
-import { Menu, MenuRange } from '@grammyjs/menu';
+import { Menu, MenuFlavor, MenuRange } from '@grammyjs/menu';
 import { Inject, Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { add, format, getUnixTime, set } from 'date-fns';
 import { utcToZonedTime } from 'date-fns-tz';
@@ -15,6 +15,9 @@ import { SchedulerCommonService } from '../common/scheduler-common.service';
 import { BaseConfigService } from '../config/base-config.service';
 import { ConversationsEnum } from '../post-management/constants/conversations.enum';
 import { PublicationModesEnum } from '../post-management/constants/publication-modes.enum';
+import { DeepSeekService } from '../troll/services/deepseek.service';
+import { TrollSettingsService } from '../troll/services/troll-settings.service';
+import { TrollService } from '../troll/services/troll.service';
 import { YearResultsService } from '../year-results/services/year-results.service';
 import { AdminMenusEnum } from './constants/bot-menus.enum';
 
@@ -26,8 +29,40 @@ export class AdminMenuService implements OnModuleInit {
     private baseConfigService: BaseConfigService,
     private clientBaseService: ClientBaseService,
     private postSchedulerService: PostSchedulerService,
-    private yearResultsService: YearResultsService
+    private yearResultsService: YearResultsService,
+    private trollService: TrollService,
+    private trollSettings: TrollSettingsService,
+    private deepSeek: DeepSeekService
   ) {}
+
+  /** Пропускает действие только для владельца; остальным пишет отказ. */
+  private ownerGuard(handler: (ctx: BotContext & MenuFlavor) => Promise<void> | void) {
+    return async (ctx: BotContext & MenuFlavor): Promise<void> => {
+      if (!ctx.config?.isOwner) {
+        try {
+          await ctx.answerCallbackQuery('Доступно только владельцу');
+        } catch {
+          // callback уже мог быть отвечён
+        }
+        return;
+      }
+      await handler(ctx);
+    };
+  }
+
+  /** Следующее значение из списка пресетов (по кругу). */
+  private cycle(value: number, presets: number[]): number {
+    const exact = presets.findIndex((preset) => Math.abs(preset - value) < 1e-9);
+    if (exact !== -1) {
+      return presets[(exact + 1) % presets.length];
+    }
+    const nearest = presets.reduce(
+      (best, preset) => (Math.abs(preset - value) < Math.abs(best - value) ? preset : best),
+      presets[0]
+    );
+    const index = presets.indexOf(nearest);
+    return presets[(index + 1) % presets.length];
+  }
 
   onModuleInit() {
     this.bot.errorBoundary(
@@ -75,6 +110,11 @@ export class AdminMenuService implements OnModuleInit {
       .text('Управление лимитом мемов', (ctx) => ctx.menu.nav('meme-limit-control'))
       .row()
       .text('Управление лимитом мемов', (ctx) => ctx.menu.nav('meme-limit-control'))
+      .row()
+      .text(
+        '🤖 Тролль-бот',
+        this.ownerGuard((ctx) => ctx.menu.nav(AdminMenusEnum.TROLL_SETTINGS_MENU))
+      )
       .row()
       .text('Сетка публикаций', async (ctx) => this.showPublicationGrid(ctx))
       .row()
@@ -262,11 +302,310 @@ export class AdminMenuService implements OnModuleInit {
       .row()
       .back('Назад');
 
+    const current = () => this.trollSettings.current;
+    const pct = (value: number) => `${Math.round(value * 100)}%`;
+    const formatDuration = (sec: number): string => {
+      if (sec <= 0) return 'без паузы';
+      if (sec < 60) return `${sec} с`;
+      if (sec < 3600) return `${Math.round(sec / 60)} мин`;
+      return `${Math.round(sec / 3600)} ч`;
+    };
+
+    const thresholdPresets = [0.3, 0.4, 0.5, 0.6, 0.7];
+    const highThresholdPresets = [0.7, 0.8, 0.9];
+    const analyzeCooldownPresets = [0, 5, 10, 15, 30, 60];
+    const sarcasmChancePresets = [0.01, 0.03, 0.05, 0.1, 0.15, 0.2];
+    const sarcasmCooldownPresets = [0, 60, 300, 600, 1800, 3600];
+    const mirrorChancePresets = [0.01, 0.03, 0.05, 0.1, 0.15, 0.2];
+    const mirrorCooldownPresets = [0, 60, 300, 600, 1800, 3600];
+    const reactionChancePresets = [0.01, 0.03, 0.05, 0.1, 0.15, 0.2];
+    const reactionCooldownPresets = [0, 60, 300, 600, 1800, 3600];
+    const jerkWindowPresets = [0, 10, 15, 30, 60, 120];
+    const memeChancePresets = [0.05, 0.1, 0.2, 0.3, 0.5];
+    const daytimeStartPresets = [6, 7, 8, 9, 10, 11, 12];
+    const daytimeEndPresets = [18, 19, 20, 21, 22, 23];
+    const dailyLimitPresets = [100, 200, 500, 1000, 2000, 5000, 10000];
+    const maxInputPresets = [200, 300, 500, 800, 1000];
+
+    const trollChatsMenu = new Menu<BotContext>(AdminMenusEnum.TROLL_CHATS_MENU).dynamic(
+      async () => {
+        const chats = (await this.trollService.getAllChats()).slice(0, 40);
+        const range = new MenuRange<BotContext>();
+        if (!chats.length) {
+          range.text(
+            'Чатов пока нет',
+            this.ownerGuard((ctx) => ctx.menu.nav(AdminMenusEnum.TROLL_SETTINGS_MENU))
+          );
+          return range;
+        }
+        for (const chat of chats) {
+          const title = (chat.title || String(chat.chatId)).slice(0, 30);
+          range
+            .text(
+              `${chat.isActive ? '🟢' : '⚪️'} ${title}`,
+              this.ownerGuard(async (ctx) => {
+                await this.trollService.setChatActive(chat.chatId, !chat.isActive);
+                ctx.menu.update();
+              })
+            )
+            .row();
+        }
+        range.back('Назад');
+        return range;
+      }
+    );
+
+    const trollSettingsMenu = new Menu<BotContext>(AdminMenusEnum.TROLL_SETTINGS_MENU)
+      .text(
+        () => `Бот: ${current().enabled ? '🟢 включён' : '⚪️ выключен'}`,
+        this.ownerGuard(async (ctx) => {
+          await this.trollSettings.update({ enabled: !current().enabled });
+          ctx.menu.update();
+        })
+      )
+      .row()
+      .text(
+        () => `Проверка УК РФ: ${current().criminalEnabled ? '🟢 вкл' : '⚪️ выкл'}`,
+        this.ownerGuard(async (ctx) => {
+          await this.trollSettings.update({ criminalEnabled: !current().criminalEnabled });
+          ctx.menu.update();
+        })
+      )
+      .row()
+      .text(
+        () => `Порог статьи: ${pct(current().criminalThreshold)}`,
+        this.ownerGuard(async (ctx) => {
+          await this.trollSettings.update({
+            criminalThreshold: this.cycle(current().criminalThreshold, thresholdPresets),
+          });
+          ctx.menu.update();
+        })
+      )
+      .row()
+      .text(
+        () => `«Почти наверняка»: ${pct(current().criminalHighThreshold)}`,
+        this.ownerGuard(async (ctx) => {
+          await this.trollSettings.update({
+            criminalHighThreshold: this.cycle(
+              current().criminalHighThreshold,
+              highThresholdPresets
+            ),
+          });
+          ctx.menu.update();
+        })
+      )
+      .row()
+      .text(
+        () => `Пауза анализа УК: ${formatDuration(current().analyzeCooldownSec)}`,
+        this.ownerGuard(async (ctx) => {
+          await this.trollSettings.update({
+            analyzeCooldownSec: this.cycle(current().analyzeCooldownSec, analyzeCooldownPresets),
+          });
+          ctx.menu.update();
+        })
+      )
+      .row()
+      .text(
+        () => `Сарказм: ${current().sarcasmEnabled ? '🟢 вкл' : '⚪️ выкл'}`,
+        this.ownerGuard(async (ctx) => {
+          await this.trollSettings.update({ sarcasmEnabled: !current().sarcasmEnabled });
+          ctx.menu.update();
+        })
+      )
+      .row()
+      .text(
+        () => `Шанс сарказма: ${pct(current().sarcasmChance)}`,
+        this.ownerGuard(async (ctx) => {
+          await this.trollSettings.update({
+            sarcasmChance: this.cycle(current().sarcasmChance, sarcasmChancePresets),
+          });
+          ctx.menu.update();
+        })
+      )
+      .row()
+      .text(
+        () => `Пауза сарказма: ${formatDuration(current().sarcasmCooldownSec)}`,
+        this.ownerGuard(async (ctx) => {
+          await this.trollSettings.update({
+            sarcasmCooldownSec: this.cycle(current().sarcasmCooldownSec, sarcasmCooldownPresets),
+          });
+          ctx.menu.update();
+        })
+      )
+      .row()
+      .text(
+        () => `Кривляния: ${current().mirrorEnabled ? '🟢 вкл' : '⚪️ выкл'}`,
+        this.ownerGuard(async (ctx) => {
+          await this.trollSettings.update({ mirrorEnabled: !current().mirrorEnabled });
+          ctx.menu.update();
+        })
+      )
+      .row()
+      .text(
+        () => `Шанс кривляния: ${pct(current().mirrorChance)}`,
+        this.ownerGuard(async (ctx) => {
+          await this.trollSettings.update({
+            mirrorChance: this.cycle(current().mirrorChance, mirrorChancePresets),
+          });
+          ctx.menu.update();
+        })
+      )
+      .row()
+      .text(
+        () => `Пауза кривляния: ${formatDuration(current().mirrorCooldownSec)}`,
+        this.ownerGuard(async (ctx) => {
+          await this.trollSettings.update({
+            mirrorCooldownSec: this.cycle(current().mirrorCooldownSec, mirrorCooldownPresets),
+          });
+          ctx.menu.update();
+        })
+      )
+      .row()
+      .text(
+        () => `Реакции 🤡/💩: ${current().reactionEnabled ? '🟢 вкл' : '⚪️ выкл'}`,
+        this.ownerGuard(async (ctx) => {
+          await this.trollSettings.update({ reactionEnabled: !current().reactionEnabled });
+          ctx.menu.update();
+        })
+      )
+      .row()
+      .text(
+        () => `Шанс реакции: ${pct(current().reactionChance)}`,
+        this.ownerGuard(async (ctx) => {
+          await this.trollSettings.update({
+            reactionChance: this.cycle(current().reactionChance, reactionChancePresets),
+          });
+          ctx.menu.update();
+        })
+      )
+      .row()
+      .text(
+        () => `Пауза реакции: ${formatDuration(current().reactionCooldownSec)}`,
+        this.ownerGuard(async (ctx) => {
+          await this.trollSettings.update({
+            reactionCooldownSec: this.cycle(current().reactionCooldownSec, reactionCooldownPresets),
+          });
+          ctx.menu.update();
+        })
+      )
+      .row()
+      .text(
+        () => `Ответы на обращения: ${current().jerkEnabled ? '🟢 вкл' : '⚪️ выкл'}`,
+        this.ownerGuard(async (ctx) => {
+          await this.trollSettings.update({ jerkEnabled: !current().jerkEnabled });
+          ctx.menu.update();
+        })
+      )
+      .row()
+      .text(
+        () => `Реакция на клички/мат: ${current().addressReactionEnabled ? '🟢 вкл' : '⚪️ выкл'}`,
+        this.ownerGuard(async (ctx) => {
+          await this.trollSettings.update({
+            addressReactionEnabled: !current().addressReactionEnabled,
+          });
+          ctx.menu.update();
+        })
+      )
+      .row()
+      .text(
+        () => `Пауза перед ответом: ${formatDuration(current().jerkBatchWindowSec)}`,
+        this.ownerGuard(async (ctx) => {
+          await this.trollSettings.update({
+            jerkBatchWindowSec: this.cycle(current().jerkBatchWindowSec, jerkWindowPresets),
+          });
+          ctx.menu.update();
+        })
+      )
+      .row()
+      .text(
+        () => `Анонсы мемов: ${current().memeAnnounceEnabled ? '🟢 вкл' : '⚪️ выкл'}`,
+        this.ownerGuard(async (ctx) => {
+          await this.trollSettings.update({ memeAnnounceEnabled: !current().memeAnnounceEnabled });
+          ctx.menu.update();
+        })
+      )
+      .row()
+      .text(
+        () => `Шанс анонса мема: ${pct(current().memeAnnounceChance)}`,
+        this.ownerGuard(async (ctx) => {
+          await this.trollSettings.update({
+            memeAnnounceChance: this.cycle(current().memeAnnounceChance, memeChancePresets),
+          });
+          ctx.menu.update();
+        })
+      )
+      .row()
+      .text(
+        () => `День с ${current().daytimeStart}:00 МСК`,
+        this.ownerGuard(async (ctx) => {
+          await this.trollSettings.update({
+            daytimeStart: this.cycle(current().daytimeStart, daytimeStartPresets),
+          });
+          ctx.menu.update();
+        })
+      )
+      .row()
+      .text(
+        () => `День до ${current().daytimeEnd}:00 МСК`,
+        this.ownerGuard(async (ctx) => {
+          await this.trollSettings.update({
+            daytimeEnd: this.cycle(current().daytimeEnd, daytimeEndPresets),
+          });
+          ctx.menu.update();
+        })
+      )
+      .row()
+      .text(
+        () => `Лимит запросов/сутки: ${current().dailyRequestLimit}`,
+        this.ownerGuard(async (ctx) => {
+          await this.trollSettings.update({
+            dailyRequestLimit: this.cycle(current().dailyRequestLimit, dailyLimitPresets),
+          });
+          ctx.menu.update();
+        })
+      )
+      .row()
+      .text(
+        () => `Макс. длина входа: ${current().maxInputChars}`,
+        this.ownerGuard(async (ctx) => {
+          await this.trollSettings.update({
+            maxInputChars: this.cycle(current().maxInputChars, maxInputPresets),
+          });
+          ctx.menu.update();
+        })
+      )
+      .row()
+      .text(
+        () => `📊 Запросов к DeepSeek сегодня: ${this.deepSeek.usage.requests}`,
+        this.ownerGuard(async (ctx) => {
+          await ctx.answerCallbackQuery('Обновлено');
+        })
+      )
+      .row()
+      .text(
+        '💬 Чаты бота',
+        this.ownerGuard((ctx) => ctx.menu.nav(AdminMenusEnum.TROLL_CHATS_MENU))
+      )
+      .row()
+      .text(
+        '♻️ Сбросить настройки',
+        this.ownerGuard(async (ctx) => {
+          await this.trollSettings.reset();
+          await ctx.answerCallbackQuery('Настройки сброшены');
+          ctx.menu.update();
+        })
+      )
+      .row()
+      .back('Назад');
+
+    trollSettingsMenu.register(trollChatsMenu);
+
     menu.register(moderatorsListMenu);
     menu.register(moderatorSettingMenu);
     menu.register(memeLimitControlMenu);
     menu.register(memeLimitSelectUserMenu);
     menu.register(memeLimitOptionsMenu);
+    menu.register(trollSettingsMenu);
 
     return menu;
   }
