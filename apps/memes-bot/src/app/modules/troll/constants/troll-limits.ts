@@ -16,9 +16,6 @@ export const TROLL_MAX_CONCURRENT_REQUESTS = 4;
 /** Потолок длины ответа-подкола (сарказм/«мудак»), символов. */
 export const TROLL_MAX_REPLY_CHARS = 400;
 
-/** Потолок длины анонса мема, символов. */
-export const TROLL_MAX_MEME_ANNOUNCE_CHARS = 300;
-
 /** Потолок длины пояснения в ответе про статью УК РФ, символов. */
 export const TROLL_MAX_CRIMINAL_REASON_CHARS = 600;
 

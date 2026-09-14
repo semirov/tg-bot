@@ -241,8 +241,11 @@ export class ObservatoryService implements OnModuleInit {
       publishedMessage.message_id
     );
 
-    // Редко сообщаем активным чатам о новом меме (не блокирует публикацию).
-    void this.trollService.maybeAnnounceMeme(publishContext.caption);
+    // Иногда репостим новый мем в активные чаты (не блокирует публикацию).
+    void this.trollService.maybeRepostMeme(
+      this.baseConfigService.memeChanelId,
+      publishedMessage.message_id
+    );
   }
 
   /**

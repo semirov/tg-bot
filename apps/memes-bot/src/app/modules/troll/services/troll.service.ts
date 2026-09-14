@@ -21,7 +21,6 @@ import {
   TROLL_MAX_BATCH_MESSAGES,
   TROLL_MAX_CRIMINAL_REASON_CHARS,
   TROLL_MAX_CRIMINAL_TITLE_CHARS,
-  TROLL_MAX_MEME_ANNOUNCE_CHARS,
   TROLL_MAX_REPLY_CHARS,
   TROLL_MEME_COOLDOWN_SEC,
   TROLL_MEME_MAX_ATTEMPTS,
@@ -44,7 +43,6 @@ import {
   FUTURE_BAD_PROMPT,
   FUTURE_GOOD_PROMPT,
   JERK_PROMPT,
-  MEME_ANNOUNCE_PROMPT,
   MEME_DENY_PROMPT,
   MIRROR_PROMPT,
   SARCASM_PROMPT,
@@ -237,62 +235,54 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
 
   /**
    * Вызывается после публикации мема в основной канал.
-   * В дневное время с низкой вероятностью бот может написать в активные чаты.
+   * В дневное время с заданной вероятностью бот **репостит** пост в активные чаты.
    */
-  public async maybeAnnounceMeme(caption?: string): Promise<void> {
+  public async maybeRepostMeme(channelId: number, messageId: number): Promise<void> {
     try {
       const s = this.settings.current;
       if (!s.enabled || !s.memeAnnounceEnabled) {
-        this.logger.debug('Анонс мема: пропуск — анонсы выключены');
+        this.logger.debug('Репост мема: пропуск — репосты выключены');
         return;
       }
 
       if (!this.isDaytime(s)) {
         this.logger.debug(
-          `Анонс мема: пропуск — не дневное время (МСК ${this.currentMoscowHour()}, окно ${s.daytimeStart}–${s.daytimeEnd})`
+          `Репост мема: пропуск — не дневное время (МСК ${this.currentMoscowHour()}, окно ${s.daytimeStart}–${s.daytimeEnd})`
         );
         return;
       }
 
       if (Math.random() >= s.memeAnnounceChance) {
         this.logger.debug(
-          `Анонс мема: пропуск — не повезло (шанс ${this.pct(s.memeAnnounceChance)})`
+          `Репост мема: пропуск — не повезло (шанс ${this.pct(s.memeAnnounceChance)})`
         );
         return;
       }
 
       const chats = await this.chats.find({ where: { isActive: true } });
       if (!chats.length) {
-        this.logger.debug('Анонс мема: нет активных чатов');
+        this.logger.debug('Репост мема: нет активных чатов');
         return;
       }
 
-      this.logger.log(`Анонс мема: генерирую реплику для ${chats.length} чат(ов)`);
+      this.logger.log(`Репост мема: рассылаю в ${chats.length} чат(ов)`);
 
-      const source = caption?.trim() ? `Подпись к мему: ${caption.trim()}` : 'В канале только что вышел новый мем.';
-      const cleaned = sanitizeUserInput(source, s.maxInputChars);
-
-      const text = await this.deepSeek.completeText(
-        MEME_ANNOUNCE_PROMPT,
-        wrapUserContent(cleaned),
-        { maxTokens: 120, temperature: 1.0 }
-      );
-
-      const safe = toChatStyle(sanitizeModelText(text ?? '', TROLL_MAX_MEME_ANNOUNCE_CHARS));
-      if (!safe) {
-        this.logger.warn('Анонс мема: пустой ответ модели — не отправляю');
-        return;
-      }
-
+      let sent = 0;
       for (const chat of chats) {
         const chatId = Number(chat.chatId);
-        await this.safeSendToChat(chatId, safe);
-        await this.remember(chatId, 'assistant', safe);
+        try {
+          await this.repostMeme(chatId, String(channelId), messageId);
+          sent += 1;
+        } catch (error) {
+          this.logger.warn(
+            `${this.tag(chatId)}: репост мема не удался — ${this.describeError(error)}`
+          );
+        }
       }
 
-      this.logger.log(`Анонс мема: отправлено в ${chats.length} чат(ов)`);
+      this.logger.log(`Репост мема: отправлено в ${sent}/${chats.length} чат(ов)`);
     } catch (error) {
-      this.logger.error('Failed to announce meme', error);
+      this.logger.error('Failed to repost meme', error);
     }
   }
 
