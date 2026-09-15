@@ -66,7 +66,7 @@ export class TrollSettingsEntity {
   @Column('int', { default: 180 })
   jerkCooldownSec: number;
 
-  @Column('int', { default: 60 })
+  @Column('int', { default: 15 })
   dialogPauseMin: number;
 
   @Column('int', { default: 15 })
@@ -75,7 +75,7 @@ export class TrollSettingsEntity {
   @Column('int', { default: 2000 })
   dailyRequestLimit: number;
 
-  @Column('int', { default: 500 })
+  @Column('int', { default: 1000 })
   maxInputChars: number;
 
   @UpdateDateColumn({ type: 'timestamp' })

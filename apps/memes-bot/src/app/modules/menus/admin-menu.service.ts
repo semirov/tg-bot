@@ -15,6 +15,7 @@ import { SchedulerCommonService } from '../common/scheduler-common.service';
 import { BaseConfigService } from '../config/base-config.service';
 import { ConversationsEnum } from '../post-management/constants/conversations.enum';
 import { PublicationModesEnum } from '../post-management/constants/publication-modes.enum';
+import { formatUsd } from '../troll/constants/deepseek-pricing';
 import { DeepSeekService } from '../troll/services/deepseek.service';
 import { TrollSettingsService } from '../troll/services/troll-settings.service';
 import { TrollService } from '../troll/services/troll.service';
@@ -322,10 +323,10 @@ export class AdminMenuService implements OnModuleInit {
     const reactionCooldownPresets = [0, 60, 300, 600, 1800, 3600];
     const jerkWindowPresets = [0, 10, 15, 30, 60, 120];
     const jerkCooldownPresets = [0, 30, 60, 120, 180, 300, 600];
-    const dialogPausePresets = [15, 30, 60, 120, 360, 720];
+    const dialogPausePresets = [5, 10, 15, 30, 60, 120, 360];
     const memeChancePresets = [0.05, 0.1, 0.2, 0.3, 0.5];
     const dailyLimitPresets = [100, 200, 500, 1000, 2000, 5000, 10000];
-    const maxInputPresets = [200, 300, 500, 800, 1000];
+    const maxInputPresets = [500, 800, 1000, 1500, 2000, 3000];
 
     const trollChatsMenu = new Menu<BotContext>(AdminMenusEnum.TROLL_CHATS_MENU).dynamic(
       async () => {
@@ -576,7 +577,12 @@ export class AdminMenuService implements OnModuleInit {
       )
       .row()
       .text(
-        () => `📊 Запросов к DeepSeek сегодня: ${this.deepSeek.usage.requests}`,
+        () => {
+          const usage = this.deepSeek.usage;
+          return `📊 DeepSeek сегодня: ${usage.requests} запр., ${usage.tokens} ток., ≈ ${formatUsd(
+            usage.costUsd
+          )}${usage.peak ? ' (пик)' : ''}`;
+        },
         this.ownerGuard(async (ctx) => {
           await ctx.answerCallbackQuery('Обновлено');
         })

@@ -132,7 +132,43 @@ export class BaseConfigService {
   }
 
   get deepseekModel(): string {
-    return this.configService.get<string>('DEEPSEEK_MODEL') || 'deepseek-chat';
+    return this.configService.get<string>('DEEPSEEK_MODEL') || 'deepseek-flash';
+  }
+
+  /**
+   * Режим «размышлений» модели: none | minimal | low | medium | high | xhigh | max.
+   *
+   * По умолчанию выключен: deepseek-flash — reasoning-модель, и при коротких
+   * бюджетах (24–80 токенов на кривляние, отказ и предсказание) размышления
+   * съедают весь max_tokens, а ответ приходит пустым.
+   */
+  get deepseekReasoningEffort(): string {
+    return this.configService.get<string>('DEEPSEEK_REASONING_EFFORT') || 'none';
+  }
+
+  /**
+   * Старшая модель для аудита и живых проверок промптов (LLM-as-judge).
+   * Не используется в рантайме бота — только в оффлайн-прогонах промптов.
+   */
+  get deepseekJudgeModel(): string {
+    return this.configService.get<string>('DEEPSEEK_JUDGE_MODEL') || 'deepseek-v4-pro';
+  }
+
+  /**
+   * Опциональные переопределения тарифа DeepSeek, $ за 1M токенов.
+   * Нужны, чтобы обновить расценки без правки кода. Если заданы не все три —
+   * используется таблица из constants/deepseek-pricing.ts.
+   */
+  get deepseekPriceCacheHit(): number | undefined {
+    return this.getOptionalNumber('DEEPSEEK_PRICE_CACHE_HIT');
+  }
+
+  get deepseekPriceCacheMiss(): number | undefined {
+    return this.getOptionalNumber('DEEPSEEK_PRICE_CACHE_MISS');
+  }
+
+  get deepseekPriceOutput(): number | undefined {
+    return this.getOptionalNumber('DEEPSEEK_PRICE_OUTPUT');
   }
 
   /** Вероятность язвительного подкола в ответ на обычное сообщение (0..1). */
@@ -200,7 +236,7 @@ export class BaseConfigService {
    * Нужна, чтобы бот не продолжал нить, которую все уже забыли.
    */
   get trollDialogPauseMin(): number {
-    return this.getNumber('TROLL_DIALOG_PAUSE_MIN', 60);
+    return this.getNumber('TROLL_DIALOG_PAUSE_MIN', 15);
   }
 
   /** Минимальная пауза между проверками по УК РФ в одном чате, сек. */
@@ -211,12 +247,22 @@ export class BaseConfigService {
 
   /** Максимальная длина пользовательского текста для модели. */
   get trollMaxInputChars(): number {
-    return this.getNumber('TROLL_MAX_INPUT_CHARS', 500);
+    return this.getNumber('TROLL_MAX_INPUT_CHARS', 1000);
   }
 
   private getNumber(key: string, fallback: number): number {
     const raw = this.configService.get<string>(key);
     const parsed = Number(raw);
     return Number.isFinite(parsed) ? parsed : fallback;
+  }
+
+  /** Число из env, если оно там есть и корректно: иначе undefined (не 0). */
+  private getOptionalNumber(key: string): number | undefined {
+    const raw = this.configService.get<string>(key);
+    if (raw === undefined || raw === null || `${raw}`.trim() === '') {
+      return undefined;
+    }
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
   }
 }
