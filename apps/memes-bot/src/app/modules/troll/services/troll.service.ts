@@ -1501,7 +1501,8 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
     });
 
     const context = buildConversationContext(rows, {
-      gapMs: s.dialogPauseMin * 60 * 1000,
+      // Ноль или мусор в настройке не должен превращать в «паузу» каждый промежуток.
+      gapMs: Math.max(1, s.dialogPauseMin) * 60 * 1000,
       maxTurns: TROLL_CONTEXT_MAX_TURNS,
       maxChars: TROLL_CONTEXT_MAX_CHARS,
     });
