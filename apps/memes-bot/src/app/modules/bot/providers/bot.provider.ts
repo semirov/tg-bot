@@ -104,28 +104,38 @@ export const BOT_PROVIDER = {
     );
 
     await bot.use(conversations());
-    await bot.api.setMyCommands([
-      {
-        command: '/menu',
-        description: 'Показать основное меню бота',
-      },
-      {
-        command: 'stat',
-        description: 'Сколько лет тюрьмы наговорил чат за сутки',
-      },
-      {
-        command: 'future',
-        description: 'Предсказание на день (раз в 12 часов)',
-      },
-      {
-        command: 'meme',
-        description: 'Репост мема из канала (раз в час)',
-      },
-      {
-        command: 'sumarize',
-        description: 'О чём говорили в чате (раз в час)',
-      },
-    ]);
+
+    // Список команд — украшение: разовый сбой сети при старте не должен
+    // ронять приложение (иначе контейнер уходит в рестарт).
+    try {
+      await bot.api.setMyCommands([
+        {
+          command: '/menu',
+          description: 'Показать основное меню бота',
+        },
+        {
+          command: 'stat',
+          description: 'Сколько лет тюрьмы наговорил чат за сутки',
+        },
+        {
+          command: 'future',
+          description: 'Предсказание на день (раз в 12 часов)',
+        },
+        {
+          command: 'meme',
+          description: 'Репост мема из канала (раз в час)',
+        },
+        {
+          command: 'sumarize',
+          description: 'О чём говорили в чате (раз в час)',
+        },
+      ]);
+    } catch (error) {
+      Logger.warn(
+        `Не удалось обновить список команд: ${error instanceof Error ? error.message : String(error)}`,
+        'BotProvider'
+      );
+    }
 
     bot.errorBoundary((err: BotError, next: NextFunction) => {
       Logger.error(err.message, ['Bot'], err.error);
