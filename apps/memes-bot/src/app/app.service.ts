@@ -33,6 +33,11 @@ export class AppService implements OnModuleInit {
 
   private onMenuCommand() {
     this.bot.command('menu', async (ctx: CommandContext<BotContext>) => {
+      // Меню (в т.ч. админское) работает только в личке с ботом.
+      // В группах и каналах /menu не показываем даже владельцу.
+      if (ctx.chat?.type !== 'private') {
+        return;
+      }
       await ctx.reply('Выбери то, что хочешь сделать', {
         reply_markup: this.mainMenuService.getRoleBasedStartMenu(ctx),
       });
@@ -86,7 +91,13 @@ export class AppService implements OnModuleInit {
   }
 
   private onUserMessage() {
-    this.bot.on(['message'], async (ctx: BotContext) => {
+    this.bot.on(['message'], async (ctx: BotContext, next) => {
+      // Капча, проверка подписки и приём постов работают только в личке с ботом.
+      // В группах и каналах этот обработчик не должен ничего делать.
+      if (ctx.chat?.type !== 'private') {
+        return next();
+      }
+
       // Проверка на прохождение капчи
       if (!ctx.session.captchaSolved) {
         return this.sendCaptcha(ctx);

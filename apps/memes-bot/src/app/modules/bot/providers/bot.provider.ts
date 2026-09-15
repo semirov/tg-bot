@@ -11,6 +11,26 @@ import { BotConfigMiddleware } from './bot-config.middleware';
 
 export const BOT = 'APP_BOT_TOKEN';
 
+/**
+ * Ошибки Telegram 400, которые ничего не ломают (двойной клик по меню, гонка
+ * при редактировании сообщения, удалённое сообщение). Их пишем в debug, иначе
+ * они заливают лог стеками.
+ */
+const BENIGN_TELEGRAM_400 = [
+  /message is not modified/i,
+  /message to (edit|delete) not found/i,
+  /message can't be (edited|deleted)/i,
+  /query is too old/i,
+];
+
+function isBenignTelegramError(error: unknown): boolean {
+  return (
+    error instanceof GrammyError &&
+    error.error_code === 400 &&
+    BENIGN_TELEGRAM_400.some((pattern) => pattern.test(error.description))
+  );
+}
+
 const initialSessionData: SessionDataInterface = {
   anonymousPublishing: false,
   canBeModeratePosts: true,
@@ -28,6 +48,13 @@ export const BOT_PROVIDER = {
     bot.catch((err: BotError<BotContext>) => {
       const ctx = err.ctx;
       const e = err.error;
+      if (isBenignTelegramError(e)) {
+        Logger.debug(
+          `Ignored benign Telegram error while handling update ${ctx.update.update_id}: ${err.message}`,
+          'BotProvider'
+        );
+        return;
+      }
       Logger.error(`Error while handling update ${ctx.update.update_id}:`, e);
       if (e instanceof GrammyError) {
         Logger.error('Error in request:', e.description);
@@ -77,12 +104,38 @@ export const BOT_PROVIDER = {
     );
 
     await bot.use(conversations());
-    await bot.api.setMyCommands([
-      {
-        command: '/menu',
-        description: 'Показать основное меню бота',
-      },
-    ]);
+
+    // Список команд — украшение: разовый сбой сети при старте не должен
+    // ронять приложение (иначе контейнер уходит в рестарт).
+    try {
+      await bot.api.setMyCommands([
+        {
+          command: '/menu',
+          description: 'Показать основное меню бота',
+        },
+        {
+          command: 'stat',
+          description: 'Сколько лет тюрьмы наговорил чат за сутки',
+        },
+        {
+          command: 'future',
+          description: 'Предсказание на день (раз в 12 часов)',
+        },
+        {
+          command: 'meme',
+          description: 'Репост мема из канала (раз в час)',
+        },
+        {
+          command: 'sumarize',
+          description: 'О чём говорили в чате (раз в час)',
+        },
+      ]);
+    } catch (error) {
+      Logger.warn(
+        `Не удалось обновить список команд: ${error instanceof Error ? error.message : String(error)}`,
+        'BotProvider'
+      );
+    }
 
     bot.errorBoundary((err: BotError, next: NextFunction) => {
       Logger.error(err.message, ['Bot'], err.error);

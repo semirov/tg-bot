@@ -1,0 +1,67 @@
+import { isAddressedToBot, isCapabilityQuestion, isNamedCall } from './troll-addresses';
+
+describe('isAddressedToBot', () => {
+  it.each([
+    'бот, ты чё такой умный',
+    'ну ты и пидор',
+    'пес, иди сюда',
+    'ты хуесос',
+    'мудак какой-то',
+    'долбоёб, ты чё',
+    'ты кал',
+    'козлы, хватит',
+  ])('считает обращением: «%s»', (text) => {
+    expect(isAddressedToBot(text)).toBe(true);
+  });
+
+  it('НЕ считает обращением родовую матерщину — которой в чате ругаются просто так', () => {
+    expect(isAddressedToBot('да это же хуйня полная')).toBe(false);
+    expect(isAddressedToBot('какой-то ебаный интернет')).toBe(false);
+    expect(isAddressedToBot('говно полное, всё упало')).toBe(false);
+    expect(isAddressedToBot('опять срань какая-то')).toBe(false);
+    expect(isAddressedToBot('дерьмо, а не погода')).toBe(false);
+  });
+
+  it('не ловит обычные слова, в которых просто есть буквы ругательства', () => {
+    // «кал» был стемом и ловил кальян — из-за этого бот отвечал на каждую
+    // реплику про кальян и забивал чат.
+    expect(isAddressedToBot('мы вчера попробовали кальян на электронной чаше')).toBe(false);
+    expect(isAddressedToBot('считаю калории, готовлю к лету')).toBe(false);
+    expect(isAddressedToBot('купил новые калоши')).toBe(false);
+    expect(isAddressedToBot('принёс песок для кота')).toBe(false);
+    expect(isAddressedToBot('слушаю песню про кота')).toBe(false);
+    expect(isAddressedToBot('купила баранки к чаю')).toBe(false);
+    expect(isAddressedToBot('кончик провода сломался')).toBe(false);
+    expect(isAddressedToBot('кухня, тостер и муфельная печка')).toBe(false);
+  });
+
+  it('всё ещё ловит «кал», «баран» и «чмо» как отдельные слова', () => {
+    expect(isAddressedToBot('ты кал')).toBe(true);
+    expect(isAddressedToBot('ну ты баран')).toBe(true);
+    expect(isAddressedToBot('чмо')).toBe(true);
+    expect(isAddressedToBot('чмошник')).toBe(true);
+  });
+});
+
+describe('isNamedCall — прямые обращения по имени', () => {
+  it.each(['бот', 'робот', 'чатбот', 'ии', 'бот, скинь мем', 'а бот тут?'])(
+    'видит имя бота в «%s»',
+    (text) => {
+      expect(isNamedCall(text)).toBe(true);
+    }
+  );
+
+  it.each(['да это же хуйня полная', 'кальян на электронной чаше', 'ты мудак', 'привет)'])(
+    'не считает прямым обращением: «%s»',
+    (text) => {
+      expect(isNamedCall(text)).toBe(false);
+    }
+  );
+});
+
+describe('isCapabilityQuestion', () => {
+  it('ловит вопрос о возможностях и не мешает остальному', () => {
+    expect(isCapabilityQuestion('что ты умеешь?')).toBe(true);
+    expect(isCapabilityQuestion('мы говорили про кальян')).toBe(false);
+  });
+});

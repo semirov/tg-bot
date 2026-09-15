@@ -1,4 +1,4 @@
-import { Inject, Injectable, OnModuleInit } from '@nestjs/common';
+import { Inject, Injectable, OnModuleInit, Logger } from '@nestjs/common';
 import { Menu } from '@grammyjs/menu';
 import { BotContext } from '../../bot/interfaces/bot-context.interface';
 import { UserPermissionEnum } from '../../bot/constants/user-permission.enum';
@@ -22,9 +22,13 @@ import { SettingsService } from '../../bot/services/settings.service';
 import { CringeManagementService } from '../../bot/services/cringe-management.service';
 import { DeduplicationService } from '../../bot/services/deduplication.service';
 import { UserModeratedPostService } from './user-moderated-post.service';
+import { MattermostService } from '../../mattermost/mattermost.service';
+import { TrollService } from '../../troll/services/troll.service';
 
 @Injectable()
 export class ObservatoryService implements OnModuleInit {
+  private readonly logger = new Logger(ObservatoryService.name);
+
   constructor(
     @Inject(BOT) private bot: Bot<BotContext>,
     private baseConfigService: BaseConfigService,
@@ -36,7 +40,9 @@ export class ObservatoryService implements OnModuleInit {
     private settingsService: SettingsService,
     private cringeManagementService: CringeManagementService,
     private deduplicationService: DeduplicationService,
-    private userModeratedPostService: UserModeratedPostService
+    private userModeratedPostService: UserModeratedPostService,
+    private mattermostService: MattermostService,
+    private trollService: TrollService
   ) {}
 
   /**
@@ -110,7 +116,9 @@ export class ObservatoryService implements OnModuleInit {
       .text('Кринж', async (ctx) => this.publishPost(ctx, PublicationModesEnum.NIGHT_CRINGE))
       .text('Сейчас', async (ctx) => this.publishPost(ctx, PublicationModesEnum.NOW_SILENT))
       .row()
-      .text('Ближайший слот', async (ctx) => this.publishPost(ctx, PublicationModesEnum.NEXT_INTERVAL))
+      .text('Ближайший слот', async (ctx) =>
+        this.publishPost(ctx, PublicationModesEnum.NEXT_INTERVAL)
+      )
       .row()
       .text('Ночью', async (ctx) => this.publishPost(ctx, PublicationModesEnum.NEXT_NIGHT))
       .text('Утром', async (ctx) => this.publishPost(ctx, PublicationModesEnum.NEXT_MORNING))
@@ -124,7 +132,9 @@ export class ObservatoryService implements OnModuleInit {
     })
       .text('Сейчас', async (ctx) => this.moderateViaUsers(ctx, PublicationModesEnum.NOW_SILENT))
       .row()
-      .text('Ближайший слот', async (ctx) => this.publishPost(ctx, PublicationModesEnum.NEXT_INTERVAL))
+      .text('Ближайший слот', async (ctx) =>
+        this.publishPost(ctx, PublicationModesEnum.NEXT_INTERVAL)
+      )
       .row()
       .text('Ночью', async (ctx) => this.moderateViaUsers(ctx, PublicationModesEnum.NEXT_NIGHT))
       .text('Утром', async (ctx) => this.moderateViaUsers(ctx, PublicationModesEnum.NEXT_MORNING))
@@ -230,6 +240,69 @@ export class ObservatoryService implements OnModuleInit {
       publishContext.hash,
       publishedMessage.message_id
     );
+
+    // Иногда репостим новый мем в активные чаты (не блокирует публикацию).
+    void this.trollService.maybeRepostMeme(
+      this.baseConfigService.memeChanelId,
+      publishedMessage.message_id
+    );
+  }
+
+  /**
+   * Отправляет пост в Mattermost параллельно с основной публикацией в Telegram.
+   */
+  private async sendToMattermost(requestChannelMessageId: number, caption: string): Promise<void> {
+    try {
+      const fileUrl = await this.getTelegramFileUrl(requestChannelMessageId);
+      await this.mattermostService.sendPostWithFile({
+        message: caption,
+        fileUrl,
+        fileName: `observatory_meme_${requestChannelMessageId}`,
+      });
+    } catch (error) {
+      this.logger.error('Failed to send to Mattermost:', error);
+    }
+  }
+
+  /**
+   * Получает прямую ссылку на файл из Telegram по ID сообщения в буферном канале.
+   * Использует grammy bot.api.forwardMessage для получения структуры сообщения с file_id.
+   */
+  private async getTelegramFileUrl(messageId: number): Promise<string | undefined> {
+    try {
+      const chatId = this.baseConfigService.userRequestMemeChannel;
+      const token = this.baseConfigService.botToken;
+
+      const forwarded = await this.bot.api.forwardMessage(chatId, chatId, messageId, {
+        disable_notification: true,
+      });
+
+      let fileId: string | undefined;
+
+      if (forwarded.photo) {
+        fileId = forwarded.photo[forwarded.photo.length - 1].file_id;
+      } else if (forwarded.video) {
+        fileId = forwarded.video.file_id;
+      } else if (forwarded.document) {
+        fileId = forwarded.document.file_id;
+      } else if (forwarded.animation) {
+        fileId = forwarded.animation.file_id;
+      }
+
+      if (!fileId) return undefined;
+
+      const file = await this.bot.api.getFile(fileId);
+      if (!file?.file_path) return undefined;
+
+      const tgEnv = this.baseConfigService.tgEnv;
+      if (tgEnv === 'test') {
+        return `https://api.telegram.org/file/bot${token}/test/${file.file_path}`;
+      }
+      return `https://api.telegram.org/file/bot${token}/${file.file_path}`;
+    } catch (error) {
+      this.logger.error('Failed to get Telegram file URL:', error);
+      return undefined;
+    }
   }
 
   private async publishNightCringeScheduled(

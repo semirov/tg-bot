@@ -28,6 +28,12 @@ import { PostManagementModule } from './modules/post-management/post-management.
 import { S3Module } from './modules/s3/s3.module';
 import { YearResultEntity } from './modules/year-results/entities/year-result.entity';
 import { YearResultsModule } from './modules/year-results/year-results.module';
+import { MattermostModule } from './modules/mattermost/mattermost.module';
+import { TrollChatEntity } from './modules/troll/entities/troll-chat.entity';
+import { TrollMessageEntity } from './modules/troll/entities/troll-message.entity';
+import { TrollPredictionEntity } from './modules/troll/entities/troll-prediction.entity';
+import { TrollSettingsEntity } from './modules/troll/entities/troll-settings.entity';
+import { TrollModule } from './modules/troll/troll.module';
 
 @Module({
   imports: [
@@ -65,6 +71,10 @@ import { YearResultsModule } from './modules/year-results/year-results.module';
           UserMessageModeratedPostEntity,
           YearResultEntity,
           ChannelMemeEntity,
+          TrollChatEntity,
+          TrollSettingsEntity,
+          TrollMessageEntity,
+          TrollPredictionEntity,
         ],
         synchronize: true,
         extra: configService.useSSL
@@ -83,6 +93,8 @@ import { YearResultsModule } from './modules/year-results/year-results.module';
     CronModule,
     YearResultsModule,
     S3Module,
+    MattermostModule,
+    TrollModule,
   ],
   controllers: [],
   providers: [AppService],

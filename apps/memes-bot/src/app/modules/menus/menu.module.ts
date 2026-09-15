@@ -3,13 +3,21 @@ import { BotModule } from '../bot/bot.module';
 import { ClientModule } from '../client/client.module';
 import { AppConfigModule } from '../config/app-config.module';
 import { PostManagementModule } from '../post-management/post-management.module';
+import { TrollModule } from '../troll/troll.module';
 import { YearResultsModule } from '../year-results/year-results.module';
 import { AdminMenuService } from './admin-menu.service';
 import { MainMenuService } from './main-menu.service';
 import { ModeratorMenuService } from './moderator-menu.service';
 
 @Module({
-  imports: [BotModule, PostManagementModule, AppConfigModule, ClientModule, YearResultsModule],
+  imports: [
+    BotModule,
+    PostManagementModule,
+    AppConfigModule,
+    ClientModule,
+    YearResultsModule,
+    TrollModule,
+  ],
   providers: [MainMenuService, AdminMenuService, ModeratorMenuService],
   exports: [MainMenuService],
 })
