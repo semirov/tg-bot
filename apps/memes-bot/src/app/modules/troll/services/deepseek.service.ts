@@ -38,6 +38,8 @@ export class DeepSeekService {
   private activeRequests = 0;
   /** Системные промпты, уже выведенные в лог (чтобы не дублировать их каждый раз). */
   private readonly loggedPrompts = new Set<string>();
+  /** Есть ли ключ DeepSeek: без него запросы отправлять бессмысленно. */
+  private readonly enabled: boolean;
   /** Счётчики за текущие сутки. */
   private dailyKey = this.todayKey();
   private dailyRequests = 0;
@@ -49,6 +51,13 @@ export class DeepSeekService {
     private readonly config: BaseConfigService,
     private readonly settings: TrollSettingsService
   ) {
+    this.enabled = !!this.config.deepseekApiKey;
+    if (!this.enabled) {
+      this.logger.error(
+        'DEEPSEEK_API_KEY не задан — тролль-бот не сможет обращаться к модели (LLM-ответы выключены)'
+      );
+    }
+
     this.client = axios.create({
       baseURL: this.config.deepseekBaseUrl,
       timeout: TROLL_LLM_TIMEOUT_MS,
@@ -68,6 +77,9 @@ export class DeepSeekService {
     options: DeepSeekOptions = {}
   ): Promise<string> {
     const { temperature = 0.9, maxTokens = 400, json = false } = options;
+    if (!this.enabled) {
+      return '';
+    }
     const cappedMaxTokens = Math.min(
       Math.max(1, Math.floor(maxTokens)),
       TROLL_HARD_MAX_TOKENS

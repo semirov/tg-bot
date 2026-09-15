@@ -121,10 +121,13 @@ export class BaseConfigService {
     return this.configService.get<string>('MATTERMOST_IMAGE_BASE_URL') || '';
   }
 
+  /**
+   * Ключ DeepSeek. Секретов в репозитории быть не должно, поэтому ключа-дефолта
+   * здесь нет: без переменной окружения LLM-функции тролля просто не работают
+   * (см. DeepSeekService — он честно скажет об этом в лог).
+   */
   get deepseekApiKey(): string {
-    return (
-      this.configService.get<string>('DEEPSEEK_API_KEY') || 'sk-105e8bed3b134e63ae767d805bdb3d07'
-    );
+    return this.configService.get<string>('DEEPSEEK_API_KEY') ?? '';
   }
 
   get deepseekBaseUrl(): string {
