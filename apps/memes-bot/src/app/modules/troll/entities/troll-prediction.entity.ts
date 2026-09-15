@@ -1,4 +1,4 @@
-import { Column, Entity, Index, PrimaryGeneratedColumn } from 'typeorm';
+import { Column, CreateDateColumn, Entity, Index, PrimaryGeneratedColumn } from 'typeorm';
 
 /**
  * Кэш предсказаний /future: одно предсказание на пользователя в чате
@@ -23,6 +23,6 @@ export class TrollPredictionEntity {
   @Column('int', { default: 1 })
   requests: number;
 
-  @Column('timestamp', { default: 'NOW' })
+  @CreateDateColumn({ type: 'timestamp' })
   createdAt: Date;
 }

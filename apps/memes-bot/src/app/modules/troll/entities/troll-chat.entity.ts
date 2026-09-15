@@ -1,4 +1,4 @@
-import { Column, Entity, PrimaryColumn } from 'typeorm';
+import { Column, CreateDateColumn, Entity, PrimaryColumn, UpdateDateColumn } from 'typeorm';
 
 /**
  * Чат (группа/супергруппа), в который был добавлен бот.
@@ -24,9 +24,9 @@ export class TrollChatEntity {
   @Column('timestamp', { nullable: true })
   lastSummaryAt: Date | null;
 
-  @Column('timestamp', { default: 'NOW' })
+  @CreateDateColumn({ type: 'timestamp' })
   createdAt: Date;
 
-  @Column('timestamp', { default: 'NOW', onUpdate: 'NOW' })
+  @UpdateDateColumn({ type: 'timestamp' })
   updatedAt: Date;
 }

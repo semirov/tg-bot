@@ -1,4 +1,4 @@
-import { Column, Entity, PrimaryColumn } from 'typeorm';
+import { Column, Entity, PrimaryColumn, UpdateDateColumn } from 'typeorm';
 
 /**
  * Настройки тролль-бота. Таблица-синглтон: всегда одна строка с id = 1.
@@ -63,12 +63,6 @@ export class TrollSettingsEntity {
   @Column('int', { default: 15 })
   jerkBatchWindowSec: number;
 
-  @Column('int', { default: 9 })
-  daytimeStart: number;
-
-  @Column('int', { default: 21 })
-  daytimeEnd: number;
-
   @Column('int', { default: 15 })
   analyzeCooldownSec: number;
 
@@ -78,6 +72,6 @@ export class TrollSettingsEntity {
   @Column('int', { default: 500 })
   maxInputChars: number;
 
-  @Column('timestamp', { default: 'NOW' })
+  @UpdateDateColumn({ type: 'timestamp' })
   updatedAt: Date;
 }

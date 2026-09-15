@@ -1,4 +1,4 @@
-import { Column, Entity, Index, PrimaryGeneratedColumn } from 'typeorm';
+import { Column, CreateDateColumn, Entity, Index, PrimaryGeneratedColumn } from 'typeorm';
 
 /**
  * Реплика истории переписки для контекста диалога.
@@ -31,6 +31,9 @@ export class TrollMessageEntity {
   @Column('text')
   content: string;
 
-  @Column('timestamp', { default: 'NOW' })
+  // Именно CreateDateColumn, а не `default: 'NOW'`: строка 'NOW' в DDL
+  // превращается Postgres'ом в константу времени создания таблицы, из-за чего
+  // у всех записей оказывалась одна и та же метка времени.
+  @CreateDateColumn({ type: 'timestamp' })
   createdAt: Date;
 }
