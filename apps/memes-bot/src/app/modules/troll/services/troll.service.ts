@@ -1,4 +1,5 @@
 import { Inject, Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { Cron, CronExpression } from '@nestjs/schedule';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Bot, InlineKeyboard } from 'grammy';
 import type { ReactionTypeEmoji, User } from 'grammy/types';
@@ -15,8 +16,6 @@ import {
   TROLL_FUTURE_COOLDOWN_HOURS,
   TROLL_FUTURE_GOOD_CHANCE,
   TROLL_FUTURE_MAX_CHARS,
-  TROLL_FUTURE_STORE_HOURS,
-  TROLL_HISTORY_CLEANUP_INTERVAL_MS,
   TROLL_HISTORY_MAX_CHARS,
   TROLL_HISTORY_TTL_HOURS,
   TROLL_JERK_MAX_TOKENS,
@@ -51,6 +50,7 @@ import {
   MIRROR_PROMPT,
   SARCASM_PROMPT,
   SUMMARY_PROMPT,
+  MESSAGE_REFS_RULE,
   TROLL_CAPABILITIES_REPLY,
   TROLL_FUTURE_TECHNIQUES,
   TROLL_MIRROR_INFIXES,
@@ -77,6 +77,7 @@ import {
   sanitizeModelField,
   sanitizeModelStyled,
   sanitizeModelText,
+  sanitizeTranscript,
   sanitizeUserInput,
   stripLinks,
   toChatStyle,
@@ -140,9 +141,6 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
   private readonly jerkBatches = new Map<number, JerkBatch>();
   /** Имена участников по чатам (chatId -> userId -> имя) — для возврата регистра. */
   private readonly chatNames = new Map<number, Map<number, string>>();
-
-  /** Таймер периодической чистки старой истории переписки. */
-  private historyCleanupTimer?: ReturnType<typeof setInterval>;
 
   constructor(
     @Inject(BOT) private readonly bot: Bot<BotContext>,
@@ -226,13 +224,9 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
       await next();
     });
 
-    // Чистим старую историю переписки (TTL) сразу и далее периодически.
+    // Вычищаем историю старше TTL один раз при старте (далее — по крону раз в час):
+    // беседу помним 24 часа целиком, но старое не копим, чтобы контекст не утонул.
     void this.cleanupHistory();
-    this.historyCleanupTimer = setInterval(
-      () => void this.cleanupHistory(),
-      TROLL_HISTORY_CLEANUP_INTERVAL_MS
-    );
-    this.historyCleanupTimer.unref?.();
   }
 
   public onModuleDestroy(): void {
@@ -241,9 +235,6 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
       clearInterval(batch.typingTimer);
     }
     this.jerkBatches.clear();
-    if (this.historyCleanupTimer) {
-      clearInterval(this.historyCleanupTimer);
-    }
   }
 
   /**
@@ -343,27 +334,39 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
     const mediaKind = this.describeMediaKind(ctx.message);
     const hasLink = containsLink(text) || this.messageHasLink(ctx.message);
 
-    this.logger.log(
-      `${this.tag(chat.id, ctx.from.id)}: сообщение (длина ${text.length}, подпись=${
-        ctx.message.text === undefined && content !== null
-      }, тип=${mediaKind ?? (hasLink ? 'ссылка' : 'текст')}, реплайБоту=${isReplyToBot}, упоминание=${isMention}, обращениеПоСлову=${isNameCall})`
-    );
-
     // Запоминаем реплику для контекста диалога (хранится ограниченное время).
     // Текст храним как текст, медиа — только пометкой типа, ссылки — без URL.
     const entry = this.buildHistoryEntry(text, mediaKind, hasLink, s.maxInputChars);
+
+    // Номер сообщения и то, на что отвечали: по ним видно связи в беседе.
+    const refs = this.describeMessageRefs(
+      ctx.message.message_id,
+      ctx.message.reply_to_message?.message_id
+    );
+    // Текст сообщения пишем в лог: без него поведение бота не разобрать.
+    this.logger.log(
+      `${this.tag(chat.id, ctx.from.id)}: сообщение${refs} (длина ${text.length}, подпись=${
+        ctx.message.text === undefined && content !== null
+      }, тип=${mediaKind ?? (hasLink ? 'ссылка' : 'текст')}, реплайБоту=${isReplyToBot}, упоминание=${isMention}, обращениеПоСлову=${isNameCall}) ${this.logText(entry ?? '')}`
+    );
+
     if (entry) {
       await this.remember(chat.id, 'user', entry, {
         userId: ctx.from?.id,
         userName: this.describeUser(ctx.from),
+        messageId: ctx.message?.message_id,
+        replyToMessageId: ctx.message?.reply_to_message?.message_id,
       });
     }
 
     // Вопрос «что ты умеешь» — рассказываем о себе и командах (без LLM).
     if (isCapabilityQuestion(content)) {
       this.logger.log(`${this.tag(chat.id, ctx.from.id)}: запрос возможностей — отвечаю списком команд`);
-      await this.safeReply(ctx, TROLL_CAPABILITIES_REPLY, false);
-      await this.remember(chat.id, 'assistant', TROLL_CAPABILITIES_REPLY);
+      const sentId = await this.safeReply(ctx, TROLL_CAPABILITIES_REPLY, false);
+      await this.remember(chat.id, 'assistant', TROLL_CAPABILITIES_REPLY, {
+        messageId: sentId ?? undefined,
+        replyToMessageId: ctx.message?.message_id,
+      });
       return;
     }
 
@@ -463,8 +466,11 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
       );
 
       const criminalReply = this.buildCriminalReply(assessment, probability, s);
-      await this.safeReply(ctx, criminalReply, true);
-      await this.remember(chatId, 'assistant', sanitizeModelText(criminalReply, TROLL_HISTORY_MAX_CHARS));
+      const sentId = await this.safeReply(ctx, criminalReply, true);
+      await this.remember(chatId, 'assistant', sanitizeModelText(criminalReply, TROLL_HISTORY_MAX_CHARS), {
+        messageId: sentId ?? undefined,
+        replyToMessageId: ctx.message?.message_id,
+      });
     } finally {
       this.analyzingChats.delete(chatId);
     }
@@ -615,8 +621,11 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
       return;
     }
 
-    await this.safeSendToChat(chatId, safe, batch.replyToMessageId);
-    await this.remember(chatId, 'assistant', safe);
+    const sentId = await this.safeSendToChat(chatId, safe, batch.replyToMessageId);
+    await this.remember(chatId, 'assistant', safe, {
+      messageId: sentId ?? undefined,
+      replyToMessageId: batch.replyToMessageId,
+    });
     this.lastJerkAnswerAt.set(chatId, Date.now());
     this.logger.log(`${this.tag(chatId)}: ответ отправлен`);
   }
@@ -727,7 +736,7 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
     this.lastStatAt.set(statKey, Date.now());
 
     const since = new Date(Date.now() - TROLL_HISTORY_TTL_HOURS * 60 * 60 * 1000);
-    // Самые свежие сообщения пользователя (а не самые старые за сутки).
+    // Самые свежие сообщения пользователя за сутки (не самые старые).
     const rows = (
       await this.history.find({
         where: {
@@ -752,7 +761,7 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
     void this.sendTyping(chat.id);
 
     const joined = rows.map((row, index) => `${index + 1}) ${row.content}`).join('\n');
-    const cleaned = sanitizeUserInput(joined, TROLL_STAT_MAX_CHARS);
+    const cleaned = sanitizeTranscript(joined, TROLL_STAT_MAX_CHARS);
 
     const stat = await this.deepSeek.completeJson<CriminalStat>(
       CRIMINAL_STAT_PROMPT,
@@ -1094,14 +1103,12 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
       return;
     }
 
-    const since =
-      lastAt !== null
-        ? new Date(lastAt)
-        : new Date(Date.now() - TROLL_HISTORY_TTL_HOURS * 60 * 60 * 1000);
+    const since = lastAt !== null ? new Date(lastAt) : new Date(Date.now() - TROLL_HISTORY_TTL_HOURS * 60 * 60 * 1000);
 
     // Берём самые свежие реплики окна: order DESC + take, потом возвращаем хронологию.
+    // Только сообщения людей: ответы самого бота в пересказ не идут.
     let rows = await this.history.find({
-      where: { chatId: chat.id, createdAt: MoreThanOrEqual(since) },
+      where: { chatId: chat.id, role: 'user', createdAt: MoreThanOrEqual(since) },
       order: { id: 'DESC' },
       take: TROLL_SUMMARY_MAX_MESSAGES,
     });
@@ -1113,7 +1120,7 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
         `${this.tag(chat.id, ctx.from.id)}: /sumarize — окно пустое, беру последние ${TROLL_SUMMARY_FALLBACK_MESSAGES} сообщ.`
       );
       rows = await this.history.find({
-        where: { chatId: chat.id },
+        where: { chatId: chat.id, role: 'user' },
         order: { id: 'DESC' },
         take: TROLL_SUMMARY_FALLBACK_MESSAGES,
       });
@@ -1137,12 +1144,9 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
     void this.sendTyping(chat.id);
 
     const joined = ordered
-      .map(
-        (row) =>
-          `${row.role === 'assistant' ? 'бот' : row.userName ?? 'кто-то'}: ${row.content}`
-      )
+      .map((row) => `${row.userName ?? 'кто-то'}: ${row.content}`)
       .join('\n');
-    const cleaned = sanitizeUserInput(joined, TROLL_SUMMARY_MAX_CHARS);
+    const cleaned = sanitizeTranscript(joined, TROLL_SUMMARY_MAX_CHARS);
 
     const raw = await this.deepSeek.completeText(SUMMARY_PROMPT, wrapUserContent(cleaned), {
       temperature: 0.9,
@@ -1159,11 +1163,21 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
       return;
     }
 
-    // Метку окна двигаем только после удачного пересказа, иначе неудачная
-    // попытка съедала бы все сообщения без ответа.
+    // Метку окна двигаем только после того, как пересказ реально ушёл в чат:
+    // иначе неудачная отправка или пустой ответ съедали бы все сообщения.
+    const sent = await this.safeSendToChat(chat.id, text, ctx.message?.message_id);
+    if (!sent) {
+      this.logger.warn(
+        `${this.tag(chat.id, ctx.from.id)}: /sumarize — отправить не удалось, метку окна не двигаю`
+      );
+      return;
+    }
+
     await this.chats.update({ chatId: chat.id }, { lastSummaryAt: new Date() });
-    await this.safeSendToChat(chat.id, text, ctx.message?.message_id);
-    await this.remember(chat.id, 'assistant', text);
+    await this.remember(chat.id, 'assistant', text, {
+      messageId: sent,
+      replyToMessageId: ctx.message?.message_id,
+    });
     this.logger.log(`${this.tag(chat.id, ctx.from.id)}: /sumarize — отправлено`);
   }
 
@@ -1241,8 +1255,11 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
       return;
     }
 
-    await this.safeReply(ctx, mirrored);
-    await this.remember(chatId, 'assistant', mirrored);
+    const sentId = await this.safeReply(ctx, mirrored);
+    await this.remember(chatId, 'assistant', mirrored, {
+      messageId: sentId ?? undefined,
+      replyToMessageId: ctx.message?.message_id,
+    });
     this.logger.log(`${this.tag(chatId)}: кривляние отправлено (длина ${mirrored.length})`);
   }
 
@@ -1285,8 +1302,11 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
       toChatStyle(sanitizeModelText(reply ?? '', TROLL_MAX_REPLY_CHARS))
     );
     if (safe) {
-      await this.safeReply(ctx, safe);
-      await this.remember(chatId, 'assistant', safe);
+      const sentId = await this.safeReply(ctx, safe);
+      await this.remember(chatId, 'assistant', safe, {
+        messageId: sentId ?? undefined,
+        replyToMessageId: ctx.message?.message_id,
+      });
       this.logger.log(`${this.tag(chatId)}: сарказм отправлен`);
     } else {
       this.logger.warn(`${this.tag(chatId)}: пустой ответ модели (сарказм) — не отправляю`);
@@ -1314,8 +1334,11 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
       toChatStyle(sanitizeModelText(reply ?? '', TROLL_MAX_REPLY_CHARS))
     );
     if (safe) {
-      await this.safeReply(ctx, safe);
-      await this.remember(chatId, 'assistant', safe);
+      const sentId = await this.safeReply(ctx, safe);
+      await this.remember(chatId, 'assistant', safe, {
+        messageId: sentId ?? undefined,
+        replyToMessageId: ctx.message?.message_id,
+      });
       this.logger.log(`${this.tag(chatId)}: ответ отправлен`);
     } else {
       this.logger.warn(`${this.tag(chatId)}: пустой ответ модели (мудак) — не отправляю`);
@@ -1573,8 +1596,8 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
   /**
    * Системный промпт + история чата с авторами.
    *
-   * Контекст — вся беседа за сутки (TTL истории), ограниченная бюджетом
-   * реплик и символов. Длинные паузы не вырезаются, а помечаются строками
+   * Контекст — вся история чата, ограниченная бюджетом реплик и символов.
+   * Длинные паузы не вырезаются, а помечаются строками
    * «— пауза 2 ч —»: после такой отметки начинается другая беседа, и бот
    * обязан отвечать на то, что пишут сейчас, а не тянуть старую нить.
    *
@@ -1589,6 +1612,7 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
     focus?: TrollFocus
   ): Promise<DeepSeekMessage[]> {
     const s = this.settings.current;
+    // Рабочий ограничитель объёма — только TTL: в модель уходит вся беседа за сутки.
     const since = new Date(Date.now() - TROLL_HISTORY_TTL_HOURS * 60 * 60 * 1000);
     const rows = await this.history.find({
       where: { chatId, createdAt: MoreThanOrEqual(since) },
@@ -1610,15 +1634,16 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
         }
 
         const row = item.row;
+        const ids = this.describeMessageRefs(row.messageId, row.replyToMessageId);
         if (row.role === 'assistant') {
-          return `бот: ${row.content}`;
+          return `бот${ids}: ${row.content}`;
         }
         // Запоминаем имена из истории — чтобы вернуть регистр в ответе.
         this.trackName(chatId, row.userId, row.userName);
         const name = this.cleanName(row.userName) ?? 'участник';
         const label =
           row.userId !== null && row.userId !== undefined ? `${name} (${row.userId})` : name;
-        return `${label}: ${row.content}`;
+        return `${label}${ids}: ${row.content}`;
       })
       .join('\n');
 
@@ -1628,13 +1653,38 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
         ? `${focusName} (${focus.userId})`
         : focusName;
     const directive = focusLabel
-      ? `Отвечай участнику «${focusLabel}» — он к тебе обратился, id в ответ не пиши. По имени обращайся НЕ всегда: обычно просто отвечай по сути, а имя используй изредка (и тогда с большой буквы). В истории у каждого автора в скобках указан его id: если имена совпадают, различай собеседников по id и не приписывай одному чужие реплики. ${CONVERSATION_PAUSE_RULE}`
-      : `В истории у каждого автора в скобках указан его id — не путай собеседников и не приписывай одному участнику слова другого. ${CONVERSATION_PAUSE_RULE}`;
+      ? `Отвечай участнику «${focusLabel}» — он к тебе обратился, id в ответ не пиши. По имени обращайся НЕ всегда: обычно просто отвечай по сути, а имя используй изредка (и тогда с большой буквы). В истории у каждого автора в скобках указан его id: если имена совпадают, различай собеседников по id и не приписывай одному чужие реплики. ${MESSAGE_REFS_RULE} ${CONVERSATION_PAUSE_RULE}`
+      : `В истории у каждого автора в скобках указан его id — не путай собеседников и не приписывай одному участнику слова другого. ${MESSAGE_REFS_RULE} ${CONVERSATION_PAUSE_RULE}`;
 
     return [
       { role: 'system', content: system },
       { role: 'user', content: `${wrapUserContent(transcript)}\n\n${directive}` },
     ];
+  }
+
+  /**
+   * Текст для лога: одним рядом без переносов (чтобы запись не разваливалась)
+   * и с ограничением длины.
+   */
+  private logText(text: string, limit = 1500): string {
+    const flat = text.replace(/\s*\n+\s*/g, ' ⏎ ').trim();
+    return flat.length > limit ? `«${flat.slice(0, limit)}…»` : `«${flat}»`;
+  }
+
+  /**
+   * Метка связей сообщения: « [msg 17, replyTo 15]».
+   * msg — номер самого сообщения, replyTo — на чей номер отвечают.
+   * Если номеров нет (старые записи), метка пустая.
+   */
+  private describeMessageRefs(messageId?: number | null, replyToMessageId?: number | null): string {
+    if (messageId === null || messageId === undefined) {
+      return '';
+    }
+    const reply =
+      replyToMessageId !== null && replyToMessageId !== undefined
+        ? `, replyTo ${replyToMessageId}`
+        : '';
+    return ` [msg ${messageId}${reply}]`;
   }
 
   /**
@@ -1692,7 +1742,12 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
     chatId: number,
     role: 'user' | 'assistant',
     content: string,
-    meta?: { userId?: number; userName?: string }
+    meta?: {
+      userId?: number;
+      userName?: string;
+      messageId?: number;
+      replyToMessageId?: number;
+    }
   ): Promise<void> {
     const cleaned = content.trim().slice(0, TROLL_HISTORY_MAX_CHARS);
     if (!cleaned) {
@@ -1708,13 +1763,27 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
         content: cleaned,
         userId: meta?.userId ?? null,
         userName: meta?.userName ?? null,
+        messageId: meta?.messageId ?? null,
+        replyToMessageId: meta?.replyToMessageId ?? null,
       });
     } catch (error) {
       this.logger.warn(`История: не удалось сохранить реплику: ${this.describeError(error)}`);
     }
   }
 
-  /** Удаляет историю переписки старше TTL. */
+  /**
+   * Часовая чистка истории по крону (расписание, а не setInterval).
+   * Рабочий ограничитель объёма — только TTL: беседу помним сутки целиком.
+   */
+  @Cron(CronExpression.EVERY_HOUR)
+  public async cleanupHistoryJob(): Promise<void> {
+    await this.cleanupHistory();
+  }
+
+  /**
+   * Удаляет историю переписки старше TTL (24 часа). Беседу помним целые сутки,
+   * но старое не копим: иначе контекст утонет и подорожает каждый запрос.
+   */
   private async cleanupHistory(): Promise<void> {
     const cutoff = new Date(Date.now() - TROLL_HISTORY_TTL_HOURS * 60 * 60 * 1000);
     try {
@@ -1726,13 +1795,6 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
       }
     } catch (error) {
       this.logger.warn(`История: не удалось очистить старые записи: ${this.describeError(error)}`);
-    }
-
-    const predictionCutoff = new Date(Date.now() - TROLL_FUTURE_STORE_HOURS * 60 * 60 * 1000);
-    try {
-      await this.predictions.delete({ createdAt: LessThan(predictionCutoff) });
-    } catch (error) {
-      this.logger.warn(`Предсказания: не удалось очистить: ${this.describeError(error)}`);
     }
   }
 
@@ -1772,38 +1834,65 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
     return this.restoreNames(chatId, styled.replace(/\s*\n+\s*/g, ' ').trim());
   }
 
-  private async safeReply(ctx: BotContext, text: string, html = false): Promise<void> {
+  /** Отвечает на сообщение; возвращает id отправленного сообщения (null — не ушло). */
+  private async safeReply(
+    ctx: BotContext,
+    text: string,
+    html = false
+  ): Promise<number | null> {
     try {
-      await ctx.reply(text, {
+      const message = await ctx.reply(text, {
         ...(html ? { parse_mode: 'HTML' as const } : {}),
         reply_to_message_id: ctx.message?.message_id,
       });
+      this.logger.log(
+        `${this.tag(ctx.chat?.id, ctx.from?.id)}: отправлено${this.describeMessageRefs(
+          message.message_id,
+          ctx.message?.message_id
+        )} ${this.logText(text)}`
+      );
+      return message.message_id;
     } catch (error) {
       this.logger.warn(`Failed to send troll reply: ${this.describeError(error)}`);
+      return null;
     }
   }
 
+  /** Отправляет сообщение в чат; возвращает id отправленного сообщения (null — не ушло). */
   private async safeSendToChat(
     chatId: number,
     text: string,
     replyToMessageId?: number
-  ): Promise<void> {
+  ): Promise<number | null> {
     try {
-      await this.bot.api.sendMessage(chatId, text, {
+      const message = await this.bot.api.sendMessage(chatId, text, {
         ...(replyToMessageId ? { reply_to_message_id: replyToMessageId } : {}),
       });
+      this.logger.log(
+        `${this.tag(chatId)}: отправлено${this.describeMessageRefs(
+          message.message_id,
+          replyToMessageId
+        )} ${this.logText(text)}`
+      );
+      return message.message_id;
     } catch (error) {
       // Целевое сообщение могло исчезнуть — пробуем отправить без ответа.
       if (replyToMessageId) {
         try {
-          await this.bot.api.sendMessage(chatId, text);
-          return;
+          const message = await this.bot.api.sendMessage(chatId, text);
+          this.logger.log(
+            `${this.tag(chatId)}: отправлено (без ответа)${this.describeMessageRefs(
+              message.message_id
+            )} ${this.logText(text)}`
+          );
+          return message.message_id;
         } catch (retryError) {
           this.logger.warn(`Failed to send troll message to ${chatId}: ${this.describeError(retryError)}`);
-          return;
+          return null;
         }
       }
       this.logger.warn(`Failed to send troll message to ${chatId}: ${this.describeError(error)}`);
+      return null;
     }
   }
 

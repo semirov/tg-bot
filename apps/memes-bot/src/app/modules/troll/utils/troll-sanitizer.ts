@@ -99,13 +99,31 @@ function collapseWhitespace(input: string): string {
  * Результат безопасно вставлять внутрь <user_message>...</user_message>.
  */
 export function sanitizeUserInput(input: string, maxChars: number): string {
-  const limit = Math.max(1, Math.min(Math.floor(maxChars), TROLL_HARD_MAX_INPUT_CHARS));
+  return cleanUserText(input, Math.min(Math.floor(maxChars), TROLL_HARD_MAX_INPUT_CHARS));
+}
+
+/**
+ * Очищает собранную расшифровку (история чата, сообщения пользователя для /stat)
+ * перед отправкой в модель.
+ *
+ * Отличие от sanitizeUserInput — нет потолка TROLL_HARD_MAX_INPUT_CHARS: он
+ * защищает от одного огромного пользовательского сообщения, а расшифровка
+ * состоит из множества нормальных реплик и без него пересказывалась бы
+ * только первыми тремя тысячами символов.
+ */
+export function sanitizeTranscript(input: string, maxChars: number): string {
+  return cleanUserText(input, Math.floor(maxChars));
+}
+
+/** Общая очистка недоверенного текста перед вставкой в <user_message>. */
+function cleanUserText(input: string, limit: number): string {
+  const safeLimit = Math.max(1, limit);
   let text = stripInvisible(input);
   // Нейтрализуем собственные делимитеры — иначе можно «выйти» из обёртки.
   text = text.replace(DELIMITER_REGEX, ' ');
   text = collapseWhitespace(text);
-  if (text.length > limit) {
-    text = text.slice(0, limit).trim();
+  if (text.length > safeLimit) {
+    text = text.slice(0, safeLimit).trim();
   }
   return text;
 }
