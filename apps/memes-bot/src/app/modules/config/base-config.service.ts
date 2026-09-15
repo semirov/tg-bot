@@ -190,6 +190,14 @@ export class BaseConfigService {
     return this.getNumber('TROLL_JERK_BATCH_WINDOW', 15);
   }
 
+  /**
+   * Пауза без сообщений, после которой беседа считается новой, мин.
+   * Нужна, чтобы бот не продолжал нить, которую все уже забыли.
+   */
+  get trollDialogPauseMin(): number {
+    return this.getNumber('TROLL_DIALOG_PAUSE_MIN', 60);
+  }
+
   /** Глобальный лимит запросов к DeepSeek в сутки. */
   get trollDailyRequestLimit(): number {
     return this.getNumber('TROLL_DAILY_REQUEST_LIMIT', 2000);

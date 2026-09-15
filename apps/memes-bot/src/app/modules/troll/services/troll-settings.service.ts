@@ -92,6 +92,7 @@ export class TrollSettingsService implements OnModuleInit {
       jerkEnabled: true,
       addressReactionEnabled: true,
       jerkBatchWindowSec: this.config.trollJerkBatchWindow,
+      dialogPauseMin: this.config.trollDialogPauseMin,
       analyzeCooldownSec: this.config.trollAnalyzeCooldown,
       dailyRequestLimit: this.config.trollDailyRequestLimit,
       maxInputChars: this.config.trollMaxInputChars,
@@ -137,6 +138,7 @@ export class TrollSettingsService implements OnModuleInit {
         row.jerkBatchWindowSec,
         defaults.jerkBatchWindowSec
       ),
+      dialogPauseMin: this.normalizeNonNegativeInt(row.dialogPauseMin, defaults.dialogPauseMin),
       analyzeCooldownSec: this.normalizeNonNegativeInt(
         row.analyzeCooldownSec,
         defaults.analyzeCooldownSec

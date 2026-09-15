@@ -80,6 +80,11 @@ export interface TrollRuntimeSettings {
   addressReactionEnabled: boolean;
   /** Окно накопления обращений к боту перед общим ответом, сек. */
   jerkBatchWindowSec: number;
+  /**
+   * Пауза без сообщений, после которой начинается новая беседа, мин:
+   * реплики из-за паузы в контекст попадают, но бот их не продолжает.
+   */
+  dialogPauseMin: number;
   /** Минимальная пауза между проверками по УК РФ в одном чате, сек. */
   analyzeCooldownSec: number;
   /** Глобальный лимит запросов к DeepSeek в сутки (защита от перерасхода). */

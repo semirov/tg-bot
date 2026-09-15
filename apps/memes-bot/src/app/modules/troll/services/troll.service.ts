@@ -8,6 +8,8 @@ import { BOT } from '../../bot/providers/bot.provider';
 import { BaseConfigService } from '../../config/base-config.service';
 import { TROLL_CALLBACK_REGEXP, TrollCallbackEnum } from '../constants/troll-callback.enum';
 import {
+  TROLL_CONTEXT_MAX_CHARS,
+  TROLL_CONTEXT_MAX_TURNS,
   TROLL_FUTURE_ANGRY_AFTER,
   TROLL_FUTURE_COOLDOWN_HOURS,
   TROLL_FUTURE_GOOD_CHANCE,
@@ -15,7 +17,6 @@ import {
   TROLL_FUTURE_STORE_HOURS,
   TROLL_HISTORY_CLEANUP_INTERVAL_MS,
   TROLL_HISTORY_MAX_CHARS,
-  TROLL_HISTORY_MAX_TURNS,
   TROLL_HISTORY_TTL_HOURS,
   TROLL_JERK_MAX_TOKENS,
   TROLL_MAX_BATCH_MESSAGES,
@@ -38,6 +39,7 @@ import {
   TROLL_SUMMARY_MAX_TOKENS,
 } from '../constants/troll-limits';
 import {
+  CONVERSATION_PAUSE_RULE,
   CRIMINAL_ASSESSMENT_PROMPT,
   CRIMINAL_STAT_PROMPT,
   FUTURE_ANGRY_PROMPT,
@@ -64,6 +66,10 @@ import {
   DeepSeekMessage,
   TrollRuntimeSettings,
 } from '../interfaces/troll.interface';
+import {
+  buildConversationContext,
+  formatConversationPause,
+} from '../utils/troll-context';
 import {
   containsLink,
   sanitizeModelField,
@@ -1471,6 +1477,11 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
   /**
    * Системный промпт + история чата с авторами.
    *
+   * Контекст — вся беседа за сутки (TTL истории), ограниченная бюджетом
+   * реплик и символов. Длинные паузы не вырезаются, а помечаются строками
+   * «— пауза 2 ч —»: после такой отметки начинается другая беседа, и бот
+   * обязан отвечать на то, что пишут сейчас, а не тянуть старую нить.
+   *
    * История передаётся одним пользовательским сообщением как расшифровка
    * «Имя: реплика» / «бот: реплика», чтобы модель видела автора каждой реплики
    * и не смешивала собеседников. Если задан focus — это тот, кому адресован
@@ -1481,15 +1492,27 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
     chatId: number,
     focus?: TrollFocus
   ): Promise<DeepSeekMessage[]> {
+    const s = this.settings.current;
+    const since = new Date(Date.now() - TROLL_HISTORY_TTL_HOURS * 60 * 60 * 1000);
     const rows = await this.history.find({
-      where: { chatId },
+      where: { chatId, createdAt: MoreThanOrEqual(since) },
       order: { id: 'DESC' },
-      take: TROLL_HISTORY_MAX_TURNS,
+      take: TROLL_CONTEXT_MAX_TURNS,
     });
 
-    const transcript = rows
-      .reverse()
-      .map((row) => {
+    const context = buildConversationContext(rows, {
+      gapMs: s.dialogPauseMin * 60 * 1000,
+      maxTurns: TROLL_CONTEXT_MAX_TURNS,
+      maxChars: TROLL_CONTEXT_MAX_CHARS,
+    });
+
+    const transcript = context
+      .map((item) => {
+        if (item.kind === 'pause') {
+          return `— пауза ${formatConversationPause(item.gapMs)} —`;
+        }
+
+        const row = item.row;
         if (row.role === 'assistant') {
           return `бот: ${row.content}`;
         }
@@ -1508,8 +1531,8 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
         ? `${focusName} (${focus.userId})`
         : focusName;
     const directive = focusLabel
-      ? `Отвечай участнику «${focusLabel}» — он к тебе обратился, id в ответ не пиши. По имени обращайся НЕ всегда: обычно просто отвечай по сути, а имя используй изредка (и тогда с большой буквы). В истории у каждого автора в скобках указан его id: если имена совпадают, различай собеседников по id и не приписывай одному чужие реплики.`
-      : 'В истории у каждого автора в скобках указан его id — не путай собеседников и не приписывай одному участнику слова другого.';
+      ? `Отвечай участнику «${focusLabel}» — он к тебе обратился, id в ответ не пиши. По имени обращайся НЕ всегда: обычно просто отвечай по сути, а имя используй изредка (и тогда с большой буквы). В истории у каждого автора в скобках указан его id: если имена совпадают, различай собеседников по id и не приписывай одному чужие реплики. ${CONVERSATION_PAUSE_RULE}`
+      : `В истории у каждого автора в скобках указан его id — не путай собеседников и не приписывай одному участнику слова другого. ${CONVERSATION_PAUSE_RULE}`;
 
     return [
       { role: 'system', content: system },

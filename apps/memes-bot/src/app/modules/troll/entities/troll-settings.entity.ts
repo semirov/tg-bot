@@ -63,6 +63,9 @@ export class TrollSettingsEntity {
   @Column('int', { default: 15 })
   jerkBatchWindowSec: number;
 
+  @Column('int', { default: 60 })
+  dialogPauseMin: number;
+
   @Column('int', { default: 15 })
   analyzeCooldownSec: number;
 
