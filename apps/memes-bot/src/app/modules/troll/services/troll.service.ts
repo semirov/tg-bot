@@ -11,6 +11,7 @@ import {
   TROLL_CONTEXT_MAX_CHARS,
   TROLL_CONTEXT_MAX_TURNS,
   TROLL_FUTURE_ANGRY_AFTER,
+  TROLL_FUTURE_AVOID_REPEAT,
   TROLL_FUTURE_COOLDOWN_HOURS,
   TROLL_FUTURE_GOOD_CHANCE,
   TROLL_FUTURE_MAX_CHARS,
@@ -51,6 +52,7 @@ import {
   SARCASM_PROMPT,
   SUMMARY_PROMPT,
   TROLL_CAPABILITIES_REPLY,
+  TROLL_FUTURE_TECHNIQUES,
   TROLL_MIRROR_INFIXES,
   TROLL_MIRROR_PREFIXES,
   TROLL_MIRROR_TECHNIQUES,
@@ -850,9 +852,12 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
       );
       void this.sendTyping(chat.id);
 
+      const technique = this.pickFutureTechnique();
+      const avoid = await this.recentPredictions(chat.id, [cached.text]);
+      this.logger.log(`${this.tag(chat.id, ctx.from.id)}: /future — приём «${technique}»`);
       const rawAngry = await this.deepSeek.completeText(
         FUTURE_ANGRY_PROMPT,
-        wrapUserContent(`Кому гадаем: ${this.describeUser(ctx.from)}`),
+        this.buildPredictionRequest(ctx.from, avoid, technique),
         { maxTokens: 80, temperature: 1.05 }
       );
       const angry = this.finalizePrediction(chat.id, rawAngry);
@@ -878,9 +883,12 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
     );
     void this.sendTyping(chat.id);
 
+    const avoid = await this.recentPredictions(chat.id);
+    const technique = this.pickFutureTechnique();
+    this.logger.log(`${this.tag(chat.id, ctx.from.id)}: /future — приём «${technique}»`);
     const raw = await this.deepSeek.completeText(
       isGood ? FUTURE_GOOD_PROMPT : FUTURE_BAD_PROMPT,
-      wrapUserContent(`Кому гадаем: ${this.describeUser(ctx.from)}`),
+      this.buildPredictionRequest(ctx.from, avoid, technique),
       { maxTokens: 80, temperature: isGood ? 0.9 : 1.05 }
     );
 
@@ -903,6 +911,47 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
 
     await this.safeSendToChat(chat.id, text, ctx.message?.message_id);
     this.logger.log(`${this.tag(chat.id, ctx.from.id)}: /future — отправлено`);
+  }
+
+  /**
+   * Прошлые предсказания чата: передаём их модели в задании, чтобы она не
+   * повторяла ни тему, ни приём (промпт статeless и без списка зацикливается).
+   */
+  private async recentPredictions(chatId: number, extra: string[] = []): Promise<string[]> {
+    let stored: string[] = [];
+    try {
+      const rows = await this.predictions.find({
+        where: { chatId },
+        order: { id: 'DESC' },
+        take: TROLL_FUTURE_AVOID_REPEAT,
+      });
+      stored = rows.map((row) => row.text);
+    } catch (error) {
+      this.logger.warn(`Предсказания: не удалось прочитать историю: ${this.describeError(error)}`);
+    }
+
+    return [...extra, ...stored]
+      .map((text) => sanitizeModelStyled(text ?? '', TROLL_FUTURE_MAX_CHARS))
+      .filter((text) => !!text)
+      .slice(0, TROLL_FUTURE_AVOID_REPEAT + extra.length);
+  }
+
+  /** Случайный приём предсказания: гарантирует разнообразие между запросами. */
+  private pickFutureTechnique(): string {
+    return TROLL_FUTURE_TECHNIQUES[Math.floor(Math.random() * TROLL_FUTURE_TECHNIQUES.length)];
+  }
+
+  /** Задание для /future: кому гадаем, приём и список уже сказанного. */
+  private buildPredictionRequest(
+    user: User | undefined,
+    avoid: string[],
+    technique: string
+  ): string {
+    const lines = [`Кому гадаем: ${this.describeUser(user)}`, `Приём: ${technique}`];
+    if (avoid.length) {
+      lines.push(`Уже говорил этому чату (не повторяй ни тему, ни приём, ни зачин): ${avoid.join(' | ')}`);
+    }
+    return wrapUserContent(lines.join('\n'));
   }
 
   /** /meme — репостит случайный живой мем из канала. Не чаще раза в час. */

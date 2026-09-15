@@ -42,3 +42,6 @@ testem.log
 Thumbs.db
 .test-token
 .server-creds
+
+# Локальный прогонщик промптов (не часть приложения, импортирует модуль troll)
+/troll-audit

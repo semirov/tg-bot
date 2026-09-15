@@ -19,6 +19,10 @@ const HTML_TAG_REGEX = /<[^>]*>/g;
 const MARKDOWN_LINK_REGEX = /\[([^\]]*)\]\((?:https?:\/\/|tg:\/\/|mailto:)[^)\s]*\)/gi;
 const BARE_URL_REGEX = /(?:https?:\/\/|www\.|t\.me\/)\S+/gi;
 const MENTION_REGEX = /@[a-zA-Z0-9_]{3,}/g;
+/** Выделение markdown (жирный, курсив, код): в чате это просто мусорные символы. */
+const MARKDOWN_EMPHASIS_REGEX = /\*\*|__|`{1,3}/g;
+/** Заголовки markdown в начале строки. */
+const MARKDOWN_HEADING_REGEX = /^#{1,6}\s+/gm;
 
 const USER_MESSAGE_OPEN = '<user_message>';
 const USER_MESSAGE_CLOSE = '</user_message>';
@@ -33,11 +37,45 @@ const ABBREVIATIONS = new Set([
 /**
  * Убирает точки в конце предложений (после слова перед пробелом/концом строки),
  * не трогая сокращения вроде «ст. 228» и числа вроде «228.1».
+ * Нужна для коротких полей (название статьи, пояснение), где текст идёт в одну строку.
  */
 function stripSentencePeriods(input: string): string {
-  return input.replace(/([0-9a-zа-яё]+)\.+(?=\s|$)/gi, (match, word: string) =>
-    ABBREVIATIONS.has(word.toLowerCase()) ? match : word
+  return input.replace(
+    /([0-9a-zа-яё]+)(["»”')\]]*)\.+(?=\s|$)/gi,
+    (match, word: string, closers: string) =>
+      ABBREVIATIONS.has(word.toLowerCase()) ? match : `${word}${closers}`
   );
+}
+
+/**
+ * Разбивает текст по границам предложений на строки: в тг-чате фразы пишут
+ * с новой строки, а точки не ставят. Без этого многофразный ответ (саммари)
+ * превращался в одну длинную «простыню» после вырезания точек.
+ * Сокращения («ст. 228») границей не считаются; завершающие кавычки и скобки
+ * переносятся вместе со словом.
+ */
+function splitSentencesToLines(input: string): string {
+  return input.replace(
+    /([0-9a-zа-яё]+)(["»”')\]]*)\.+(\s+)/gi,
+    (match, word: string, closers: string) =>
+      ABBREVIATIONS.has(word.toLowerCase()) ? match : `${word}${closers}\n`
+  );
+}
+
+/** Убирает точки в конце строк — чатовый стиль, точки не ставим. */
+function stripLinePeriods(input: string): string {
+  return input
+    .split('\n')
+    .map((line) => {
+      const stripped = line.replace(/\.+$/, '');
+      if (stripped === line) {
+        return line;
+      }
+      // «ст.» в конце строки — сокращение, точку оставляем.
+      const lastWord = stripped.match(/([0-9a-zа-яё]+)["»”')\]]*$/i)?.[1];
+      return lastWord && ABBREVIATIONS.has(lastWord.toLowerCase()) ? line : stripped;
+    })
+    .join('\n');
 }
 
 /** Вырезает служебные и невидимые символы, нормализует юникод. */
@@ -101,6 +139,8 @@ function cleanModelText(input: string, maxChars: number): string {
   text = text.replace(MARKDOWN_LINK_REGEX, '$1');
   text = text.replace(BARE_URL_REGEX, ' ');
   text = text.replace(MENTION_REGEX, ' ');
+  text = text.replace(MARKDOWN_HEADING_REGEX, '');
+  text = text.replace(MARKDOWN_EMPHASIS_REGEX, '');
   // Длинные тире заменяем обычным дефисом (стиль чата).
   text = text.replace(/[—–―‒]/g, '-');
   text = collapseWhitespace(text);
@@ -117,10 +157,11 @@ function cleanModelText(input: string, maxChars: number): string {
 /**
  * Очищает произвольный текст модели перед отправкой в чат.
  * Убирает разметку, ссылки и упоминания; усекает по длине.
- * Точки в конце предложений вырезаются (чатовый стиль).
+ * Предложения разносит по строкам, а точки в концах строк вырезает (чатовый стиль).
  */
 export function sanitizeModelText(input: string, maxChars: number): string {
-  return stripSentencePeriods(cleanModelText(input, maxChars)).trim();
+  const text = stripLinePeriods(splitSentencesToLines(cleanModelText(input, maxChars)));
+  return collapseWhitespace(text);
 }
 
 /**
@@ -150,5 +191,6 @@ export function sanitizeModelField(input: unknown, maxChars: number): string {
   if (typeof input !== 'string') {
     return '';
   }
-  return sanitizeModelText(input, maxChars);
+  // Поля идут в одну строку — переносы строк здесь недопустимы.
+  return collapseWhitespace(stripSentencePeriods(cleanModelText(input, maxChars)));
 }

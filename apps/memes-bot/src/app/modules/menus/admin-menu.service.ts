@@ -15,6 +15,7 @@ import { SchedulerCommonService } from '../common/scheduler-common.service';
 import { BaseConfigService } from '../config/base-config.service';
 import { ConversationsEnum } from '../post-management/constants/conversations.enum';
 import { PublicationModesEnum } from '../post-management/constants/publication-modes.enum';
+import { formatUsd } from '../troll/constants/deepseek-pricing';
 import { DeepSeekService } from '../troll/services/deepseek.service';
 import { TrollSettingsService } from '../troll/services/troll-settings.service';
 import { TrollService } from '../troll/services/troll.service';
@@ -576,7 +577,12 @@ export class AdminMenuService implements OnModuleInit {
       )
       .row()
       .text(
-        () => `📊 Запросов к DeepSeek сегодня: ${this.deepSeek.usage.requests}`,
+        () => {
+          const usage = this.deepSeek.usage;
+          return `📊 DeepSeek сегодня: ${usage.requests} запр., ${usage.tokens} ток., ≈ ${formatUsd(
+            usage.costUsd
+          )}${usage.peak ? ' (пик)' : ''}`;
+        },
         this.ownerGuard(async (ctx) => {
           await ctx.answerCallbackQuery('Обновлено');
         })

@@ -58,6 +58,12 @@ export const TROLL_FUTURE_STORE_HOURS = 24;
 /** После скольких запросов подряд бот меняет предсказание на обидное. */
 export const TROLL_FUTURE_ANGRY_AFTER = 2;
 
+/**
+ * Сколько прошлых предсказаний чата передавать модели, чтобы она не повторяла
+ * ни тему, ни приём (промпт статeless, без этого списка он зацикливается).
+ */
+export const TROLL_FUTURE_AVOID_REPEAT = 6;
+
 /** Пауза между вызовами /meme в одном чате, сек. */
 export const TROLL_MEME_COOLDOWN_SEC = 60 * 60;
 

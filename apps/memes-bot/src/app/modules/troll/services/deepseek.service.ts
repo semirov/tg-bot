@@ -9,6 +9,12 @@ import {
   TROLL_MAX_CONCURRENT_REQUESTS,
 } from '../constants/troll-limits';
 import { DeepSeekMessage, DeepSeekOptions } from '../interfaces/troll.interface';
+import {
+  DeepSeekTariff,
+  estimateCostUsd,
+  formatUsd,
+  isDeepSeekPeak,
+} from '../constants/deepseek-pricing';
 import { TrollSettingsService } from './troll-settings.service';
 
 /**
@@ -19,6 +25,8 @@ import { TrollSettingsService } from './troll-settings.service';
  *  - лимит одновременных запросов;
  *  - суточный лимит запросов (настраивается в админке);
  *  - таймаут на запрос и один повтор при сетевом сбое/таймауте.
+ * Плюс ведётся учёт суточного расхода: запросы, токены и стоимость в долларах
+ * по официальному тарифу DeepSeek (см. constants/deepseek-pricing.ts).
  * При исчерпании лимитов запрос не отправляется, возвращается пустой ответ.
  */
 @Injectable()
@@ -32,6 +40,7 @@ export class DeepSeekService {
   private dailyKey = this.todayKey();
   private dailyRequests = 0;
   private dailyTokens = 0;
+  private dailyCostUsd = 0;
   private lastBudgetWarnAt = 0;
 
   constructor(
@@ -68,7 +77,7 @@ export class DeepSeekService {
     }
 
     this.logger.debug(
-      `DeepSeek: запрос (model=${this.config.deepseekModel}, max_tokens=${cappedMaxTokens}, сообщений=${messages.length}, json=${json})`
+      `DeepSeek: запрос (model=${this.config.deepseekModel}, max_tokens=${cappedMaxTokens}, сообщений=${messages.length}, json=${json}, reasoning_effort=${this.config.deepseekReasoningEffort || 'по умолчанию'})`
     );
 
     try {
@@ -90,6 +99,7 @@ export class DeepSeekService {
     json: boolean
   ): Promise<string> {
     let lastError: unknown;
+    const reasoningEffort = this.config.deepseekReasoningEffort;
 
     for (let attempt = 0; attempt <= TROLL_LLM_MAX_RETRIES; attempt += 1) {
       const startedAt = Date.now();
@@ -99,16 +109,21 @@ export class DeepSeekService {
           messages,
           temperature,
           max_tokens: maxTokens,
+          // deepseek-flash — reasoning-модель: без явного отключения размышления
+          // съедают весь max_tokens, и короткие ответы приходят пустыми.
+          ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
           ...(json ? { response_format: { type: 'json_object' } } : {}),
         });
 
-        this.recordTokens(response.data?.usage?.total_tokens);
+        this.recordUsage(response.data?.usage);
 
         const limit = this.settings.current.dailyRequestLimit;
         this.logger.log(
           `DeepSeek: ответ за ${Date.now() - startedAt}мс, tokens=${
             response.data?.usage?.total_tokens ?? '?'
-          }, сегодня ${this.dailyRequests}/${limit > 0 ? limit : '∞'}`
+          }, сегодня ${formatUsd(this.dailyCostUsd)}, ${this.dailyRequests}/${
+            limit > 0 ? limit : '∞'
+          } запросов`
         );
 
         return response.data?.choices?.[0]?.message?.content?.trim() ?? '';
@@ -219,9 +234,14 @@ export class DeepSeekService {
   }
 
   /** Текущее потребление DeepSeek за сутки (для админки). */
-  public get usage(): { requests: number; tokens: number } {
+  public get usage(): { requests: number; tokens: number; costUsd: number; peak: boolean } {
     this.rolloverCounters();
-    return { requests: this.dailyRequests, tokens: this.dailyTokens };
+    return {
+      requests: this.dailyRequests,
+      tokens: this.dailyTokens,
+      costUsd: this.dailyCostUsd,
+      peak: isDeepSeekPeak(),
+    };
   }
 
   /**
@@ -253,11 +273,61 @@ export class DeepSeekService {
     this.activeRequests = Math.max(0, this.activeRequests - 1);
   }
 
-  private recordTokens(total: unknown): void {
-    const parsed = Number(total);
-    if (Number.isFinite(parsed) && parsed > 0) {
-      this.dailyTokens += parsed;
+  /**
+   * Учитывает токены ответа, стоимость по тарифу модели и разбивку по кэшу.
+   * DeepSeek отдаёт `prompt_cache_hit_tokens` / `prompt_cache_miss_tokens` —
+   * они в разы дешевле/дороже, поэтому считаем их раздельно.
+   */
+  private recordUsage(raw: unknown): void {
+    const usage = (raw ?? {}) as {
+      total_tokens?: unknown;
+      prompt_tokens?: unknown;
+      completion_tokens?: unknown;
+      prompt_cache_hit_tokens?: unknown;
+      prompt_cache_miss_tokens?: unknown;
+    };
+
+    const total = Number(usage.total_tokens);
+    if (Number.isFinite(total) && total > 0) {
+      this.dailyTokens += total;
     }
+
+    const promptTokens = this.toCount(usage.prompt_tokens);
+    const completionTokens = this.toCount(usage.completion_tokens);
+    const cacheHitTokens = this.toCount(usage.prompt_cache_hit_tokens);
+    const cacheMissTokens = this.toCount(usage.prompt_cache_miss_tokens);
+
+    if (!promptTokens && !completionTokens) {
+      return;
+    }
+
+    this.dailyCostUsd += estimateCostUsd(
+      this.config.deepseekModel,
+      { promptTokens, completionTokens, cacheHitTokens, cacheMissTokens },
+      { tariff: this.priceOverride }
+    );
+  }
+
+  /** Значение токенов из ответа API, отсекает мусор и отрицательные числа. */
+  private toCount(value: unknown): number {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+  }
+
+  /**
+   * Свой тариф из env (если заданы все три цены). Нужен, чтобы обновить
+   * расценки без правки кода, когда DeepSeek меняет прайс.
+   */
+  private get priceOverride(): DeepSeekTariff | undefined {
+    const cacheHitInput = this.config.deepseekPriceCacheHit;
+    const cacheMissInput = this.config.deepseekPriceCacheMiss;
+    const output = this.config.deepseekPriceOutput;
+
+    if (cacheHitInput === undefined || cacheMissInput === undefined || output === undefined) {
+      return undefined;
+    }
+
+    return { cacheHitInput, cacheMissInput, output };
   }
 
   /** Сбрасывает суточные счётчики при смене даты (UTC). */
@@ -267,6 +337,7 @@ export class DeepSeekService {
       this.dailyKey = key;
       this.dailyRequests = 0;
       this.dailyTokens = 0;
+      this.dailyCostUsd = 0;
     }
   }
 
