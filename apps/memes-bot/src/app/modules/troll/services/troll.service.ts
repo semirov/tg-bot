@@ -1557,7 +1557,7 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
     const transcript = context
       .map((item) => {
         if (item.kind === 'pause') {
-          return `— пауза ${formatConversationPause(item.gapMs)} —`;
+          return `—— разрыв беседы, пауза ${formatConversationPause(item.gapMs)} ——`;
         }
 
         const row = item.row;

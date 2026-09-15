@@ -200,7 +200,7 @@ export class BaseConfigService {
    * Нужна, чтобы бот не продолжал нить, которую все уже забыли.
    */
   get trollDialogPauseMin(): number {
-    return this.getNumber('TROLL_DIALOG_PAUSE_MIN', 60);
+    return this.getNumber('TROLL_DIALOG_PAUSE_MIN', 15);
   }
 
   /** Минимальная пауза между проверками по УК РФ в одном чате, сек. */
@@ -211,7 +211,7 @@ export class BaseConfigService {
 
   /** Максимальная длина пользовательского текста для модели. */
   get trollMaxInputChars(): number {
-    return this.getNumber('TROLL_MAX_INPUT_CHARS', 500);
+    return this.getNumber('TROLL_MAX_INPUT_CHARS', 1000);
   }
 
   private getNumber(key: string, fallback: number): number {

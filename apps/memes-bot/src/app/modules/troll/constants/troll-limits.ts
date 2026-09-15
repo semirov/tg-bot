@@ -8,7 +8,7 @@
 export const TROLL_HARD_MAX_TOKENS = 800;
 
 /** Абсолютный потолок длины пользовательского текста перед отправкой в модель. */
-export const TROLL_HARD_MAX_INPUT_CHARS = 2000;
+export const TROLL_HARD_MAX_INPUT_CHARS = 3000;
 
 /** Максимум одновременных запросов к DeepSeek на процесс. */
 export const TROLL_MAX_CONCURRENT_REQUESTS = 4;
@@ -35,10 +35,10 @@ export const TROLL_MAX_CRIMINAL_TITLE_CHARS = 120;
 export const TROLL_SETTINGS_ID = 1;
 
 /** Максимум сообщений одного пользователя для /stat. */
-export const TROLL_STAT_MAX_MESSAGES_PER_USER = 30;
+export const TROLL_STAT_MAX_MESSAGES_PER_USER = 50;
 
 /** Потолок длины текста пользователя для /stat, символов. */
-export const TROLL_STAT_MAX_CHARS = 1500;
+export const TROLL_STAT_MAX_CHARS = 4000;
 
 /** Пауза между вызовами /stat в одном чате, сек. */
 export const TROLL_STAT_COOLDOWN_SEC = 60;
@@ -71,7 +71,7 @@ export const TROLL_MEME_MAX_ATTEMPTS = 5;
 export const TROLL_SUMMARY_COOLDOWN_SEC = 60 * 60;
 
 /** Сколько последних сообщений брать в саммари. */
-export const TROLL_SUMMARY_MAX_MESSAGES = 150;
+export const TROLL_SUMMARY_MAX_MESSAGES = 400;
 
 /**
  * Сколько последних реплик чата брать в саммари, если окно «с прошлого раза»
@@ -80,10 +80,10 @@ export const TROLL_SUMMARY_MAX_MESSAGES = 150;
 export const TROLL_SUMMARY_FALLBACK_MESSAGES = 60;
 
 /** Потолок длины входного текста для саммари, символов. */
-export const TROLL_SUMMARY_MAX_CHARS = 1800;
+export const TROLL_SUMMARY_MAX_CHARS = 16000;
 
 /** Потолок max_tokens для запроса саммари. */
-export const TROLL_SUMMARY_MAX_TOKENS = 500;
+export const TROLL_SUMMARY_MAX_TOKENS = 700;
 
 /** Потолок длины ответа-саммари, символов. */
 export const TROLL_SUMMARY_MAX_REPLY_CHARS = 700;
@@ -91,18 +91,22 @@ export const TROLL_SUMMARY_MAX_REPLY_CHARS = 700;
 /** Максимум сообщений, накапливаемых в одном окне «мудак»-ответа. */
 export const TROLL_MAX_BATCH_MESSAGES = 20;
 
-/** Абсолютный потолок числа реплик в контексте беседы. */
-export const TROLL_CONTEXT_MAX_TURNS = 200;
+/**
+ * Абсолютный потолок числа реплик в контексте беседы.
+ * Отделён от суток: сам контекст — это вся беседа за 24 часа (TTL истории),
+ * а тут только страховка от совсем бесконечного чата.
+ */
+export const TROLL_CONTEXT_MAX_TURNS = 1500;
 
 /**
- * Абсолютный потолок длины расшифровки беседы, символов. Контекст теперь
- * ограничен сутками, а не числом реплик, поэтому нужен бюджет на токены:
- * при переполнении отбрасываются самые старые реплики.
+ * Абсолютный потолок длины расшифровки беседы, символов.
+ * Расчитан на то, чтобы суточная беседа влезала целиком (~20 тыс. токенов
+ * при 48 тыс. символов), и остаётся далеко от границ контекста deepseek-chat.
  */
-export const TROLL_CONTEXT_MAX_CHARS = 12000;
+export const TROLL_CONTEXT_MAX_CHARS = 48000;
 
 /** Максимальная длина одной реплики в истории, символов. */
-export const TROLL_HISTORY_MAX_CHARS = 1000;
+export const TROLL_HISTORY_MAX_CHARS = 3000;
 
 /** Сколько часов хранить историю переписки, потом удаляем. */
 export const TROLL_HISTORY_TTL_HOURS = 24;
