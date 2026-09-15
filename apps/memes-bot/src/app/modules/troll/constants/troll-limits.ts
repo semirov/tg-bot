@@ -13,6 +13,15 @@ export const TROLL_HARD_MAX_INPUT_CHARS = 2000;
 /** Максимум одновременных запросов к DeepSeek на процесс. */
 export const TROLL_MAX_CONCURRENT_REQUESTS = 4;
 
+/** Таймаут одного запроса к DeepSeek, мс. */
+export const TROLL_LLM_TIMEOUT_MS = 45000;
+
+/** Сколько раз повторять запрос при сетевой ошибке/таймауте. */
+export const TROLL_LLM_MAX_RETRIES = 1;
+
+/** Пауза перед повтором запроса, мс. */
+export const TROLL_LLM_RETRY_DELAY_MS = 1500;
+
 /** Потолок длины ответа-подкола (сарказм/«мудак»), символов. */
 export const TROLL_MAX_REPLY_CHARS = 400;
 
@@ -63,6 +72,12 @@ export const TROLL_SUMMARY_COOLDOWN_SEC = 60 * 60;
 
 /** Сколько последних сообщений брать в саммари. */
 export const TROLL_SUMMARY_MAX_MESSAGES = 150;
+
+/**
+ * Сколько последних реплик чата брать в саммари, если окно «с прошлого раза»
+ * оказалось пустым (лучше пересказать хоть что-то, чем отказать).
+ */
+export const TROLL_SUMMARY_FALLBACK_MESSAGES = 60;
 
 /** Потолок длины входного текста для саммари, символов. */
 export const TROLL_SUMMARY_MAX_CHARS = 1800;

@@ -92,8 +92,6 @@ export class TrollSettingsService implements OnModuleInit {
       jerkEnabled: true,
       addressReactionEnabled: true,
       jerkBatchWindowSec: this.config.trollJerkBatchWindow,
-      daytimeStart: this.config.trollDaytimeStart,
-      daytimeEnd: this.config.trollDaytimeEnd,
       analyzeCooldownSec: this.config.trollAnalyzeCooldown,
       dailyRequestLimit: this.config.trollDailyRequestLimit,
       maxInputChars: this.config.trollMaxInputChars,
@@ -139,8 +137,6 @@ export class TrollSettingsService implements OnModuleInit {
         row.jerkBatchWindowSec,
         defaults.jerkBatchWindowSec
       ),
-      daytimeStart: this.normalizeHour(row.daytimeStart, defaults.daytimeStart),
-      daytimeEnd: this.normalizeHour(row.daytimeEnd, defaults.daytimeEnd),
       analyzeCooldownSec: this.normalizeNonNegativeInt(
         row.analyzeCooldownSec,
         defaults.analyzeCooldownSec
@@ -167,14 +163,6 @@ export class TrollSettingsService implements OnModuleInit {
       return fallback;
     }
     return Math.floor(parsed);
-  }
-
-  private normalizeHour(value: unknown, fallback: number): number {
-    const parsed = Math.floor(Number(value));
-    if (!Number.isFinite(parsed) || parsed < 0 || parsed > 23) {
-      return fallback;
-    }
-    return parsed;
   }
 
   private describeError(error: unknown): string {

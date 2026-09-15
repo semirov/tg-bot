@@ -322,8 +322,6 @@ export class AdminMenuService implements OnModuleInit {
     const reactionCooldownPresets = [0, 60, 300, 600, 1800, 3600];
     const jerkWindowPresets = [0, 10, 15, 30, 60, 120];
     const memeChancePresets = [0.05, 0.1, 0.2, 0.3, 0.5];
-    const daytimeStartPresets = [6, 7, 8, 9, 10, 11, 12];
-    const daytimeEndPresets = [18, 19, 20, 21, 22, 23];
     const dailyLimitPresets = [100, 200, 500, 1000, 2000, 5000, 10000];
     const maxInputPresets = [200, 300, 500, 800, 1000];
 
@@ -530,26 +528,6 @@ export class AdminMenuService implements OnModuleInit {
         this.ownerGuard(async (ctx) => {
           await this.trollSettings.update({
             memeAnnounceChance: this.cycle(current().memeAnnounceChance, memeChancePresets),
-          });
-          ctx.menu.update();
-        })
-      )
-      .row()
-      .text(
-        () => `День с ${current().daytimeStart}:00 МСК`,
-        this.ownerGuard(async (ctx) => {
-          await this.trollSettings.update({
-            daytimeStart: this.cycle(current().daytimeStart, daytimeStartPresets),
-          });
-          ctx.menu.update();
-        })
-      )
-      .row()
-      .text(
-        () => `День до ${current().daytimeEnd}:00 МСК`,
-        this.ownerGuard(async (ctx) => {
-          await this.trollSettings.update({
-            daytimeEnd: this.cycle(current().daytimeEnd, daytimeEndPresets),
           });
           ctx.menu.update();
         })

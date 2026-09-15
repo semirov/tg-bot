@@ -80,10 +80,6 @@ export interface TrollRuntimeSettings {
   addressReactionEnabled: boolean;
   /** Окно накопления обращений к боту перед общим ответом, сек. */
   jerkBatchWindowSec: number;
-  /** Час начала дневного времени (МСК) для анонсов мемов. */
-  daytimeStart: number;
-  /** Час окончания дневного времени (МСК). */
-  daytimeEnd: number;
   /** Минимальная пауза между проверками по УК РФ в одном чате, сек. */
   analyzeCooldownSec: number;
   /** Глобальный лимит запросов к DeepSeek в сутки (защита от перерасхода). */

@@ -31,6 +31,7 @@ import {
   TROLL_STAT_MAX_CHARS,
   TROLL_STAT_MAX_MESSAGES_PER_USER,
   TROLL_SUMMARY_COOLDOWN_SEC,
+  TROLL_SUMMARY_FALLBACK_MESSAGES,
   TROLL_SUMMARY_MAX_CHARS,
   TROLL_SUMMARY_MAX_MESSAGES,
   TROLL_SUMMARY_MAX_REPLY_CHARS,
@@ -235,20 +236,14 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
 
   /**
    * Вызывается после публикации мема в основной канал.
-   * В дневное время с заданной вероятностью бот **репостит** пост в активные чаты.
+   * С заданной вероятностью бот **репостит** пост в активные чаты.
+   * Работает круглосуточно.
    */
   public async maybeRepostMeme(channelId: number, messageId: number): Promise<void> {
     try {
       const s = this.settings.current;
       if (!s.enabled || !s.memeAnnounceEnabled) {
         this.logger.debug('Репост мема: пропуск — репосты выключены');
-        return;
-      }
-
-      if (!this.isDaytime(s)) {
-        this.logger.debug(
-          `Репост мема: пропуск — не дневное время (МСК ${this.currentMoscowHour()}, окно ${s.daytimeStart}–${s.daytimeEnd})`
-        );
         return;
       }
 
@@ -677,16 +672,19 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
     this.lastStatAt.set(statKey, Date.now());
 
     const since = new Date(Date.now() - TROLL_HISTORY_TTL_HOURS * 60 * 60 * 1000);
-    const rows = await this.history.find({
-      where: {
-        chatId: chat.id,
-        role: 'user',
-        userId: ctx.from.id,
-        createdAt: MoreThanOrEqual(since),
-      },
-      order: { id: 'ASC' },
-      take: TROLL_STAT_MAX_MESSAGES_PER_USER,
-    });
+    // Самые свежие сообщения пользователя (а не самые старые за сутки).
+    const rows = (
+      await this.history.find({
+        where: {
+          chatId: chat.id,
+          role: 'user',
+          userId: ctx.from.id,
+          createdAt: MoreThanOrEqual(since),
+        },
+        order: { id: 'DESC' },
+        take: TROLL_STAT_MAX_MESSAGES_PER_USER,
+      })
+    ).reverse();
 
     if (!rows.length) {
       await ctx.reply('🔒 За 24 часа ты ничего не писал — и сроков нет');
@@ -706,6 +704,13 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
       wrapUserContent(cleaned),
       { temperature: 0.6, maxTokens: 700 }
     );
+
+    // Модель не ответила (таймаут/лимит) — не врём про «0 лет», а честно признаёмся.
+    if (!stat) {
+      this.logger.warn(`${this.tag(chat.id, ctx.from.id)}: /stat — пустой ответ модели`);
+      await this.safeSendToChat(chat.id, 'чёт я подвис, попробуй ещё раз', ctx.message?.message_id);
+      return;
+    }
 
     const articles = Array.isArray(stat?.articles)
       ? stat.articles
@@ -987,35 +992,49 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
       return;
     }
 
-    await this.chats.update({ chatId: chat.id }, { lastSummaryAt: new Date() });
-
     const since =
       lastAt !== null
         ? new Date(lastAt)
         : new Date(Date.now() - TROLL_HISTORY_TTL_HOURS * 60 * 60 * 1000);
 
-    const rows = await this.history.find({
+    // Берём самые свежие реплики окна: order DESC + take, потом возвращаем хронологию.
+    let rows = await this.history.find({
       where: { chatId: chat.id, createdAt: MoreThanOrEqual(since) },
-      order: { id: 'ASC' },
+      order: { id: 'DESC' },
       take: TROLL_SUMMARY_MAX_MESSAGES,
     });
 
+    // Окно пустое (с прошлого пересказа не писали или метки времени разъехались) —
+    // не отказываем, а пересказываем последние реплики чата.
     if (!rows.length) {
-      this.logger.log(`${this.tag(chat.id, ctx.from.id)}: /sumarize — с прошлого раза сообщений нет`);
+      this.logger.log(
+        `${this.tag(chat.id, ctx.from.id)}: /sumarize — окно пустое, беру последние ${TROLL_SUMMARY_FALLBACK_MESSAGES} сообщ.`
+      );
+      rows = await this.history.find({
+        where: { chatId: chat.id },
+        order: { id: 'DESC' },
+        take: TROLL_SUMMARY_FALLBACK_MESSAGES,
+      });
+    }
+
+    if (!rows.length) {
+      this.logger.log(`${this.tag(chat.id, ctx.from.id)}: /sumarize — истории нет вообще`);
       await this.safeSendToChat(
         chat.id,
-        'с прошлого раза тут ни слова, пересказывать нечего',
+        'тут вообще ничего не писали, пересказывать нечего',
         ctx.message?.message_id
       );
       return;
     }
 
+    const ordered = [...rows].reverse();
+
     this.logger.log(
-      `${this.tag(chat.id, ctx.from.id)}: /sumarize — пересказываю ${rows.length} сообщ.`
+      `${this.tag(chat.id, ctx.from.id)}: /sumarize — пересказываю ${ordered.length} сообщ.`
     );
     void this.sendTyping(chat.id);
 
-    const joined = rows
+    const joined = ordered
       .map(
         (row) =>
           `${row.role === 'assistant' ? 'бот' : row.userName ?? 'кто-то'}: ${row.content}`
@@ -1038,6 +1057,9 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
       return;
     }
 
+    // Метку окна двигаем только после удачного пересказа, иначе неудачная
+    // попытка съедала бы все сообщения без ответа.
+    await this.chats.update({ chatId: chat.id }, { lastSummaryAt: new Date() });
     await this.safeSendToChat(chat.id, text, ctx.message?.message_id);
     await this.remember(chat.id, 'assistant', text);
     this.logger.log(`${this.tag(chat.id, ctx.from.id)}: /sumarize — отправлено`);
@@ -1427,28 +1449,6 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
     );
     const parts = [...marks, cleanedText].filter((part) => !!part);
     return parts.length ? parts.join(' ') : null;
-  }
-
-  private isDaytime(s: TrollRuntimeSettings): boolean {
-    const hour = this.currentMoscowHour();
-    return hour >= s.daytimeStart && hour < s.daytimeEnd;
-  }
-
-  private currentMoscowHour(): number {
-    try {
-      const formatted = new Intl.DateTimeFormat('en-GB', {
-        timeZone: 'Europe/Moscow',
-        hour: 'numeric',
-        hour12: false,
-      }).format(new Date());
-      const hour = parseInt(formatted, 10);
-      if (Number.isNaN(hour)) {
-        return new Date().getHours();
-      }
-      return hour === 24 ? 0 : hour;
-    } catch {
-      return new Date().getHours();
-    }
   }
 
   /** Запрос в модель с историей переписки (контекст диалога). */

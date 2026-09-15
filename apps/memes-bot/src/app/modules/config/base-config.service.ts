@@ -180,16 +180,6 @@ export class BaseConfigService {
     return this.getNumber('TROLL_CRIMINAL_HIGH_THRESHOLD', 0.8);
   }
 
-  /** Час начала дневного времени (МСК) для публикации мемных сообщений в чат. */
-  get trollDaytimeStart(): number {
-    return this.getNumber('TROLL_DAYTIME_START', 9);
-  }
-
-  /** Час окончания дневного времени (МСК). */
-  get trollDaytimeEnd(): number {
-    return this.getNumber('TROLL_DAYTIME_END', 21);
-  }
-
   /** Минимальная пауза между проверками по УК РФ в одном чате, сек. */
   get trollAnalyzeCooldown(): number {
     return this.getNumber('TROLL_ANALYZE_COOLDOWN', 15);
