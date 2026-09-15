@@ -7,9 +7,19 @@ describe('isAddressedToBot', () => {
     'пес, иди сюда',
     'ты хуесос',
     'мудак какой-то',
-    'да это же хуйня полная',
+    'долбоёб, ты чё',
+    'ты кал',
+    'козлы, хватит',
   ])('считает обращением: «%s»', (text) => {
     expect(isAddressedToBot(text)).toBe(true);
+  });
+
+  it('НЕ считает обращением родовую матерщину — которой в чате ругаются просто так', () => {
+    expect(isAddressedToBot('да это же хуйня полная')).toBe(false);
+    expect(isAddressedToBot('какой-то ебаный интернет')).toBe(false);
+    expect(isAddressedToBot('говно полное, всё упало')).toBe(false);
+    expect(isAddressedToBot('опять срань какая-то')).toBe(false);
+    expect(isAddressedToBot('дерьмо, а не погода')).toBe(false);
   });
 
   it('не ловит обычные слова, в которых просто есть буквы ругательства', () => {
@@ -20,10 +30,16 @@ describe('isAddressedToBot', () => {
     expect(isAddressedToBot('купил новые калоши')).toBe(false);
     expect(isAddressedToBot('принёс песок для кота')).toBe(false);
     expect(isAddressedToBot('слушаю песню про кота')).toBe(false);
+    expect(isAddressedToBot('купила баранки к чаю')).toBe(false);
+    expect(isAddressedToBot('кончик провода сломался')).toBe(false);
+    expect(isAddressedToBot('кухня, тостер и муфельная печка')).toBe(false);
   });
 
-  it('всё ещё ловит «кал» как отдельное слово', () => {
+  it('всё ещё ловит «кал», «баран» и «чмо» как отдельные слова', () => {
     expect(isAddressedToBot('ты кал')).toBe(true);
+    expect(isAddressedToBot('ну ты баран')).toBe(true);
+    expect(isAddressedToBot('чмо')).toBe(true);
+    expect(isAddressedToBot('чмошник')).toBe(true);
   });
 });
 
