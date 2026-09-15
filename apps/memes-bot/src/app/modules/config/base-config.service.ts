@@ -198,6 +198,7 @@ export class BaseConfigService {
     return this.getNumber('TROLL_DIALOG_PAUSE_MIN', 60);
   }
 
+  /** Минимальная пауза между проверками по УК РФ в одном чате, сек. */
   /** Глобальный лимит запросов к DeepSeek в сутки. */
   get trollDailyRequestLimit(): number {
     return this.getNumber('TROLL_DAILY_REQUEST_LIMIT', 2000);

@@ -361,6 +361,8 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
       return;
     }
 
+    // Просьба о рецепте — отшиваем грубо и шлём в поиск (правило в промпте).
+
     // Иногда просто реагируем эмодзи (🤡/💩), без ответа.
     this.maybeReact(ctx, s);
 
