@@ -47,6 +47,8 @@ const TROLL_ADDRESS_WORDS: ReadonlySet<string> = new Set([
   'дворняга',
   'дворняги',
   'дворнягу',
+  // «кал» только целиком: как основа он ловил «кальян», «калории» и «калоши»
+  'кал',
 ]);
 
 /** Основы слов-обращений: ловим слово + короткое окончание (до 3 букв). */
@@ -96,7 +98,6 @@ const TROLL_ADDRESS_STEMS: readonly string[] = [
   'дерьм',
   'говн',
   'гавн',
-  'кал',
   'хуйн',
   'сран',
   'ебан',
@@ -168,6 +169,38 @@ export function isAddressedToBot(content: string | null | undefined): boolean {
   }
 
   return false;
+}
+
+/** Имена, по которым бот точно понимает, что обращаются к нему (а не просто матерятся в чате). */
+const TROLL_NAME_WORDS: ReadonlySet<string> = new Set([
+  'бот',
+  'боты',
+  'бота',
+  'боту',
+  'ботом',
+  'боте',
+  'ботяра',
+  'ботяры',
+  'ботяру',
+  'ботяр',
+  'ии',
+  'ai',
+  'робот',
+  'чатбот',
+]);
+
+/**
+ * true, если в сообщении есть имя бота («бот», «робот», «ии»).
+ * Такие обращения считаются прямыми — на них бот отвечает без паузы,
+ * в отличие от клички/мата вообще.
+ */
+export function isNamedCall(content: string | null | undefined): boolean {
+  if (!content) {
+    return false;
+  }
+  return normalize(content)
+    .split(/[^0-9a-zа-я]+/)
+    .some((word) => TROLL_NAME_WORDS.has(word));
 }
 
 /** Фразы, которыми спрашивают, что бот умеет. */

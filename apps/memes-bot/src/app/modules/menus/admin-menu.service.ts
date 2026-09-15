@@ -321,6 +321,7 @@ export class AdminMenuService implements OnModuleInit {
     const reactionChancePresets = [0.01, 0.03, 0.05, 0.1, 0.15, 0.2];
     const reactionCooldownPresets = [0, 60, 300, 600, 1800, 3600];
     const jerkWindowPresets = [0, 10, 15, 30, 60, 120];
+    const jerkCooldownPresets = [0, 30, 60, 120, 180, 300, 600];
     const dialogPausePresets = [15, 30, 60, 120, 360, 720];
     const memeChancePresets = [0.05, 0.1, 0.2, 0.3, 0.5];
     const dailyLimitPresets = [100, 200, 500, 1000, 2000, 5000, 10000];
@@ -511,6 +512,16 @@ export class AdminMenuService implements OnModuleInit {
         this.ownerGuard(async (ctx) => {
           await this.trollSettings.update({
             jerkBatchWindowSec: this.cycle(current().jerkBatchWindowSec, jerkWindowPresets),
+          });
+          ctx.menu.update();
+        })
+      )
+      .row()
+      .text(
+        () => `Пауза между ответами: ${formatDuration(current().jerkCooldownSec)}`,
+        this.ownerGuard(async (ctx) => {
+          await this.trollSettings.update({
+            jerkCooldownSec: this.cycle(current().jerkCooldownSec, jerkCooldownPresets),
           });
           ctx.menu.update();
         })

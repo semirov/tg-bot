@@ -55,7 +55,7 @@ import {
   TROLL_MIRROR_PREFIXES,
   TROLL_MIRROR_TECHNIQUES,
 } from '../constants/troll-prompts';
-import { isAddressedToBot, isCapabilityQuestion } from '../constants/troll-addresses';
+import { isAddressedToBot, isCapabilityQuestion, isNamedCall } from '../constants/troll-addresses';
 import { TrollChatEntity } from '../entities/troll-chat.entity';
 import { TrollMessageEntity } from '../entities/troll-message.entity';
 import { TrollPredictionEntity } from '../entities/troll-prediction.entity';
@@ -128,6 +128,10 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
   private readonly lastReactionAt = new Map<number, number>();
   /** Время последнего /stat в чате (мс) — для кулдауна (ключ chatId:userId). */
   private readonly lastStatAt = new Map<string, number>();
+  /** Время последнего ответа на кличку/мат в чате (мс) — чтобы бот не сыпал репликами. */
+  private readonly lastJerkAnswerAt = new Map<number, number>();
+  /** Последняя поставленная реакция по чату — чтобы эмодзи чередовались. */
+  private readonly lastReactionEmoji = new Map<number, (typeof REACTION_EMOJIS)[number]>();
   /** Время последнего /meme (мс) — кулдаун на каждого участника (ключ chatId:userId). */
   private readonly lastMemeAt = new Map<string, number>();
   /** Накопители обращений к боту по чатам. */
@@ -368,8 +372,10 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
 
     // Обращение к боту (ответ/упоминание/кличка/мат) — копим и отвечаем одной репликой.
     if (s.jerkEnabled && (isReplyToBot || isMention || isNameCall)) {
-      this.enqueueJerk(ctx, content, s);
-      return;
+      if (this.canAnswerJerk(chat.id, isReplyToBot || isMention || isNamedCall(content), s)) {
+        this.enqueueJerk(ctx, content, s);
+        return;
+      }
     }
 
     if (text.length < MIN_TEXT_LENGTH) {
@@ -460,6 +466,24 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
     } finally {
       this.analyzingChats.delete(chatId);
     }
+  }
+
+  /** Может ли бот ответить на такое обращение (прямые обращения — всегда). */
+  private canAnswerJerk(
+    chatId: number,
+    explicit: boolean,
+    s: TrollRuntimeSettings
+  ): boolean {
+    if (explicit) {
+      return true;
+    }
+    if (this.withinCooldown(this.lastJerkAnswerAt, chatId, s.jerkCooldownSec)) {
+      // Кличка/мат вообще — не обязательно в адрес бота. Если только что отвечали,
+      // пропускаем как обычное сообщение, чтобы бот не забивал чат.
+      this.logger.debug(`${this.tag(chatId)}: кличка/мат, но пауза ответов — пропуск`);
+      return false;
+    }
+    return true;
   }
 
   /**
@@ -591,6 +615,7 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
 
     await this.safeSendToChat(chatId, safe, batch.replyToMessageId);
     await this.remember(chatId, 'assistant', safe);
+    this.lastJerkAnswerAt.set(chatId, Date.now());
     this.logger.log(`${this.tag(chatId)}: ответ отправлен`);
   }
 
@@ -613,8 +638,10 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
       return;
     }
 
-    this.lastReactionAt.set(chatId, Date.now());
-    const emoji = REACTION_EMOJIS[Math.floor(Math.random() * REACTION_EMOJIS.length)];
+    // Чередуем эмодзи: одну и ту же реакцию дважды подряд не ставим.
+    const previous = this.lastReactionEmoji.get(chatId);
+    const candidates = REACTION_EMOJIS.filter((candidate) => candidate !== previous);
+    const emoji = candidates[Math.floor(Math.random() * candidates.length)];
     void this.setReaction(chatId, messageId, emoji);
   }
 
@@ -625,9 +652,27 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
   ): Promise<void> {
     try {
       await this.bot.api.setMessageReaction(chatId, messageId, [{ type: 'emoji', emoji }]);
+      this.lastReactionAt.set(chatId, Date.now());
+      this.lastReactionEmoji.set(chatId, emoji as (typeof REACTION_EMOJIS)[number]);
       this.logger.log(`${this.tag(chatId)}: поставил реакцию ${emoji}`);
     } catch (error) {
-      this.logger.debug(
+      // Некоторые чаты ограничивают набор реакций — пробуем вторую.
+      const alternative = REACTION_EMOJIS.find((candidate) => candidate !== emoji);
+      if (alternative) {
+        try {
+          await this.bot.api.setMessageReaction(chatId, messageId, [
+            { type: 'emoji', emoji: alternative },
+          ]);
+          this.lastReactionAt.set(chatId, Date.now());
+          this.lastReactionEmoji.set(chatId, alternative);
+          this.logger.log(`${this.tag(chatId)}: поставил реакцию ${alternative} (первая не прошла)`);
+          return;
+        } catch {
+          // Ниже логируем исходную ошибку.
+        }
+      }
+      // Ничего не вышло — паузу не тратим, попробуем на следующем сообщении.
+      this.logger.warn(
         `${this.tag(chatId)}: не удалось поставить реакцию — ${this.describeError(error)}`
       );
     }

@@ -190,6 +190,11 @@ export class BaseConfigService {
     return this.getNumber('TROLL_JERK_BATCH_WINDOW', 15);
   }
 
+  /** Пауза между ответами на клички/мат в одном чате, сек. */
+  get trollJerkCooldown(): number {
+    return this.getNumber('TROLL_JERK_COOLDOWN', 180);
+  }
+
   /**
    * Пауза без сообщений, после которой беседа считается новой, мин.
    * Нужна, чтобы бот не продолжал нить, которую все уже забыли.
