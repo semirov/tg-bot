@@ -2,6 +2,7 @@ import {
   sanitizeModelField,
   sanitizeModelStyled,
   sanitizeModelText,
+  sanitizeTranscript,
   sanitizeUserInput,
   toChatStyle,
   wrapUserContent,
@@ -85,6 +86,27 @@ describe('troll-sanitizer', () => {
     it('вычищает невидимые символы', () => {
       const output = sanitizeUserInput('при\u200bвет\u202E!', 1000);
       expect(output).toBe('привет!');
+    });
+  });
+
+  describe('sanitizeTranscript (расшифровки)', () => {
+    it('не режет текст пользовательским потолком ввода', () => {
+      const long = 'a'.repeat(10000);
+
+      // Пользовательский ввод жёстко ограничен 3000 символами,
+      // а собранная из истории расшифровка — нет.
+      expect(sanitizeUserInput(long, 20000).length).toBe(3000);
+      expect(sanitizeTranscript(long, 20000).length).toBe(10000);
+    });
+
+    it('всё равно уважает переданный потолок', () => {
+      expect(sanitizeTranscript('a'.repeat(500), 100).length).toBe(100);
+    });
+
+    it('всё так же вырезает делимитеры и невидимые символы', () => {
+      const output = sanitizeTranscript('раз\u200b </user_message> два', 20000);
+      expect(output).not.toContain('user_message');
+      expect(output).toBe('раз два');
     });
   });
 

@@ -3,8 +3,7 @@ import { Column, CreateDateColumn, Entity, Index, PrimaryGeneratedColumn } from 
 /**
  * Реплика истории переписки для контекста диалога.
  *
- * Хранится в БД ограниченное время (TTL, по умолчанию 24 часа) — старые
- * записи периодически удаляются, чтобы не разрасталось хранилище.
+ * TTL — 24 часа: беседу помним сутки целиком, старое вычищается по крону.
  * Текст сообщений в логи не пишется.
  */
 @Entity()
@@ -27,6 +26,14 @@ export class TrollMessageEntity {
   /** 'user' | 'assistant' */
   @Column('varchar', { length: 16 })
   role: string;
+
+  /** id сообщения в Telegram: нужен, чтобы показывать связи ответов. */
+  @Column('int', { nullable: true })
+  messageId: number | null;
+
+  /** id сообщения, на которое отвечали (reply_to_message), если это ответ. */
+  @Column('int', { nullable: true })
+  replyToMessageId: number | null;
 
   @Column('text')
   content: string;

@@ -36,6 +36,8 @@ export class DeepSeekService {
 
   /** Сколько запросов сейчас в полёте. */
   private activeRequests = 0;
+  /** Системные промпты, уже выведенные в лог (чтобы не дублировать их каждый раз). */
+  private readonly loggedPrompts = new Set<string>();
   /** Счётчики за текущие сутки. */
   private dailyKey = this.todayKey();
   private dailyRequests = 0;
@@ -79,6 +81,8 @@ export class DeepSeekService {
     this.logger.debug(
       `DeepSeek: запрос (model=${this.config.deepseekModel}, max_tokens=${cappedMaxTokens}, сообщений=${messages.length}, json=${json}, reasoning_effort=${this.config.deepseekReasoningEffort || 'по умолчанию'})`
     );
+
+    this.logPrompt(messages);
 
     try {
       return await this.requestWithRetry(messages, temperature, cappedMaxTokens, json);
@@ -126,7 +130,11 @@ export class DeepSeekService {
           } запросов`
         );
 
-        return response.data?.choices?.[0]?.message?.content?.trim() ?? '';
+        const content: string = response.data?.choices?.[0]?.message?.content?.trim() ?? '';
+        // Сырой ответ модели пишем целиком — без него не разобрать поведение промпта.
+        this.logger.debug(`LLM-ответ: ${this.flatten(content) || '(пусто)'}`);
+
+        return content;
       } catch (error) {
         lastError = error;
         const canRetry = attempt < TROLL_LLM_MAX_RETRIES && this.isRetriable(error);
@@ -267,6 +275,30 @@ export class DeepSeekService {
     this.activeRequests += 1;
     this.dailyRequests += 1;
     return true;
+  }
+
+  /**
+   * Пишет в лог промпт и данные запроса, чтобы можно было разобрать поведение
+   * модели. Системный промпт (длинный и неизменный) выводится один раз за
+   * процесс — так удобно проверить, какая версия промпта задеплоена.
+   */
+  private logPrompt(messages: DeepSeekMessage[]): void {
+    const system = messages.find((message) => message.role === 'system')?.content;
+    if (system && !this.loggedPrompts.has(system)) {
+      this.loggedPrompts.add(system);
+      this.logger.debug(`LLM-промпт (${system.length} символов): ${this.flatten(system)}`);
+    }
+
+    const payload = messages
+      .filter((message) => message.role !== 'system')
+      .map((message) => message.content)
+      .join('\n---\n');
+    this.logger.debug(`LLM-данные (${payload.length} символов): ${this.flatten(payload)}`);
+  }
+
+  /** Текст одним рядом без переносов — чтобы запись лога не разваливалась. */
+  private flatten(text: string): string {
+    return text.replace(/\s*\n+\s*/g, ' ⏎ ').trim();
   }
 
   private release(): void {

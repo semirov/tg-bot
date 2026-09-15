@@ -2,6 +2,11 @@
  * Жёсткие лимиты безопасности LLM-интеграции. Это НЕ настройки админки:
  * они не должны ослабляться, чтобы бота нельзя было «разогнать» на перерасход
  * токенов или вывести из строя через слишком длинный ввод.
+ *
+ * Объём контекста ограничен временем: бот помнит беседу за TROLL_HISTORY_TTL_HOURS
+ * (24 часа) целиком, без рабочих лимитов по репликам и символам. Записи старше TTL
+ * удаляются, чтобы контекст не утонул. Константы TROLL_CONTEXT_MAX_* — аварийный
+ * предохранитель от патологического флуда, а не рабочий лимит.
  */
 
 /** Абсолютный потолок max_tokens на один запрос к DeepSeek. */
@@ -35,10 +40,10 @@ export const TROLL_MAX_CRIMINAL_TITLE_CHARS = 120;
 export const TROLL_SETTINGS_ID = 1;
 
 /** Максимум сообщений одного пользователя для /stat. */
-export const TROLL_STAT_MAX_MESSAGES_PER_USER = 50;
+export const TROLL_STAT_MAX_MESSAGES_PER_USER = 500;
 
 /** Потолок длины текста пользователя для /stat, символов. */
-export const TROLL_STAT_MAX_CHARS = 4000;
+export const TROLL_STAT_MAX_CHARS = 200000;
 
 /** Пауза между вызовами /stat в одном чате, сек. */
 export const TROLL_STAT_COOLDOWN_SEC = 60;
@@ -51,9 +56,6 @@ export const TROLL_FUTURE_GOOD_CHANCE = 0.01;
 
 /** Потолок длины предсказания /future, символов (грубая защита от «разгона», не стилевой лимит). */
 export const TROLL_FUTURE_MAX_CHARS = 400;
-
-/** Сколько часов хранить предсказания (потом чистим). */
-export const TROLL_FUTURE_STORE_HOURS = 24;
 
 /** После скольких запросов подряд бот меняет предсказание на обидное. */
 export const TROLL_FUTURE_ANGRY_AFTER = 2;
@@ -77,16 +79,16 @@ export const TROLL_MEME_MAX_ATTEMPTS = 5;
 export const TROLL_SUMMARY_COOLDOWN_SEC = 60 * 60;
 
 /** Сколько последних сообщений брать в саммари. */
-export const TROLL_SUMMARY_MAX_MESSAGES = 400;
+export const TROLL_SUMMARY_MAX_MESSAGES = 1500;
 
 /**
  * Сколько последних реплик чата брать в саммари, если окно «с прошлого раза»
  * оказалось пустым (лучше пересказать хоть что-то, чем отказать).
  */
-export const TROLL_SUMMARY_FALLBACK_MESSAGES = 60;
+export const TROLL_SUMMARY_FALLBACK_MESSAGES = 200;
 
 /** Потолок длины входного текста для саммари, символов. */
-export const TROLL_SUMMARY_MAX_CHARS = 16000;
+export const TROLL_SUMMARY_MAX_CHARS = 200000;
 
 /** Потолок max_tokens для запроса саммари. */
 export const TROLL_SUMMARY_MAX_TOKENS = 700;
@@ -98,27 +100,23 @@ export const TROLL_SUMMARY_MAX_REPLY_CHARS = 700;
 export const TROLL_MAX_BATCH_MESSAGES = 20;
 
 /**
- * Абсолютный потолок числа реплик в контексте беседы.
- * Отделён от суток: сам контекст — это вся беседа за 24 часа (TTL истории),
- * а тут только страховка от совсем бесконечного чата.
+ * Аварийный потолок числа реплик в контексте беседы. Не рабочий лимит:
+ * рабочий ограничитель — только TTL истории (24 часа). Нужен, чтобы
+ * патологический флуд не уронил запрос.
  */
-export const TROLL_CONTEXT_MAX_TURNS = 1500;
+export const TROLL_CONTEXT_MAX_TURNS = 5000;
 
 /**
- * Абсолютный потолок длины расшифровки беседы, символов.
- * Расчитан на то, чтобы суточная беседа влезала целиком (~20 тыс. токенов
- * при 48 тыс. символов), и остаётся далеко от границ контекста deepseek-chat.
+ * Аварийный потолок длины расшифровки беседы, символов (~70 тыс. токенов).
+ * Тоже не рабочий лимит: суточная беседа в него укладывается с запасом.
  */
-export const TROLL_CONTEXT_MAX_CHARS = 48000;
+export const TROLL_CONTEXT_MAX_CHARS = 200000;
 
 /** Максимальная длина одной реплики в истории, символов. */
 export const TROLL_HISTORY_MAX_CHARS = 3000;
 
-/** Сколько часов хранить историю переписки, потом удаляем. */
+/** Сколько часов хранить историю переписки: всю беседу за сутки, потом вычищаем. */
 export const TROLL_HISTORY_TTL_HOURS = 24;
-
-/** Как часто чистить старую историю. */
-export const TROLL_HISTORY_CLEANUP_INTERVAL_MS = 60 * 60 * 1000;
 
 /** Потолок max_tokens для диалогового ответа. */
 export const TROLL_JERK_MAX_TOKENS = 300;
