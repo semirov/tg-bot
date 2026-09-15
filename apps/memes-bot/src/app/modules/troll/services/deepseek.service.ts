@@ -1,7 +1,13 @@
 import { Injectable, Logger } from '@nestjs/common';
 import axios, { AxiosInstance } from 'axios';
 import { BaseConfigService } from '../../config/base-config.service';
-import { TROLL_HARD_MAX_TOKENS, TROLL_MAX_CONCURRENT_REQUESTS } from '../constants/troll-limits';
+import {
+  TROLL_HARD_MAX_TOKENS,
+  TROLL_LLM_MAX_RETRIES,
+  TROLL_LLM_RETRY_DELAY_MS,
+  TROLL_LLM_TIMEOUT_MS,
+  TROLL_MAX_CONCURRENT_REQUESTS,
+} from '../constants/troll-limits';
 import { DeepSeekMessage, DeepSeekOptions } from '../interfaces/troll.interface';
 import { TrollSettingsService } from './troll-settings.service';
 
@@ -11,7 +17,8 @@ import { TrollSettingsService } from './troll-settings.service';
  * Все вызовы проходят через защиту от перерасхода токенов:
  *  - жёсткий потолок max_tokens на запрос;
  *  - лимит одновременных запросов;
- *  - суточный лимит запросов (настраивается в админке).
+ *  - суточный лимит запросов (настраивается в админке);
+ *  - таймаут на запрос и один повтор при сетевом сбое/таймауте.
  * При исчерпании лимитов запрос не отправляется, возвращается пустой ответ.
  */
 @Injectable()
@@ -33,7 +40,7 @@ export class DeepSeekService {
   ) {
     this.client = axios.create({
       baseURL: this.config.deepseekBaseUrl,
-      timeout: 30000,
+      timeout: TROLL_LLM_TIMEOUT_MS,
       headers: {
         Authorization: `Bearer ${this.config.deepseekApiKey}`,
         'Content-Type': 'application/json',
@@ -63,30 +70,85 @@ export class DeepSeekService {
     this.logger.debug(
       `DeepSeek: запрос (model=${this.config.deepseekModel}, max_tokens=${cappedMaxTokens}, сообщений=${messages.length}, json=${json})`
     );
-    const startedAt = Date.now();
 
     try {
-      const response = await this.client.post('/chat/completions', {
-        model: this.config.deepseekModel,
-        messages,
-        temperature,
-        max_tokens: cappedMaxTokens,
-        ...(json ? { response_format: { type: 'json_object' } } : {}),
-      });
-
-      this.recordTokens(response.data?.usage?.total_tokens);
-
-      const limit = this.settings.current.dailyRequestLimit;
-      this.logger.log(
-        `DeepSeek: ответ за ${Date.now() - startedAt}мс, tokens=${
-          response.data?.usage?.total_tokens ?? '?'
-        }, сегодня ${this.dailyRequests}/${limit > 0 ? limit : '∞'}`
-      );
-
-      return response.data?.choices?.[0]?.message?.content?.trim() ?? '';
+      return await this.requestWithRetry(messages, temperature, cappedMaxTokens, json);
     } finally {
       this.release();
     }
+  }
+
+  /**
+   * Отправляет запрос, повторяя его при сетевом сбое или таймауте.
+   * Если все попытки провалились — выбрасывает исключение, вызывающий код
+   * трактует его как «модель не ответила».
+   */
+  private async requestWithRetry(
+    messages: DeepSeekMessage[],
+    temperature: number,
+    maxTokens: number,
+    json: boolean
+  ): Promise<string> {
+    let lastError: unknown;
+
+    for (let attempt = 0; attempt <= TROLL_LLM_MAX_RETRIES; attempt += 1) {
+      const startedAt = Date.now();
+      try {
+        const response = await this.client.post('/chat/completions', {
+          model: this.config.deepseekModel,
+          messages,
+          temperature,
+          max_tokens: maxTokens,
+          ...(json ? { response_format: { type: 'json_object' } } : {}),
+        });
+
+        this.recordTokens(response.data?.usage?.total_tokens);
+
+        const limit = this.settings.current.dailyRequestLimit;
+        this.logger.log(
+          `DeepSeek: ответ за ${Date.now() - startedAt}мс, tokens=${
+            response.data?.usage?.total_tokens ?? '?'
+          }, сегодня ${this.dailyRequests}/${limit > 0 ? limit : '∞'}`
+        );
+
+        return response.data?.choices?.[0]?.message?.content?.trim() ?? '';
+      } catch (error) {
+        lastError = error;
+        const canRetry = attempt < TROLL_LLM_MAX_RETRIES && this.isRetriable(error);
+        this.logger.warn(
+          `DeepSeek: запрос не удался за ${Date.now() - startedAt}мс — ${this.describeError(
+            error
+          )}${canRetry ? `, повтор ${attempt + 1}/${TROLL_LLM_MAX_RETRIES}` : ''}`
+        );
+        if (!canRetry) {
+          throw error;
+        }
+        await this.delay(TROLL_LLM_RETRY_DELAY_MS);
+      }
+    }
+
+    throw lastError;
+  }
+
+  /**
+   * Повторяем только «сетевые» сбои: таймаут, обрыв соединения, 429 и 5xx.
+   * Ошибки вида 400/401 повторять бессмысленно.
+   */
+  private isRetriable(error: unknown): boolean {
+    if (!axios.isAxiosError(error)) {
+      return false;
+    }
+    const status = error.response?.status;
+    if (status === undefined) {
+      return true;
+    }
+    return status === 429 || status >= 500;
+  }
+
+  private delay(ms: number): Promise<void> {
+    return new Promise((resolve) => {
+      setTimeout(resolve, ms).unref?.();
+    });
   }
 
   /**
@@ -225,7 +287,17 @@ export class DeepSeekService {
   private describeError(error: unknown): string {
     if (axios.isAxiosError(error)) {
       const status = error.response?.status;
-      return `${error.message}${status ? ` (status ${status})` : ''}`;
+      if (
+        status === undefined &&
+        (error.code === 'ECONNABORTED' || /abort|timeout/i.test(error.message))
+      ) {
+        return `таймаут ${Math.round(TROLL_LLM_TIMEOUT_MS / 1000)}с`;
+      }
+      if (status !== undefined && status >= 500) {
+        return `ошибка на стороне DeepSeek (status ${status})`;
+      }
+      const code = error.code ? `, код ${error.code}` : '';
+      return `${error.message}${status !== undefined ? ` (status ${status})` : ''}${code}`;
     }
     return error instanceof Error ? error.message : String(error);
   }
