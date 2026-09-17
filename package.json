@@ -5,9 +5,14 @@
   "scripts": {
     "start:memes-bot": "nx serve memes-bot",
     "build:memes-bot": "nx build memes-bot",
-    "docker:memes-bot:build": "docker build --platform linux/amd64 -f ./apps/memes-bot/Dockerfile -t  cr.yandex/crp8g8jm3p8d780a8hk3/telegram-bot:0.11.1 .",
-    "docker:memes-bot:push": "docker push cr.yandex/crp8g8jm3p8d780a8hk3/telegram-bot:0.11.1",
-    "docker:memes-bot:publish": "npm run docker:memes-bot:build && npm run docker:memes-bot:push"
+    "docker:memes-bot:build": "docker build --platform linux/amd64 -f ./apps/memes-bot/Dockerfile -t  cr.yandex/crp8g8jm3p8d780a8hk3/telegram-bot:0.13.1 .",
+    "docker:memes-bot:push": "docker push cr.yandex/crp8g8jm3p8d780a8hk3/telegram-bot:0.13.1",
+    "docker:memes-bot:publish": "npm run docker:memes-bot:build && npm run docker:memes-bot:push",
+    "troll:audit": "ts-node --transpile-only -O '{\"module\":\"commonjs\"}' apps/memes-bot/tools/troll-audit/run.ts",
+    "troll:audit:selfcheck": "ts-node --transpile-only -O '{\"module\":\"commonjs\"}' apps/memes-bot/tools/troll-audit/selfcheck-test.ts",
+    "troll:audit:reviewer": "ts-node --transpile-only -O '{\"module\":\"commonjs\"}' apps/memes-bot/tools/troll-audit/reviewer-test.ts",
+    "troll:audit:log": "ts-node --transpile-only -O '{\"module\":\"commonjs\"}' apps/memes-bot/tools/troll-audit/verify-log.ts",
+    "troll:audit:types": "tsc -p apps/memes-bot/tools/troll-audit/tsconfig.json"
   },
   "private": true,
   "dependencies": {

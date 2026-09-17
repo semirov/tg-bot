@@ -78,6 +78,14 @@ export class TrollSettingsEntity {
   @Column('int', { default: 1000 })
   maxInputChars: number;
 
+  /** Самопроверка ответа ревизором с переписыванием при низкой оценке. */
+  @Column('boolean', { default: true })
+  selfCheckEnabled: boolean;
+
+  /** Порог оценки: ниже него ответ уходит на переписывание. */
+  @Column('real', { default: 0.6 })
+  selfCheckThreshold: number;
+
   @UpdateDateColumn({ type: 'timestamp' })
   updatedAt: Date;
 }

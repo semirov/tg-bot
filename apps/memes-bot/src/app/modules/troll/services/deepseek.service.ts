@@ -76,10 +76,14 @@ export class DeepSeekService {
     messages: DeepSeekMessage[],
     options: DeepSeekOptions = {}
   ): Promise<string> {
-    const { temperature = 0.9, maxTokens = 400, json = false } = options;
+    const { temperature = 0.9, maxTokens = 400, json = false, label, model } = options;
+    // Модель можно переопределить для отдельного вызова: диагностика дефекта
+    // идёт на старшей модели, вся остальная работа — на рабочей.
+    const useModel = model ?? this.config.deepseekModel;
     if (!this.enabled) {
       return '';
     }
+    const tag = label ? `[${label}] ` : '';
     const cappedMaxTokens = Math.min(
       Math.max(1, Math.floor(maxTokens)),
       TROLL_HARD_MAX_TOKENS
@@ -91,13 +95,13 @@ export class DeepSeekService {
     }
 
     this.logger.debug(
-      `DeepSeek: запрос (model=${this.config.deepseekModel}, max_tokens=${cappedMaxTokens}, сообщений=${messages.length}, json=${json}, reasoning_effort=${this.config.deepseekReasoningEffort || 'по умолчанию'})`
+      `${tag}DeepSeek: запрос (model=${useModel}, max_tokens=${cappedMaxTokens}, сообщений=${messages.length}, json=${json}, reasoning_effort=${this.config.deepseekReasoningEffort || 'по умолчанию'})`
     );
 
-    this.logPrompt(messages);
+    this.logPrompt(messages, tag);
 
     try {
-      return await this.requestWithRetry(messages, temperature, cappedMaxTokens, json);
+      return await this.requestWithRetry(messages, temperature, cappedMaxTokens, json, tag, useModel);
     } finally {
       this.release();
     }
@@ -112,7 +116,9 @@ export class DeepSeekService {
     messages: DeepSeekMessage[],
     temperature: number,
     maxTokens: number,
-    json: boolean
+    json: boolean,
+    tag = '',
+    model = this.config.deepseekModel
   ): Promise<string> {
     let lastError: unknown;
     const reasoningEffort = this.config.deepseekReasoningEffort;
@@ -121,7 +127,7 @@ export class DeepSeekService {
       const startedAt = Date.now();
       try {
         const response = await this.client.post('/chat/completions', {
-          model: this.config.deepseekModel,
+          model,
           messages,
           temperature,
           max_tokens: maxTokens,
@@ -131,11 +137,11 @@ export class DeepSeekService {
           ...(json ? { response_format: { type: 'json_object' } } : {}),
         });
 
-        this.recordUsage(response.data?.usage);
+        this.recordUsage(response.data?.usage, model);
 
         const limit = this.settings.current.dailyRequestLimit;
         this.logger.log(
-          `DeepSeek: ответ за ${Date.now() - startedAt}мс, tokens=${
+          `${tag}DeepSeek: ответ за ${Date.now() - startedAt}мс, tokens=${
             response.data?.usage?.total_tokens ?? '?'
           }, сегодня ${formatUsd(this.dailyCostUsd)}, ${this.dailyRequests}/${
             limit > 0 ? limit : '∞'
@@ -144,14 +150,14 @@ export class DeepSeekService {
 
         const content: string = response.data?.choices?.[0]?.message?.content?.trim() ?? '';
         // Сырой ответ модели пишем целиком — без него не разобрать поведение промпта.
-        this.logger.debug(`LLM-ответ: ${this.flatten(content) || '(пусто)'}`);
+        this.logger.debug(`${tag}LLM-ответ: ${this.flatten(content) || '(пусто)'}`);
 
         return content;
       } catch (error) {
         lastError = error;
         const canRetry = attempt < TROLL_LLM_MAX_RETRIES && this.isRetriable(error);
         this.logger.warn(
-          `DeepSeek: запрос не удался за ${Date.now() - startedAt}мс — ${this.describeError(
+          `${tag}DeepSeek: запрос не удался за ${Date.now() - startedAt}мс — ${this.describeError(
             error
           )}${canRetry ? `, повтор ${attempt + 1}/${TROLL_LLM_MAX_RETRIES}` : ''}`
         );
@@ -294,18 +300,18 @@ export class DeepSeekService {
    * модели. Системный промпт (длинный и неизменный) выводится один раз за
    * процесс — так удобно проверить, какая версия промпта задеплоена.
    */
-  private logPrompt(messages: DeepSeekMessage[]): void {
+  private logPrompt(messages: DeepSeekMessage[], tag = ''): void {
     const system = messages.find((message) => message.role === 'system')?.content;
     if (system && !this.loggedPrompts.has(system)) {
       this.loggedPrompts.add(system);
-      this.logger.debug(`LLM-промпт (${system.length} символов): ${this.flatten(system)}`);
+      this.logger.debug(`${tag}LLM-промпт (${system.length} символов): ${this.flatten(system)}`);
     }
 
     const payload = messages
       .filter((message) => message.role !== 'system')
       .map((message) => message.content)
       .join('\n---\n');
-    this.logger.debug(`LLM-данные (${payload.length} символов): ${this.flatten(payload)}`);
+    this.logger.debug(`${tag}LLM-данные (${payload.length} символов): ${this.flatten(payload)}`);
   }
 
   /** Текст одним рядом без переносов — чтобы запись лога не разваливалась. */
@@ -322,7 +328,7 @@ export class DeepSeekService {
    * DeepSeek отдаёт `prompt_cache_hit_tokens` / `prompt_cache_miss_tokens` —
    * они в разы дешевле/дороже, поэтому считаем их раздельно.
    */
-  private recordUsage(raw: unknown): void {
+  private recordUsage(raw: unknown, model = this.config.deepseekModel): void {
     const usage = (raw ?? {}) as {
       total_tokens?: unknown;
       prompt_tokens?: unknown;
@@ -346,7 +352,7 @@ export class DeepSeekService {
     }
 
     this.dailyCostUsd += estimateCostUsd(
-      this.config.deepseekModel,
+      model,
       { promptTokens, completionTokens, cacheHitTokens, cacheMissTokens },
       { tariff: this.priceOverride }
     );
