@@ -324,6 +324,8 @@ export class AdminMenuService implements OnModuleInit {
     const jerkWindowPresets = [0, 10, 15, 30, 60, 120];
     const jerkCooldownPresets = [0, 30, 60, 120, 180, 300, 600];
     const dialogPausePresets = [5, 10, 15, 30, 60, 120, 360];
+    /** Порог самопроверки: ниже него ответ отправляется на переписывание. */
+    const selfCheckThresholdPresets = [0.4, 0.5, 0.6, 0.7, 0.8];
     const memeChancePresets = [0.05, 0.1, 0.2, 0.3, 0.5];
     const dailyLimitPresets = [100, 200, 500, 1000, 2000, 5000, 10000];
     const maxInputPresets = [500, 800, 1000, 1500, 2000, 3000];
@@ -571,6 +573,24 @@ export class AdminMenuService implements OnModuleInit {
         this.ownerGuard(async (ctx) => {
           await this.trollSettings.update({
             maxInputChars: this.cycle(current().maxInputChars, maxInputPresets),
+          });
+          ctx.menu.update();
+        })
+      )
+      .row()
+      .text(
+        () => `Проверка ответа: ${current().selfCheckEnabled ? '🟢 вкл' : '⚪️ выкл'}`,
+        this.ownerGuard(async (ctx) => {
+          await this.trollSettings.update({ selfCheckEnabled: !current().selfCheckEnabled });
+          ctx.menu.update();
+        })
+      )
+      .row()
+      .text(
+        () => `Порог проверки: ${pct(current().selfCheckThreshold)}`,
+        this.ownerGuard(async (ctx) => {
+          await this.trollSettings.update({
+            selfCheckThreshold: this.cycle(current().selfCheckThreshold, selfCheckThresholdPresets),
           });
           ctx.menu.update();
         })

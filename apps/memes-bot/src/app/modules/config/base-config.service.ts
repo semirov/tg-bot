@@ -253,6 +253,11 @@ export class BaseConfigService {
     return this.getNumber('TROLL_MAX_INPUT_CHARS', 1000);
   }
 
+  /** Порог самопроверки ответа: ниже него ответ переписывается. */
+  get trollSelfCheckThreshold(): number {
+    return this.getNumber('TROLL_SELF_CHECK_THRESHOLD', 0.6);
+  }
+
   private getNumber(key: string, fallback: number): number {
     const raw = this.configService.get<string>(key);
     const parsed = Number(raw);

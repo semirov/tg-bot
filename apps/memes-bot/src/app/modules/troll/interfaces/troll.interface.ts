@@ -37,6 +37,10 @@ export interface DeepSeekOptions {
   temperature?: number;
   maxTokens?: number;
   json?: boolean;
+  /** Метка вызова для логов: что именно генерируем (диалог, ревизия, предсказание…). */
+  label?: string;
+  /** Переопределить модель для вызова (по умолчанию — рабочая модель из настроек). */
+  model?: string;
 }
 
 /**
@@ -96,4 +100,8 @@ export interface TrollRuntimeSettings {
   dailyRequestLimit: number;
   /** Максимальная длина пользовательского текста, отправляемого в модель. */
   maxInputChars: number;
+  /** Самопроверка ответа с переписыванием, если ревизор поставил низкую оценку. */
+  selfCheckEnabled: boolean;
+  /** Порог оценки ревизора: ниже него ответ переписывается. */
+  selfCheckThreshold: number;
 }

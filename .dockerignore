@@ -9,3 +9,5 @@ tmp
 .test-token
 postgress_backup.*
 coverage
+# Утилиты аудита промптов не нужны в образе
+apps/memes-bot/tools

@@ -3,7 +3,7 @@ import { Cron, CronExpression } from '@nestjs/schedule';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Bot, InlineKeyboard } from 'grammy';
 import type { ReactionTypeEmoji, User } from 'grammy/types';
-import { LessThan, MoreThanOrEqual, Repository } from 'typeorm';
+import { Between, In, LessThan, LessThanOrEqual, MoreThanOrEqual, Repository } from 'typeorm';
 import { BotContext } from '../../bot/interfaces/bot-context.interface';
 import { BOT } from '../../bot/providers/bot.provider';
 import { BaseConfigService } from '../../config/base-config.service';
@@ -11,6 +11,13 @@ import { TROLL_CALLBACK_REGEXP, TrollCallbackEnum } from '../constants/troll-cal
 import {
   TROLL_CONTEXT_MAX_CHARS,
   TROLL_CONTEXT_MAX_TURNS,
+  TROLL_DEFECT_CONTEXT_CHARS,
+  TROLL_DEFECT_CONTEXT_TURNS,
+  TROLL_DEFECT_SEARCH_LIMIT,
+  TROLL_DEFECT_SEVERITIES,
+  TROLL_DEFECT_TIME_WINDOW_MS,
+  TROLL_DIAGNOSTIC_MAX_TOKENS,
+  TROLL_DIAGNOSTIC_MODEL,
   TROLL_FUTURE_ANGRY_AFTER,
   TROLL_FUTURE_AVOID_REPEAT,
   TROLL_FUTURE_COOLDOWN_HOURS,
@@ -28,6 +35,9 @@ import {
   TROLL_MEME_POOL_SIZE,
   TROLL_MIRROR_MAX_CHARS,
   TROLL_MIRROR_MIN_WORD_LEN,
+  TROLL_SELF_CHECK_CONTEXT_CHARS,
+  TROLL_SELF_CHECK_MAX_ATTEMPTS,
+  TROLL_SELF_CHECK_MAX_TOKENS,
   TROLL_STAT_COOLDOWN_SEC,
   TROLL_STAT_MAX_CHARS,
   TROLL_STAT_MAX_MESSAGES_PER_USER,
@@ -42,6 +52,7 @@ import {
   CONVERSATION_PAUSE_RULE,
   CRIMINAL_ASSESSMENT_PROMPT,
   CRIMINAL_STAT_PROMPT,
+  DEFECT_DIAGNOSTIC_PROMPT,
   FUTURE_ANGRY_PROMPT,
   FUTURE_BAD_PROMPT,
   FUTURE_GOOD_PROMPT,
@@ -49,7 +60,9 @@ import {
   MEME_DENY_PROMPT,
   MIRROR_PROMPT,
   SARCASM_PROMPT,
+  SELF_CHECK_PROMPT,
   SUMMARY_PROMPT,
+  buildRetryNote,
   MESSAGE_REFS_RULE,
   TROLL_CAPABILITIES_REPLY,
   TROLL_FUTURE_TECHNIQUES,
@@ -59,6 +72,7 @@ import {
 } from '../constants/troll-prompts';
 import { isAddressedToBot, isCapabilityQuestion, isNamedCall } from '../constants/troll-addresses';
 import { TrollChatEntity } from '../entities/troll-chat.entity';
+import { TrollDefectEntity } from '../entities/troll-defect.entity';
 import { TrollMessageEntity } from '../entities/troll-message.entity';
 import { TrollPredictionEntity } from '../entities/troll-prediction.entity';
 import { ChannelMemeEntity } from '../../channel-monitor/entities/channel-meme.entity';
@@ -71,7 +85,9 @@ import {
 import {
   buildConversationContext,
   formatConversationPause,
+  ConversationItem,
 } from '../utils/troll-context';
+import { DefectCandidate, normalizeMatchText, pickDefectAnswer } from '../utils/troll-defect';
 import {
   containsLink,
   sanitizeModelField,
@@ -153,6 +169,8 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
     private readonly history: Repository<TrollMessageEntity>,
     @InjectRepository(TrollPredictionEntity)
     private readonly predictions: Repository<TrollPredictionEntity>,
+    @InjectRepository(TrollDefectEntity)
+    private readonly defects: Repository<TrollDefectEntity>,
     @InjectRepository(ChannelMemeEntity)
     private readonly memes: Repository<ChannelMemeEntity>
   ) {}
@@ -296,6 +314,12 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
 
   private async onMessage(ctx: BotContext): Promise<void> {
     const chat = ctx.chat;
+
+    // В личке у тролля один сценарий: владелец присылает ответ бота на разбор.
+    if (chat?.type === 'private') {
+      await this.onPrivateMessage(ctx);
+      return;
+    }
 
     // Работаем только в группах и только для реальных пользователей.
     if (!chat || (chat.type !== 'group' && chat.type !== 'supergroup')) {
@@ -441,7 +465,7 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
       const assessment = await this.deepSeek.completeJson<CriminalAssessment>(
         CRIMINAL_ASSESSMENT_PROMPT,
         wrapUserContent(cleaned),
-        { temperature: 0.2, maxTokens: 700 }
+        { temperature: 0.2, maxTokens: 1000, label: 'статья-ук' }
       );
 
       if (!assessment || typeof assessment.probability !== 'number') {
@@ -602,27 +626,22 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
     // Держим «печатает…», пока генерируется ответ.
     void this.sendTyping(chatId);
 
-    const reply = await this.completeWithHistory(
+    const reply = await this.generateCheckedReply(
       JERK_PROMPT,
       chatId,
-      {
-        maxTokens: TROLL_JERK_MAX_TOKENS,
-        temperature: 1.05,
-      },
-      { userId: batch.focusUserId, userName: batch.focusUserName }
+      { maxTokens: TROLL_JERK_MAX_TOKENS, temperature: 1.05, label: 'диалог' },
+      { userId: batch.focusUserId, userName: batch.focusUserName },
+      (raw) =>
+        this.restoreNames(chatId, toChatStyle(sanitizeModelText(raw, TROLL_MAX_REPLY_CHARS)))
     );
 
-    const safe = this.restoreNames(
-      chatId,
-      toChatStyle(sanitizeModelText(reply ?? '', TROLL_MAX_REPLY_CHARS))
-    );
-    if (!safe) {
+    if (!reply) {
       this.logger.warn(`${this.tag(chatId)}: пустой ответ модели — не отправляю`);
       return;
     }
 
-    const sentId = await this.safeSendToChat(chatId, safe, batch.replyToMessageId);
-    await this.remember(chatId, 'assistant', safe, {
+    const sentId = await this.safeSendToChat(chatId, reply, batch.replyToMessageId);
+    await this.remember(chatId, 'assistant', reply, {
       messageId: sentId ?? undefined,
       replyToMessageId: batch.replyToMessageId,
     });
@@ -766,7 +785,7 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
     const stat = await this.deepSeek.completeJson<CriminalStat>(
       CRIMINAL_STAT_PROMPT,
       wrapUserContent(cleaned),
-      { temperature: 0.6, maxTokens: 700 }
+      { temperature: 0.6, maxTokens: 1000, label: 'стат' }
     );
 
     // Модель не ответила (таймаут/лимит) — не врём про «0 лет», а честно признаёмся.
@@ -832,6 +851,9 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
       return;
     }
 
+    // Имя запросившего нужно, чтобы восстановить регистр в предсказании.
+    this.trackName(chat.id, ctx.from.id, this.describeUser(ctx.from));
+
     const since = new Date(Date.now() - TROLL_FUTURE_COOLDOWN_HOURS * 60 * 60 * 1000);
     const cached = await this.predictions.findOne({
       where: { chatId: chat.id, userId: ctx.from.id, createdAt: MoreThanOrEqual(since) },
@@ -867,7 +889,7 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
       const rawAngry = await this.deepSeek.completeText(
         FUTURE_ANGRY_PROMPT,
         this.buildPredictionRequest(ctx.from, avoid, technique),
-        { maxTokens: 80, temperature: 1.05 }
+        { maxTokens: 80, temperature: 1.05, label: 'предсказание-злое' }
       );
       const angry = this.finalizePrediction(chat.id, rawAngry);
 
@@ -898,7 +920,7 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
     const raw = await this.deepSeek.completeText(
       isGood ? FUTURE_GOOD_PROMPT : FUTURE_BAD_PROMPT,
       this.buildPredictionRequest(ctx.from, avoid, technique),
-      { maxTokens: 80, temperature: isGood ? 0.9 : 1.05 }
+      { maxTokens: 80, temperature: isGood ? 0.9 : 1.05, label: isGood ? 'предсказание-доброе' : 'предсказание' }
     );
 
     const text = this.finalizePrediction(chat.id, raw);
@@ -1061,7 +1083,7 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
     const raw = await this.deepSeek.completeText(
       MEME_DENY_PROMPT,
       wrapUserContent(`причина: ${reason}`),
-      { maxTokens: 50, temperature: 1.05 }
+      { maxTokens: 50, temperature: 1.05, label: 'отказ' }
     );
     const text = toChatStyle(sanitizeModelText(raw ?? '', TROLL_MAX_REPLY_CHARS));
     await this.safeSendToChat(ctx.chat.id, text || 'нет, не сейчас', ctx.message?.message_id);
@@ -1144,13 +1166,19 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
     void this.sendTyping(chat.id);
 
     const joined = ordered
-      .map((row) => `${row.userName ?? 'кто-то'}: ${row.content}`)
+      .map((row) => {
+        // Имена нужны и для восстановления регистра в ответе: карта чата живёт
+        // в памяти и в /sumarize сама не пополняется.
+        this.trackName(chat.id, row.userId, row.userName);
+        return `${row.userName ?? 'кто-то'}: ${row.content}`;
+      })
       .join('\n');
     const cleaned = sanitizeTranscript(joined, TROLL_SUMMARY_MAX_CHARS);
 
     const raw = await this.deepSeek.completeText(SUMMARY_PROMPT, wrapUserContent(cleaned), {
       temperature: 0.9,
       maxTokens: TROLL_SUMMARY_MAX_TOKENS,
+      label: 'саммари',
     });
 
     const text = this.restoreNames(
@@ -1247,6 +1275,7 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
     const reply = await this.deepSeek.completeText(MIRROR_PROMPT, wrapUserContent(cleaned), {
       maxTokens: 24,
       temperature: 1.0,
+      label: 'кривляние',
     });
 
     const mirrored = toChatStyle(this.normalizeMirrorWord(reply ?? ''));
@@ -1287,20 +1316,16 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
     this.lastSarcasmAt.set(chatId, Date.now());
     this.logger.log(`${this.tag(chatId)}: сарказм сработал — генерирую подкол`);
 
-    const reply = await this.completeWithHistory(
+    const reply = await this.generateCheckedReply(
       SARCASM_PROMPT,
       chatId,
-      {
-        maxTokens: 160,
-        temperature: 1.05,
-      },
-      { userId: ctx.from?.id, userName: this.describeUser(ctx.from) }
+      { maxTokens: 160, temperature: 1.05, label: 'подкол' },
+      { userId: ctx.from?.id, userName: this.describeUser(ctx.from) },
+      (raw) =>
+        this.restoreNames(chatId, toChatStyle(sanitizeModelText(raw, TROLL_MAX_REPLY_CHARS)))
     );
 
-    const safe = this.restoreNames(
-      chatId,
-      toChatStyle(sanitizeModelText(reply ?? '', TROLL_MAX_REPLY_CHARS))
-    );
+    const safe = reply ?? '';
     if (safe) {
       const sentId = await this.safeReply(ctx, safe);
       await this.remember(chatId, 'assistant', safe, {
@@ -1319,20 +1344,16 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
     this.logger.log(`${this.tag(chatId, ctx.from?.id)}: отвечаю сразу (режим «мудак») — генерирую`);
     void this.sendTyping(chatId);
 
-    const reply = await this.completeWithHistory(
+    const reply = await this.generateCheckedReply(
       JERK_PROMPT,
       chatId,
-      {
-        maxTokens: TROLL_JERK_MAX_TOKENS,
-        temperature: 1.05,
-      },
-      { userId: ctx.from?.id, userName: this.describeUser(ctx.from) }
+      { maxTokens: TROLL_JERK_MAX_TOKENS, temperature: 1.05, label: 'ответ на обращение' },
+      { userId: ctx.from?.id, userName: this.describeUser(ctx.from) },
+      (raw) =>
+        this.restoreNames(chatId, toChatStyle(sanitizeModelText(raw, TROLL_MAX_REPLY_CHARS)))
     );
 
-    const safe = this.restoreNames(
-      chatId,
-      toChatStyle(sanitizeModelText(reply ?? '', TROLL_MAX_REPLY_CHARS))
-    );
+    const safe = reply ?? '';
     if (safe) {
       const sentId = await this.safeReply(ctx, safe);
       await this.remember(chatId, 'assistant', safe, {
@@ -1509,6 +1530,307 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  /**
+   * Личные сообщения боту. Для тролля здесь один сценарий: владелец
+   * форвардит (или присылает текстом) ответ бота, который считает дефектом.
+   * Бот находит этот ответ в истории, записывает дефект в БД и отвечает
+   * расширенной диагностикой от старшей модели.
+   *
+   * Работает только для владельца и только для ответов из чатов, где тролль включён.
+   */
+  private async onPrivateMessage(ctx: BotContext): Promise<void> {
+    if (!ctx.from || !ctx.message || ctx.from.id !== this.config.ownerId) {
+      return;
+    }
+
+    const text = this.messageText(ctx);
+    if (!text) {
+      return;
+    }
+
+    const forwarded = ctx.message.forward_origin;
+    const match = await this.findReportedAnswer(text, forwarded?.date);
+
+    if (!match) {
+      // На форвард честно отвечаем, на обычный текст в личке молчим.
+      if (forwarded) {
+        this.logger.log(`${this.tag(ctx.chat.id, ctx.from.id)}: ответ на разбор не найден`);
+        await this.safeSendToChat(
+          ctx.chat.id,
+          'не нашёл этот ответ в истории: помню последние 24 часа и только чаты, где тролль включён',
+          ctx.message.message_id
+        );
+      }
+      return;
+    }
+
+    const sourceChat = await this.chats.findOne({ where: { chatId: match.candidate.chatId } });
+    if (!sourceChat?.isActive) {
+      this.logger.log(
+        `${this.tag(ctx.chat.id, ctx.from.id)}: чат ${match.candidate.chatId} не в тролль-режиме, разбор отклонён`
+      );
+      await this.safeSendToChat(
+        ctx.chat.id,
+        `ответ из чата «${sourceChat?.title ?? match.candidate.chatId}», но тролль там выключен: разбирать нечего`,
+        ctx.message.message_id
+      );
+      return;
+    }
+
+    this.logger.log(
+      `${this.tag(ctx.chat.id, ctx.from.id)}: разбираю дефект (чат ${match.candidate.chatId}, совпадение ${match.exact ? 'точное' : 'по нормализации'})`
+    );
+
+    const replyTo = await this.findDefectReplyTo(match.candidate);
+    const context = await this.buildDefectContext(match.candidate);
+    const diagnosis = await this.diagnoseDefect({
+      answer: match.candidate.content,
+      replyTo,
+      context,
+      sourceChatTitle: sourceChat.title ?? null,
+    });
+
+    const defect = await this.defects.save(
+      this.defects.create({
+        sourceChatId: match.candidate.chatId,
+        sourceChatTitle: sourceChat.title ?? null,
+        botMessageId: match.candidate.messageId ?? null,
+        botAnswer: match.candidate.content,
+        replyToMessageId: replyTo?.messageId ?? null,
+        replyToUserId: replyTo?.userId ?? null,
+        replyToUserName: replyTo?.userName ?? null,
+        replyToText: replyTo?.content ?? null,
+        context: context || null,
+        matchKind: match.exact ? 'exact' : 'normalized',
+        reportedBy: ctx.from.id,
+        reportedInChatId: ctx.chat.id,
+        severity: diagnosis.severity,
+        diagnosis: diagnosis.text,
+      })
+    );
+
+    this.logger.log(
+      `${this.tag(ctx.chat.id, ctx.from.id)}: дефект #${defect.id} записан (серьёзность ${diagnosis.severity})`
+    );
+
+    await this.safeSendToChat(
+      ctx.chat.id,
+      this.formatDefectReport(defect, match.candidate, replyTo, diagnosis),
+      ctx.message.message_id
+    );
+  }
+
+  /** Текст сообщения или подписи к нему. */
+  private messageText(ctx: BotContext): string {
+    const message = ctx.message;
+    if (!message) {
+      return '';
+    }
+    return (message.text ?? message.caption ?? '').trim();
+  }
+
+  /**
+   * Ищет в истории ответ бота, который прислал владелец.
+   * Форвард из группы не несёт id исходного сообщения, поэтому опираемся
+   * на текст и — если Telegram отдал дату — на время отправки.
+   */
+  private async findReportedAnswer(
+    text: string,
+    sentAtSeconds?: number
+  ): Promise<{ candidate: TrollMessageEntity; exact: boolean } | null> {
+    const activeChats = await this.chats.find({ where: { isActive: true } });
+    const chatIds = activeChats.map((chat) => Number(chat.chatId));
+    if (!chatIds.length) {
+      return null;
+    }
+
+    // Когда известна дата отправки, окно поиска узкое — берём все ответы из него.
+    const sentAt = sentAtSeconds ? new Date(sentAtSeconds * 1000) : undefined;
+    const since = new Date(Date.now() - TROLL_HISTORY_TTL_HOURS * 60 * 60 * 1000);
+    const rows = await this.history.find({
+      where: sentAt
+        ? {
+            role: 'assistant',
+            chatId: In(chatIds),
+            createdAt: Between(
+              new Date(sentAt.getTime() - TROLL_DEFECT_TIME_WINDOW_MS),
+              new Date(sentAt.getTime() + TROLL_DEFECT_TIME_WINDOW_MS)
+            ),
+          }
+        : { role: 'assistant', chatId: In(chatIds), createdAt: MoreThanOrEqual(since) },
+      order: { id: 'DESC' },
+      take: TROLL_DEFECT_SEARCH_LIMIT,
+    });
+
+    const candidates: DefectCandidate[] = rows.map((row) => ({
+      id: row.id,
+      chatId: Number(row.chatId),
+      content: row.content,
+      createdAt: row.createdAt,
+    }));
+
+    const found = pickDefectAnswer(candidates, {
+      text,
+      sentAt,
+      windowMs: sentAt ? TROLL_DEFECT_TIME_WINDOW_MS : 0,
+    });
+    if (!found) {
+      this.logger.log(
+        `Разбор дефекта: совпадений нет (кандидатов ${candidates.length}, нормализованный текст ${normalizeMatchText(text).length} символов)`
+      );
+      return null;
+    }
+
+    const row = rows.find((item) => item.id === found.candidate.id) ?? null;
+    return row ? { candidate: row, exact: found.exact } : null;
+  }
+
+  /** Реплика, на которую бот отвечал (по номеру replyTo). */
+  private async findDefectReplyTo(
+    answer: TrollMessageEntity
+  ): Promise<TrollMessageEntity | null> {
+    if (answer.replyToMessageId === null || answer.replyToMessageId === undefined) {
+      return null;
+    }
+    return this.history.findOne({
+      where: { chatId: answer.chatId, messageId: answer.replyToMessageId },
+    });
+  }
+
+  /** Контекст беседы на момент ответа — в том виде, в каком его видела модель. */
+  private async buildDefectContext(answer: TrollMessageEntity): Promise<string> {
+    const s = this.settings.current;
+    const rows = await this.history.find({
+      where: { chatId: answer.chatId, id: LessThanOrEqual(answer.id) },
+      order: { id: 'DESC' },
+      take: TROLL_DEFECT_CONTEXT_TURNS,
+    });
+
+    const context = buildConversationContext(rows, {
+      gapMs: Math.max(1, s.dialogPauseMin) * 60 * 1000,
+      maxTurns: TROLL_DEFECT_CONTEXT_TURNS,
+      maxChars: TROLL_DEFECT_CONTEXT_CHARS,
+    });
+
+    return this.formatTranscript(Number(answer.chatId), context);
+  }
+
+  /** Разбор дефекта старшей моделью: серьёзность, проблемы и варианты ответа. */
+  private async diagnoseDefect(input: {
+    answer: string;
+    replyTo: TrollMessageEntity | null;
+    context: string;
+    sourceChatTitle: string | null;
+  }): Promise<{
+    severity: string;
+    summary: string;
+    problems: string[];
+    fixes: string[];
+    /** Тот же разбор одной строкой — так он хранится в таблице дефектов. */
+    text: string;
+  }> {
+    const replyToLine = input.replyTo
+      ? `Отвечал на реплику ${this.cleanName(input.replyTo.userName) ?? 'участника'} (id ${
+          input.replyTo.userId ?? 'неизвестен'
+        }): ${input.replyTo.content}`
+      : 'Отвечал не реплаем: конкретной реплики нет';
+
+    const request = wrapUserContent(
+      [
+        `Чат: ${input.sourceChatTitle ?? 'без названия'}`,
+        `Ответ бота: ${input.answer}`,
+        replyToLine,
+        `Контекст беседы на тот момент (от старого к новому):\n${input.context}`,
+      ].join('\n\n')
+    );
+
+    const verdict = await this.deepSeek.completeJson<{
+      severity?: unknown;
+      summary?: unknown;
+      problems?: unknown;
+      fixSuggestions?: unknown;
+    }>(DEFECT_DIAGNOSTIC_PROMPT, request, {
+      model: TROLL_DIAGNOSTIC_MODEL,
+      temperature: 0.3,
+      maxTokens: TROLL_DIAGNOSTIC_MAX_TOKENS,
+      label: 'диагностика',
+    });
+
+    if (!verdict) {
+      this.logger.warn('Разбор дефекта: модель не ответила');
+      return {
+        severity: 'unknown',
+        summary: 'диагностика не удалась: модель не ответила',
+        problems: [],
+        fixes: [],
+        text: 'диагностика не удалась: модель не ответила',
+      };
+    }
+
+    const severity = TROLL_DEFECT_SEVERITIES.includes(String(verdict.severity))
+      ? String(verdict.severity)
+      : 'unknown';
+    const list = (value: unknown, limit: number): string[] =>
+      Array.isArray(value)
+        ? value
+            .filter((item): item is string => typeof item === 'string')
+            .map((item) => sanitizeModelField(item, limit))
+            .filter((item) => !!item)
+            .slice(0, 4)
+        : [];
+
+    const summary = sanitizeModelField(String(verdict.summary ?? ''), 300);
+    const problems = list(verdict.problems, 220);
+    const fixes = list(verdict.fixSuggestions, 220);
+    const text = [
+      summary,
+      ...problems.map((problem) => `• ${problem}`),
+      ...fixes.map((fix) => `→ ${fix}`),
+    ]
+      .filter((line) => !!line)
+      .join('\n');
+
+    return { severity, summary, problems, fixes, text };
+  }
+
+  /** Ответ владельцу: что ответил бот, кому и что говорит диагностика. */
+  private formatDefectReport(
+    defect: TrollDefectEntity,
+    answer: TrollMessageEntity,
+    replyTo: TrollMessageEntity | null,
+    diagnosis: { severity: string; summary: string; problems: string[]; fixes: string[] }
+  ): string {
+    const lines = [
+      `Дефект #${defect.id}, серьёзность ${diagnosis.severity}`,
+      `чат: ${defect.sourceChatTitle ?? 'без названия'} (${defect.sourceChatId ?? '?'})`,
+      replyTo
+        ? `бот отвечал: ${this.cleanName(replyTo.userName) ?? 'участник'} (${
+            replyTo.userId ?? '?'
+          }), реплика: «${this.cut(replyTo.content, 300)}»`
+        : 'бот отвечал не реплаем',
+      `ответ бота: «${this.cut(answer.content, 300)}»`,
+    ];
+
+    if (diagnosis.summary) {
+      lines.push(`диагностика: ${diagnosis.summary}`);
+    }
+    if (diagnosis.problems.length) {
+      lines.push('что не так:', ...diagnosis.problems.map((problem) => `• ${problem}`));
+    }
+    if (diagnosis.fixes.length) {
+      lines.push('как надо было:', ...diagnosis.fixes.map((fix) => `• ${fix}`));
+    }
+    lines.push(`контекст на момент ответа сохранён в troll_defect_entity #${defect.id}`);
+
+    return lines.join('\n');
+  }
+
+  /** Обрезка длинного текста для сообщения в чат. */
+  private cut(text: string, limit: number): string {
+    const flat = (text ?? '').replace(/\s+/g, ' ').trim();
+    return flat.length > limit ? `${flat.slice(0, limit)}…` : flat;
+  }
+
   private async isChatActive(chatId: number): Promise<boolean> {
     const chat = await this.chats.findOne({ where: { chatId } });
     return !!chat?.isActive;
@@ -1576,23 +1898,6 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
     return parts.length ? parts.join(' ') : null;
   }
 
-  /** Запрос в модель с историей переписки (контекст диалога). */
-  private async completeWithHistory(
-    system: string,
-    chatId: number,
-    options: { maxTokens?: number; temperature?: number },
-    focus?: TrollFocus
-  ): Promise<string | null> {
-    try {
-      const messages = await this.buildConversationMessages(system, chatId, focus);
-      const result = await this.deepSeek.complete(messages, options);
-      return result || null;
-    } catch (error) {
-      this.logger.error(`DeepSeek request failed: ${this.describeError(error)}`);
-      return null;
-    }
-  }
-
   /**
    * Системный промпт + история чата с авторами.
    *
@@ -1611,23 +1916,22 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
     chatId: number,
     focus?: TrollFocus
   ): Promise<DeepSeekMessage[]> {
-    const s = this.settings.current;
-    // Рабочий ограничитель объёма — только TTL: в модель уходит вся беседа за сутки.
-    const since = new Date(Date.now() - TROLL_HISTORY_TTL_HOURS * 60 * 60 * 1000);
-    const rows = await this.history.find({
-      where: { chatId, createdAt: MoreThanOrEqual(since) },
-      order: { id: 'DESC' },
-      take: TROLL_CONTEXT_MAX_TURNS,
-    });
+    const parts = await this.buildConversationParts(chatId, focus);
+    return [
+      { role: 'system', content: system },
+      { role: 'user', content: `${wrapUserContent(parts.transcript)}\n\n${parts.directive}` },
+    ];
+  }
 
-    const context = buildConversationContext(rows, {
-      // Ноль или мусор в настройке не должен превращать в «паузу» каждый промежуток.
-      gapMs: Math.max(1, s.dialogPauseMin) * 60 * 1000,
-      maxTurns: TROLL_CONTEXT_MAX_TURNS,
-      maxChars: TROLL_CONTEXT_MAX_CHARS,
-    });
-
-    const transcript = context
+  /**
+   * Расшифровка окна беседы в том виде, в каком её видит модель:
+   * «Имя (id) [msg N, replyTo M]: текст», строки «бот», метки пауз.
+   */
+  private formatTranscript(
+    chatId: number,
+    context: ConversationItem<TrollMessageEntity>[]
+  ): string {
+    return context
       .map((item) => {
         if (item.kind === 'pause') {
           return `—— разрыв беседы, пауза ${formatConversationPause(item.gapMs)} ——`;
@@ -1646,6 +1950,33 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
         return `${label}${ids}: ${row.content}`;
       })
       .join('\n');
+  }
+
+  /**
+   * Собирает расшифровку и задание — один раз на ответ, чтобы при
+   * самопроверке и переписываниях не собирать контекст заново.
+   */
+  private async buildConversationParts(
+    chatId: number,
+    focus?: TrollFocus
+  ): Promise<{ transcript: string; directive: string }> {
+    const s = this.settings.current;
+    // Рабочий ограничитель объёма — только TTL: в модель уходит вся беседа за сутки.
+    const since = new Date(Date.now() - TROLL_HISTORY_TTL_HOURS * 60 * 60 * 1000);
+    const rows = await this.history.find({
+      where: { chatId, createdAt: MoreThanOrEqual(since) },
+      order: { id: 'DESC' },
+      take: TROLL_CONTEXT_MAX_TURNS,
+    });
+
+    const context = buildConversationContext(rows, {
+      // Ноль или мусор в настройке не должен превращать в «паузу» каждый промежуток.
+      gapMs: Math.max(1, s.dialogPauseMin) * 60 * 1000,
+      maxTurns: TROLL_CONTEXT_MAX_TURNS,
+      maxChars: TROLL_CONTEXT_MAX_CHARS,
+    });
+
+    const transcript = this.formatTranscript(chatId, context);
 
     const focusName = this.cleanName(focus?.userName);
     const focusLabel =
@@ -1656,10 +1987,143 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
       ? `Отвечай участнику «${focusLabel}» — он к тебе обратился, id в ответ не пиши. По имени обращайся НЕ всегда: обычно просто отвечай по сути, а имя используй изредка (и тогда с большой буквы). В истории у каждого автора в скобках указан его id: если имена совпадают, различай собеседников по id и не приписывай одному чужие реплики. ${MESSAGE_REFS_RULE} ${CONVERSATION_PAUSE_RULE}`
       : `В истории у каждого автора в скобках указан его id — не путай собеседников и не приписывай одному участнику слова другого. ${MESSAGE_REFS_RULE} ${CONVERSATION_PAUSE_RULE}`;
 
-    return [
-      { role: 'system', content: system },
-      { role: 'user', content: `${wrapUserContent(transcript)}\n\n${directive}` },
-    ];
+    return { transcript, directive };
+  }
+
+  /**
+   * Самопроверка ответа и до TROLL_SELF_CHECK_MAX_ATTEMPTS попыток.
+   * Готовый ответ оценивает ревизор (SELF_CHECK_PROMPT); если оценка ниже
+   * порога из настроек, модель переписывает ответ с учётом замечаний.
+   * Возвращает вариант с наибольшей оценкой (или последний, если оценки нет).
+   */
+  private async generateCheckedReply(
+    system: string,
+    chatId: number,
+    options: { maxTokens?: number; temperature?: number; label: string },
+    focus: TrollFocus | undefined,
+    sanitize: (raw: string) => string
+  ): Promise<string | null> {
+    const s = this.settings.current;
+    const { label, ...llmOptions } = options;
+    const parts = await this.buildConversationParts(chatId, focus);
+
+    const maxAttempts = s.selfCheckEnabled ? TROLL_SELF_CHECK_MAX_ATTEMPTS : 1;
+    let best: { text: string; score: number } | null = null;
+    let previous = '';
+    let issues: string[] = [];
+
+    if (s.selfCheckEnabled) {
+      this.logger.log(
+        `${this.tag(chatId)}: ${label} — генерирую с самопроверкой (порог ${s.selfCheckThreshold}, до ${maxAttempts} попыток, контекст ${parts.transcript.length} символов)`
+      );
+    } else {
+      this.logger.log(`${this.tag(chatId)}: ${label} — самопроверка выключена, одна попытка`);
+    }
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      const retryNote = attempt > 1 ? buildRetryNote(previous, issues, attempt) : '';
+      if (attempt > 1) {
+        this.logger.log(
+          `${this.tag(chatId)}: ${label} — попытка ${attempt}/${maxAttempts}, переписываю. Замечания ревизора: ${this.logText(
+            issues.join('; ') || 'без пояснений',
+            500
+          )}`
+        );
+      }
+
+      const raw = await this.deepSeek.complete(
+        [
+          { role: 'system', content: system },
+          {
+            role: 'user',
+            content: `${wrapUserContent(parts.transcript)}\n\n${parts.directive}${retryNote}`,
+          },
+        ],
+        { ...llmOptions, label: `${label} · генерация ${attempt}/${maxAttempts}` }
+      );
+
+      const text = sanitize(raw ?? '');
+      if (!text) {
+        this.logger.warn(`${this.tag(chatId)}: ${label} — попытка ${attempt}: модель вернула пусто`);
+        continue;
+      }
+
+      this.logger.log(
+        `${this.tag(chatId)}: ${label} — попытка ${attempt}: вариант ${this.logText(text)}`
+      );
+
+      if (!s.selfCheckEnabled) {
+        return text;
+      }
+
+      const verdict = await this.reviewReply(chatId, parts.transcript, text, label);
+      if (!best || verdict.score > best.score) {
+        best = { text, score: verdict.score };
+      }
+
+      if (verdict.score >= s.selfCheckThreshold) {
+        this.logger.log(
+          `${this.tag(chatId)}: ${label} — попытка ${attempt} принята (оценка ${verdict.score} ≥ ${s.selfCheckThreshold})`
+        );
+        return text;
+      }
+
+      this.logger.log(
+        `${this.tag(chatId)}: ${label} — попытка ${attempt} забракована (оценка ${verdict.score} < ${s.selfCheckThreshold}): ${this.logText(
+          verdict.issues.join('; ') || 'ревизор не объяснил',
+          500
+        )}`
+      );
+      previous = text;
+      issues = verdict.issues;
+    }
+
+    if (best) {
+      this.logger.log(
+        `${this.tag(chatId)}: ${label} — попытки исчерпаны, отправляю лучший вариант (оценка ${best.score}): ${this.logText(
+          best.text
+        )}`
+      );
+      return best.text;
+    }
+
+    this.logger.warn(`${this.tag(chatId)}: ${label} — за ${maxAttempts} попыток не получил ни одного варианта`);
+    return null;
+  }
+
+  /** Оценка готового ответа ревизором: строгий JSON со score и списком замечаний. */
+  private async reviewReply(
+    chatId: number,
+    transcript: string,
+    reply: string,
+    label = 'диалог'
+  ): Promise<{ score: number; issues: string[] }> {
+    // Ревизору хватает хвоста переписки — это экономит токены.
+    const tail =
+      transcript.length > TROLL_SELF_CHECK_CONTEXT_CHARS
+        ? `…\n${transcript.slice(-TROLL_SELF_CHECK_CONTEXT_CHARS)}`
+        : transcript;
+
+    const verdict = await this.deepSeek.completeJson<{ score?: number; issues?: unknown }>(
+      SELF_CHECK_PROMPT,
+      wrapUserContent(`Переписка (последние реплики):\n${tail}\n\nОтвет бота:\n${reply}`),
+      { temperature: 0, maxTokens: TROLL_SELF_CHECK_MAX_TOKENS, label: `ревизия · ${label}` }
+    );
+
+    if (!verdict) {
+      // Ревизор не ответил — не переписываем зря, считаем ответ приемлемым.
+      this.logger.warn(
+        `${this.tag(chatId)}: ${label} — ревизор не ответил, беру вариант как есть`
+      );
+      return { score: 1, issues: [] };
+    }
+
+    const score = Number(verdict.score);
+    const issues = Array.isArray(verdict.issues)
+      ? verdict.issues.filter((item): item is string => typeof item === 'string')
+      : [];
+
+    return { score: Number.isFinite(score) ? Math.max(0, Math.min(1, score)) : 0, issues };
   }
 
   /**

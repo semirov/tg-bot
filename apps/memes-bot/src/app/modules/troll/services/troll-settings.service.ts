@@ -97,6 +97,8 @@ export class TrollSettingsService implements OnModuleInit {
       analyzeCooldownSec: this.config.trollAnalyzeCooldown,
       dailyRequestLimit: this.config.trollDailyRequestLimit,
       maxInputChars: this.config.trollMaxInputChars,
+      selfCheckEnabled: true,
+      selfCheckThreshold: this.config.trollSelfCheckThreshold,
     };
   }
 
@@ -150,6 +152,11 @@ export class TrollSettingsService implements OnModuleInit {
         defaults.dailyRequestLimit
       ),
       maxInputChars: this.normalizeNonNegativeInt(row.maxInputChars, defaults.maxInputChars),
+      selfCheckEnabled: row.selfCheckEnabled ?? defaults.selfCheckEnabled,
+      selfCheckThreshold: this.normalizeProbability(
+        row.selfCheckThreshold,
+        defaults.selfCheckThreshold
+      ),
     };
   }
 
