@@ -54,6 +54,9 @@ else
   export DEPLOY_PASSWORD
   export SSH_ASKPASS="$ASKPASS"
   export SSH_ASKPASS_REQUIRE=force
+  # OpenSSH < 8.4 (например, в образе раннера 8.2) не понимает SSH_ASKPASS_REQUIRE
+  # и запускает askpass только при отсутствии tty и заданном DISPLAY.
+  export DISPLAY="${DISPLAY:-:0}"
   ssh_cmd() { setsid -w "${SSH_BASE[@]}" -o PreferredAuthentications=password "${DEPLOY_USER}@${DEPLOY_HOST}" "$@"; }
 fi
 
