@@ -1,3 +1,11 @@
+## [0.14.2](https://github.com/semirov/tg-bot/compare/v0.14.1...v0.14.2) (2026-09-18)
+
+
+### Bug Fixes
+
+* **ci:** askpass через DISPLAY для OpenSSH < 8.4 ([#38](https://github.com/semirov/tg-bot/issues/38)) ([70b7e2f](https://github.com/semirov/tg-bot/commit/70b7e2f436eab6c6a94ecf193fdce8e71252323e))
+* **ci:** askpass через DISPLAY для OpenSSH < 8.4 в раннере ([f78ec90](https://github.com/semirov/tg-bot/commit/f78ec90f27cdd3c9441647afbdd06a0897cb45c1))
+
 ## [0.14.1](https://github.com/semirov/tg-bot/compare/v0.14.0...v0.14.1) (2026-09-18)
 
 
