@@ -79,6 +79,15 @@ function createHarness() {
     },
   };
   const baseConfigService = { memeChanelId: -1001709979748, ownerId: 777 };
+  const clock = {
+    now: jest.fn(() => new Date('2024-06-15T12:00:00.000Z')),
+    timestamp: jest.fn(() => new Date('2024-06-15T12:00:00.000Z').getTime()),
+  };
+  const random = {
+    next: jest.fn(() => 0.5),
+    int: jest.fn((min: number) => min),
+    pick: jest.fn((items: readonly unknown[]) => items[0]),
+  };
   const service = new YearResultsService(
     yearResultRepository,
     userRequestRepository,
@@ -87,7 +96,9 @@ function createHarness() {
     postSchedulerRepository,
     observatoryPostRepository,
     bot as any,
-    baseConfigService as any
+    baseConfigService as any,
+    clock as any,
+    random as any
   );
   return {
     service,
@@ -98,6 +109,8 @@ function createHarness() {
     observatoryPostRepository,
     bot,
     baseConfigService,
+    clock,
+    random,
   };
 }
 

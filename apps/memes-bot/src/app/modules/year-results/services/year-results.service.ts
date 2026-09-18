@@ -12,7 +12,9 @@ import { BotContext } from '../../bot/interfaces/bot-context.interface';
 import { BOT } from '../../bot/providers/bot.provider';
 import { BaseConfigService } from '../../config/base-config.service';
 import { ObservatoryPostEntity } from '../../observatory/entities/observatory-post.entity';
+import { CLOCK, Clock } from '../../../shared/clock';
 import { formatUserName as formatDisplayName } from '../../../shared/display-name';
+import { RANDOM, Random } from '../../../shared/random';
 import { pluralizeRu } from '../../../shared/russian-plural';
 import { YearResultEntity } from '../entities/year-result.entity';
 import {
@@ -21,6 +23,9 @@ import {
   YearResultsPreview,
 } from '../interfaces/year-statistics.interface';
 
+/**
+ * Сервис сбора, хранения и публикации итогов года.
+ */
 @Injectable()
 export class YearResultsService {
   private readonly logger = new Logger(YearResultsService.name);
@@ -39,7 +44,9 @@ export class YearResultsService {
     @InjectRepository(ObservatoryPostEntity)
     private observatoryPostRepository: Repository<ObservatoryPostEntity>,
     @Inject(BOT) private bot: Bot<BotContext>,
-    private baseConfigService: BaseConfigService
+    private baseConfigService: BaseConfigService,
+    @Inject(CLOCK) private clock: Clock,
+    @Inject(RANDOM) private random: Random
   ) {}
 
   /**
@@ -1015,7 +1022,7 @@ export class YearResultsService {
             // Отмечаем как опубликованное
             await this.yearResultRepository.update(
               { year, userId: user.userId },
-              { isPublished: true, publishedAt: new Date() }
+              { isPublished: true, publishedAt: this.clock.now() }
             );
 
             this.logger.log(`Personal statistics sent to user ${user.userId}`);
@@ -1036,7 +1043,7 @@ export class YearResultsService {
               // Отмечаем как опубликованное, чтобы не пытаться отправить снова
               await this.yearResultRepository.update(
                 { year, userId: user.userId },
-                { isPublished: true, publishedAt: new Date() }
+                { isPublished: true, publishedAt: this.clock.now() }
               );
               break;
             }
@@ -1172,7 +1179,7 @@ export class YearResultsService {
     // Проверяем что дата валидна
     if (user.firstProposalDate && !isNaN(new Date(user.firstProposalDate).getTime())) {
       const firstDate = format(new Date(user.firstProposalDate), 'd MMMM', { locale: ru });
-      const daysFromStart = differenceInDays(new Date(), new Date(user.firstProposalDate));
+      const daysFromStart = differenceInDays(this.clock.now(), new Date(user.firstProposalDate));
 
       text += `Первый пост ты предложил ${firstDate}. С тех пор прошло ${daysFromStart} ${this.getDaysWord(
         daysFromStart
