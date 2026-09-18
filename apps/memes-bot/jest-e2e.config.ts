@@ -1,9 +1,4 @@
-import type { Config } from '@jest/types';
-
-/**
- * Конфиг e2e-тестов: поднимают реальное Nest-приложение и реальный grammY Bot,
- * но без сети (фейковый Telegram API) и на одноразовой Postgres.
- */
+/* eslint-disable */
 export default {
   displayName: 'memes-bot-e2e',
   preset: '../../jest.preset.js',
@@ -21,4 +16,4 @@ export default {
   testMatch: ['<rootDir>/test/e2e/**/*.e2e-spec.ts'],
   setupFilesAfterEnv: ['<rootDir>/test/e2e/setup-e2e.ts'],
   testTimeout: 60000,
-} as Config.ProjectConfig;
+};

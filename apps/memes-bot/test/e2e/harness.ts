@@ -16,6 +16,27 @@ jest.mock('@grammyjs/runner', () => {
   return { ...actual, run: jest.fn(() => ({ stop: jest.fn() })) };
 });
 
+/**
+ * axios поставляется как ESM и не парсится ts-jest. В e2e сеть не нужна:
+ * подменяем клиент заглушкой (конкретные ответы задаются в тестах при необходимости).
+ */
+jest.mock('axios', () => {
+  const instance = {
+    post: jest.fn(),
+    get: jest.fn(),
+    defaults: { headers: { common: {} } },
+    interceptors: { request: { use: jest.fn() }, response: { use: jest.fn() } },
+  };
+  const axios: any = {
+    create: jest.fn(() => instance),
+    isAxiosError: jest.fn(() => false),
+    get: jest.fn(),
+    post: jest.fn(),
+  };
+  return { __esModule: true, default: axios, ...axios };
+});
+
+
 /** Один исходящий вызов Telegram API, перехваченный фейковым fetch. */
 export interface TelegramApiCall {
   method: string;
