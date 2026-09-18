@@ -55,24 +55,17 @@ jobs:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
-      - name: Ensure node22 deps image
-        run: bash tools/ci/build-base.sh 22
-      - name: Semantic release (в контейнере, без npm ci)
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - name: Install
+        run: npm ci --no-audit --no-fund --loglevel=error
+      - name: Semantic release
+        id: semrel
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          DEPS="$(cat .deps-image)"
-          VOL="semantic-release-node-modules-${DEPS##*:}"
-          docker run --rm \
-            -v "$PWD":/usr/src/app \
-            -v "$VOL":/usr/src/app/node_modules \
-            -e GITHUB_TOKEN \
-            -e GIT_AUTHOR_NAME=github-actions \
-            -e GIT_AUTHOR_EMAIL=github-actions@github.com \
-            -e GIT_COMMITTER_NAME=github-actions \
-            -e GIT_COMMITTER_EMAIL=github-actions@github.com \
-            -w /usr/src/app \
-            "$DEPS" bash tools/ci/release.sh
+        run: bash tools/ci/release.sh
 
   deploy:
     name: Deploy
