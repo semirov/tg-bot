@@ -12,6 +12,7 @@ export default {
     '^.+\\.[tj]s$': 'ts-jest',
   },
   moduleFileExtensions: ['ts', 'js', 'html'],
+  testPathIgnorePatterns: ['/node_modules/', '<rootDir>/test/e2e/'],
   coverageDirectory: '../../coverage/apps/memes-bot',
   collectCoverageFrom: [
     'src/**/*.ts',
