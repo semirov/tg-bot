@@ -34,6 +34,10 @@ describe('deepseek-pricing', () => {
       expect(isDeepSeekPeak(SATURDAY)).toBe(false);
       expect(isDeepSeekPeak(new Date('2026-09-13T02:00:00Z'))).toBe(false);
     });
+
+    it('без аргумента берёт текущее время', () => {
+      expect(typeof isDeepSeekPeak()).toBe('boolean');
+    });
   });
 
   describe('estimateCostUsd', () => {
@@ -93,6 +97,17 @@ describe('deepseek-pricing', () => {
         { date: PEAK_MONDAY, tariff: { cacheHitInput: 0, cacheMissInput: 1, output: 2 } }
       );
       expect(cost).toBeCloseTo(3, 10);
+    });
+
+    it('без опций берёт текущее время и табличный тариф', () => {
+      const cost = estimateCostUsd('deepseek-flash', {
+        promptTokens: MILLION,
+        completionTokens: MILLION,
+        cacheHitTokens: 0,
+        cacheMissTokens: MILLION,
+      });
+
+      expect(cost).toBeGreaterThan(0);
     });
 
     it('мелкий запрос стоит доли цента', () => {

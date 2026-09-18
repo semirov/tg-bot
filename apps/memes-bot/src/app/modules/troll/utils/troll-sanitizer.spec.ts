@@ -1,9 +1,11 @@
 import {
+  containsLink,
   sanitizeModelField,
   sanitizeModelStyled,
   sanitizeModelText,
   sanitizeTranscript,
   sanitizeUserInput,
+  stripLinks,
   toChatStyle,
   wrapUserContent,
 } from './troll-sanitizer';
@@ -54,6 +56,14 @@ describe('troll-sanitizer', () => {
     it('усекает ответ по лимиту', () => {
       expect(sanitizeModelText('aaaaaaaaaaaaaaaaaaaa', 5).length).toBeLessThanOrEqual(5);
     });
+
+    it('оставляет точку у сокращения в конце строки', () => {
+      expect(sanitizeModelText('Притянули ст.', 400)).toBe('Притянули ст.');
+    });
+
+    it('срезает точку, даже если строка кончается не буквой', () => {
+      expect(sanitizeModelText('привет!.', 400)).toBe('привет!');
+    });
   });
 
   describe('sanitizeModelField (одна строка)', () => {
@@ -66,6 +76,10 @@ describe('troll-sanitizer', () => {
     it('возвращает пустую строку для не-строки', () => {
       expect(sanitizeModelField(42, 200)).toBe('');
       expect(sanitizeModelField(undefined, 200)).toBe('');
+    });
+
+    it('не трогает точку у сокращения', () => {
+      expect(sanitizeModelField('см. детали. Ещё.', 200)).toBe('см. детали Ещё');
     });
   });
 
@@ -119,6 +133,29 @@ describe('troll-sanitizer', () => {
   describe('toChatStyle', () => {
     it('опускает регистр', () => {
       expect(toChatStyle('ПриВеТ')).toBe('привет');
+    });
+  });
+
+  describe('containsLink', () => {
+    it('видит http(s), www и t.me', () => {
+      expect(containsLink('смотри https://evil.example/x')).toBe(true);
+      expect(containsLink('зайди на www.example.com')).toBe(true);
+      expect(containsLink('пиши t.me/somebody')).toBe(true);
+    });
+
+    it('не считает ссылкой обычный текст', () => {
+      expect(containsLink('просто болтовня без ссылок')).toBe(false);
+      expect(containsLink('почта user@example.com')).toBe(false);
+    });
+  });
+
+  describe('stripLinks', () => {
+    it('вырезает ссылки и лишние пробелы, оставляя текст', () => {
+      expect(stripLinks('зайди https://evil.example/x сюда')).toBe('зайди сюда');
+    });
+
+    it('не трогает текст без ссылок', () => {
+      expect(stripLinks('обычное сообщение')).toBe('обычное сообщение');
     });
   });
 });

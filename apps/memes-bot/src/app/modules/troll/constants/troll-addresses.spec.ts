@@ -41,6 +41,17 @@ describe('isAddressedToBot', () => {
     expect(isAddressedToBot('чмо')).toBe(true);
     expect(isAddressedToBot('чмошник')).toBe(true);
   });
+
+  it('на пустом вводе возвращает false', () => {
+    expect(isAddressedToBot(null)).toBe(false);
+    expect(isAddressedToBot(undefined)).toBe(false);
+    expect(isAddressedToBot('')).toBe(false);
+  });
+
+  it('пропускает пустые слова между разделителями', () => {
+    expect(isAddressedToBot('!!!')).toBe(false);
+    expect(isAddressedToBot('... бот!')).toBe(true);
+  });
 });
 
 describe('isNamedCall — прямые обращения по имени', () => {
@@ -57,11 +68,33 @@ describe('isNamedCall — прямые обращения по имени', () =
       expect(isNamedCall(text)).toBe(false);
     }
   );
+
+  it('на пустом вводе возвращает false', () => {
+    expect(isNamedCall(null)).toBe(false);
+    expect(isNamedCall(undefined)).toBe(false);
+    expect(isNamedCall('')).toBe(false);
+  });
 });
 
 describe('isCapabilityQuestion', () => {
   it('ловит вопрос о возможностях и не мешает остальному', () => {
     expect(isCapabilityQuestion('что ты умеешь?')).toBe(true);
     expect(isCapabilityQuestion('мы говорили про кальян')).toBe(false);
+  });
+
+  it('распознаёт разные формулировки вопроса и нормализует ё', () => {
+    expect(isCapabilityQuestion('а что ты можешь')).toBe(true);
+    expect(isCapabilityQuestion('какие у тебя команды')).toBe(true);
+    expect(isCapabilityQuestion('дай список команд')).toBe(true);
+    expect(isCapabilityQuestion('как тобой пользоваться')).toBe(true);
+    expect(isCapabilityQuestion('/help')).toBe(true);
+    expect(isCapabilityQuestion('хэлп')).toBe(false);
+    expect(isCapabilityQuestion('хелп')).toBe(true);
+  });
+
+  it('на пустом вводе возвращает false', () => {
+    expect(isCapabilityQuestion(null)).toBe(false);
+    expect(isCapabilityQuestion(undefined)).toBe(false);
+    expect(isCapabilityQuestion('')).toBe(false);
   });
 });

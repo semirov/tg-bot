@@ -89,4 +89,28 @@ describe('parseLlmJson', () => {
     expect(parseLlmJson(null)).toBeNull();
     expect(parseLlmJson(undefined)).toBeNull();
   });
+
+  it('возвращает null, если после снятия обёртки ничего не осталось', () => {
+    expect(parseLlmJson('```json```')).toBeNull();
+    expect(parseLlmJson('   ```   ')).toBeNull();
+  });
+
+  it('возвращает null, если обрезанный объект нельзя достроить', () => {
+    // Висящий ключ без значения: ни одна из склеек не становится валидным JSON.
+    expect(parseLlmJson('{"a":')).toBeNull();
+  });
+
+  it('корректно проходит экранированные кавычки внутри строки', () => {
+    const raw = 'вот результат: {"reason": "он сказал \\"да\\" и ушёл"} конец';
+
+    expect(parseLlmJson<{ reason: string }>(raw)).toEqual({
+      reason: 'он сказал "да" и ушёл',
+    });
+  });
+
+  it('достраивает обрыв внутри строки с экранированной кавычкой', () => {
+    const raw = '{"a": "x \\" y';
+
+    expect(parseLlmJson<{ a: string }>(raw)).toEqual({ a: 'x " y' });
+  });
 });

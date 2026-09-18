@@ -2,6 +2,7 @@
 
 [![Demo](https://img.shields.io/badge/demo-filipp__memes__bot-blue?style=flat-square&logo=telegram)](https://t.me/filipp_memes_bot)
 [![Channel](https://img.shields.io/badge/channel-filipp__memes-blue?style=flat-square&logo=telegram)](https://t.me/filipp_memes)
+[![coverage](./coverage-badge.svg)](COVERAGE.md)
 
 Telegram бот для управления мемами и предложкой канала. Позволяет пользователям отправлять мемы на модерацию, а модераторам управлять публикацией контента.
 
