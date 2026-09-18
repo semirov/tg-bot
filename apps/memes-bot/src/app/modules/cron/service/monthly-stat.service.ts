@@ -5,6 +5,7 @@ import { Bot, InlineKeyboard } from 'grammy';
 import { BotContext } from '../../bot/interfaces/bot-context.interface';
 import { sub } from 'date-fns';
 import { BaseConfigService } from '../../config/base-config.service';
+import { formatUserName } from '../../../shared/display-name';
 
 export type StatisticRequestType = {
   isAnonymousPublishing: boolean;
@@ -24,11 +25,7 @@ export class MonthlyStatService {
   ) {}
 
   private getNameFromStatItem(item: StatisticRequestType): string {
-    if (item.username) {
-      return `@${item.username}`;
-    }
-
-    return [item.firstName, item.lastName].filter((item) => !!item).join(' ');
+    return formatUserName(item);
   }
 
   private leaderBoardIconByIndex(index: string): string {
