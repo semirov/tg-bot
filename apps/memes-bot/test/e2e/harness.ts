@@ -143,6 +143,10 @@ export async function createE2EHarness(): Promise<E2EHarness> {
   const bot = moduleRef.get<Bot<BotContext>>(BOT);
   const dataSource = moduleRef.get(DataSource);
 
+  // pg_trgm нужен deduplication-сервису (SIMILARITY). В CI нельзя полагаться на
+  // bind-mount initdb (путь раннера не виден docker-демону) — создаём сами.
+  await dataSource.query('CREATE EXTENSION IF NOT EXISTS pg_trgm;');
+
   // Канонический способ мокать Bot API в grammY (docs: advanced/transformers) —
   // трансформер на bot.api. Ставим до init(), чтобы поймать уведомление о старте.
   bot.api.config.use(async (_prev, method, payload) => {

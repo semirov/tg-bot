@@ -12,8 +12,6 @@ services:
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: memes_test
       TZ: GMT+3
-    volumes:
-      - ./tools/docker/initdb:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ['CMD-SHELL', 'pg_isready -U postgres -d memes_test']
       interval: 3s

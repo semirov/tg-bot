@@ -43,9 +43,23 @@ jobs:
           docker build --build-arg DEPS_IMAGE="$(cat .deps-image)" -f apps/memes-bot/Dockerfile -t "$IMAGE:$TAG" .
           docker push "$IMAGE:$TAG"
 
+  e2e:
+    name: E2E
+    needs: test
+    runs-on: [self-hosted, linux, x64, memes-bot]
+    steps:
+      - uses: actions/checkout@v5
+      - name: Ensure dependency base image
+        run: bash tools/ci/build-base.sh 20
+      - name: Run e2e (Postgres + приложение)
+        run: docker compose -f docker-compose.test.yml run --rm -T --build e2e
+      - name: Cleanup e2e env
+        if: always()
+        run: docker compose -f docker-compose.test.yml down -v --remove-orphans
+
   release:
     name: Semantic release
-    needs: test
+    needs: [test, e2e]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: [self-hosted, linux, x64, memes-bot]
     outputs:
