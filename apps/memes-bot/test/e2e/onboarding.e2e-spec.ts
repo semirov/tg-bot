@@ -11,16 +11,14 @@ const OWNER_ID = Number(process.env.BOT_OWNER_ID);
 describe('E2E: старт приложения и онбординг', () => {
   let h: E2EHarness;
 
-  beforeAll(async () => {
+  // Харнес на каждый тест: изолируем сессию и активные конверсации.
+  beforeEach(async () => {
     h = await createE2EHarness();
+    await h.resetDb();
   });
 
-  afterAll(async () => {
+  afterEach(async () => {
     await h.close();
-  });
-
-  beforeEach(() => {
-    h.clearCalls();
   });
 
   it('на старте отправляет владельцу уведомление с версией', () => {
