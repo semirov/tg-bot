@@ -27,6 +27,11 @@ describe('normalizeMatchText', () => {
   it('пустая строка остаётся пустой', () => {
     expect(normalizeMatchText('   \n  ')).toBe('');
   });
+
+  it('переживает null и undefined', () => {
+    expect(normalizeMatchText(undefined as unknown as string)).toBe('');
+    expect(normalizeMatchText(null as unknown as string)).toBe('');
+  });
 });
 
 describe('isSameAnswer', () => {
@@ -76,6 +81,18 @@ describe('pickDefectAnswer', () => {
       candidate({ id: 2, content: 'иди нахуй.' }),
     ];
     const match = pickDefectAnswer(rows, { text: 'иди нахуй.' });
+    expect(match?.candidate.id).toBe(2);
+    expect(match?.exact).toBe(true);
+  });
+
+  it('сортирует несколько совпадений, ставя точное первым', () => {
+    const rows = [
+      candidate({ id: 1, content: 'иди нахуй', createdAt: new Date('2026-09-17T10:00:00Z') }),
+      candidate({ id: 2, content: 'иди нахуй.', createdAt: new Date('2026-09-17T09:00:00Z') }),
+      candidate({ id: 3, content: 'иди нахуй', createdAt: new Date('2026-09-17T08:00:00Z') }),
+    ];
+    const match = pickDefectAnswer(rows, { text: 'иди нахуй.' });
+
     expect(match?.candidate.id).toBe(2);
     expect(match?.exact).toBe(true);
   });

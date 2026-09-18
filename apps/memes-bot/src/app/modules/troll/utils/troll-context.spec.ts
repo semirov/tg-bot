@@ -81,6 +81,22 @@ describe('buildConversationContext', () => {
     expect(out[0].kind).toBe('message');
   });
 
+  it('оценивает реплику без имени автора (сервисные сообщения)', () => {
+    const rows: ConversationMessage[] = [
+      {
+        role: 'user',
+        content: 'без имени',
+        userName: null,
+        userId: null,
+        createdAt: new Date(BASE),
+      },
+    ];
+    const out = buildConversationContext(rows, { gapMs: AN_HOUR, maxTurns: 5, maxChars: 10 });
+
+    expect(out).toHaveLength(1);
+    expect(out[0].kind).toBe('message');
+  });
+
   it('при переполнении бюджета отбрасывает самые старые реплики', () => {
     const rows = [row(0, 'свежая'), row(5, 'X'.repeat(200)), row(10, 'Y'.repeat(200)), row(15, 'Z'.repeat(200))];
     const out = buildConversationContext(newestFirst(rows), {
