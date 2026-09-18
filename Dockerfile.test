@@ -1,0 +1,15 @@
+# Контейнер окружения тестов: unit + e2e.
+# Сборка: docker compose -f docker-compose.test.yml build tests
+# Запуск unit: docker compose -f docker-compose.test.yml run --rm tests
+FROM node:20
+
+WORKDIR /usr/src/app
+
+# Зависимости отдельным слоем — кэшируются, пока не менялись манифесты.
+COPY package.json package-lock.json nx.json tsconfig.base.json jest.preset.js jest.config.ts ./
+RUN npm ci
+
+# Исходники (node_modules/dist/coverage исключены .dockerignore).
+COPY . .
+
+CMD ["npx", "nx", "test", "memes-bot", "--codeCoverage"]

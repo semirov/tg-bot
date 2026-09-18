@@ -1,0 +1,75 @@
+name: CI/CD
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# Не запускать два деплоя одновременно.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+env:
+  # Гасим только deprecation-шум рантайма (punycode/url.parse) — ошибки остаются видны.
+  NODE_OPTIONS: --no-deprecation
+
+jobs:
+  test:
+    name: Lint, tests, coverage, build
+    runs-on: [self-hosted, linux, x64, memes-bot]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - name: Install
+        run: npm ci --no-audit --no-fund --loglevel=error
+      - name: Lint
+        run: npx nx lint memes-bot
+      - name: Unit tests + coverage (порог 95%)
+        run: npx nx test memes-bot --codeCoverage
+      - name: Build
+        run: npx nx build memes-bot
+
+  release:
+    name: Semantic release
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, linux, x64, memes-bot]
+    outputs:
+      released: ${{ steps.semrel.outputs.released }}
+      version: ${{ steps.semrel.outputs.version }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - name: Install
+        run: npm ci --no-audit --no-fund --loglevel=error
+      - name: Semantic release
+        id: semrel
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash tools/ci/release.sh
+
+  deploy:
+    name: Deploy
+    needs: release
+    if: needs.release.outputs.released == 'true'
+    runs-on: [self-hosted, linux, x64, memes-bot]
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Deploy ${{ needs.release.outputs.version }}
+        run: bash tools/deploy/deploy.sh "${{ needs.release.outputs.version }}"
