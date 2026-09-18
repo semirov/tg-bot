@@ -1,4 +1,4 @@
-import { Column, Entity, OneToMany, PrimaryColumn, PrimaryGeneratedColumn } from 'typeorm';
+import { Column, Entity, OneToMany, PrimaryColumn } from 'typeorm';
 import { UserRequestEntity } from './user-request.entity';
 import { ObservatoryPostEntity } from '../../observatory/entities/observatory-post.entity';
 

@@ -6,7 +6,6 @@ import { UserService } from '../../bot/services/user.service';
 import { Bot, InlineKeyboard } from 'grammy';
 import { BOT } from '../../bot/providers/bot.provider';
 import { BaseConfigService } from '../../config/base-config.service';
-import { UserRequestService } from '../../bot/services/user-request.service';
 import { ClientBaseService } from '../../client/services/client-base.service';
 import { ObservatoryPostMenusEnum } from '../contsants/observatory-post-menus.enum';
 import { InjectRepository } from '@nestjs/typeorm';

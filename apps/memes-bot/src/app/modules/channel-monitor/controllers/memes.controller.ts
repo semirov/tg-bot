@@ -2,6 +2,7 @@ import { GetObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { Controller, Get, Logger, NotFoundException, Res, StreamableFile } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import { Response } from 'express';
+import { Readable } from 'stream';
 import { BaseConfigService } from '../../config/base-config.service';
 import { ChannelMonitorBotService } from '../services/channel-monitor-bot.service';
 
@@ -114,7 +115,7 @@ export class MemesController {
         'Last-Modified': response.LastModified?.toUTCString() || new Date().toUTCString(),
       });
 
-      const stream = response.Body as any;
+      const stream = response.Body as Readable;
       return new StreamableFile(stream);
     } catch (error) {
       this.logger.error(`Failed to stream image from S3: ${s3Key}`, error);
@@ -141,6 +142,6 @@ export class MemesController {
       'Cache-Control': 'no-cache',
     });
 
-    return new StreamableFile(buffer as any);
+    return new StreamableFile(buffer);
   }
 }

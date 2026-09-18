@@ -107,10 +107,12 @@ export class UserPostManagementService implements OnModuleInit {
       const postsByUser = new Map<number, typeof bestUserPosts>();
       for (const post of bestUserPosts) {
         if (post.user) {
-          if (!postsByUser.has(post.user.id)) {
-            postsByUser.set(post.user.id, []);
+          let userPosts = postsByUser.get(post.user.id);
+          if (!userPosts) {
+            userPosts = [];
+            postsByUser.set(post.user.id, userPosts);
           }
-          postsByUser.get(post.user.id)!.push(post);
+          userPosts.push(post);
         }
       }
 
@@ -193,7 +195,7 @@ export class UserPostManagementService implements OnModuleInit {
     if (ctx.message.reply_to_message) {
       try {
         // Отправляем сообщение, на которое ответил пользователь
-        const replyMessage = await ctx.api.forwardMessage(
+        await ctx.api.forwardMessage(
           this.baseConfigService.userRequestMemeChannel,
           ctx.message.chat.id,
           ctx.message.reply_to_message.message_id
@@ -719,7 +721,7 @@ export class UserPostManagementService implements OnModuleInit {
   }
 
   // Вспомогательная функция для проверки валидности даты
-  private isValidDate(date: any): boolean {
+  private isValidDate(date: Date | string | number): boolean {
     if (!date) return false;
 
     // Преобразуем в объект Date, если это строка или число

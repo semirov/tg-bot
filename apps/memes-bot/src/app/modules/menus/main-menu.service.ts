@@ -6,7 +6,6 @@ import { Bot, CommandContext } from 'grammy';
 import { BotContext } from '../bot/interfaces/bot-context.interface';
 import { AdminMenuService } from './admin-menu.service';
 import { ModeratorMenuService } from './moderator-menu.service';
-import { ConversationsEnum } from '../post-management/constants/conversations.enum';
 import { UserService } from '../bot/services/user.service';
 
 @Injectable()

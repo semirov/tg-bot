@@ -1,5 +1,6 @@
 import { TestingModule, Test } from '@nestjs/testing';
 import { Bot } from 'grammy';
+import { Subject } from 'rxjs';
 import { DataSource } from 'typeorm';
 import { AppModule } from '../../src/app/app.module';
 import { BotContext } from '../../src/app/modules/bot/interfaces/bot-context.interface';
@@ -17,8 +18,7 @@ jest.mock('@grammyjs/runner', () => {
 });
 
 /**
- * axios поставляется как ESM и не парсится ts-jest. В e2e сеть не нужна:
- * подменяем клиент заглушкой (конкретные ответы задаются в тестах при необходимости).
+ * axios поставляется как ESM и не парсится ts-jest; сеть в e2e не нужна.
  */
 jest.mock('axios', () => {
   const instance = {
@@ -36,8 +36,23 @@ jest.mock('axios', () => {
   return { __esModule: true, default: axios, ...axios };
 });
 
+/**
+ * В node-сборке grammY Bot API ходит через `node-fetch` (не global.fetch).
+ * Заглушка нужна только для стартового `setMyCommands` из BOT_PROVIDER:
+ * рантайм-вызовы перехватывает трансформер (см. ниже).
+ */
+jest.mock('node-fetch', () => ({
+  __esModule: true,
+  default: jest.fn(async () => ({
+    ok: true,
+    status: 200,
+    headers: { get: () => 'application/json' },
+    json: async () => ({ ok: true, result: true }),
+    text: async () => JSON.stringify({ ok: true, result: true }),
+  })),
+}));
 
-/** Один исходящий вызов Telegram API, перехваченный фейковым fetch. */
+/** Один исходящий вызов Telegram Bot API, перехваченный тестом. */
 export interface TelegramApiCall {
   method: string;
   payload: Record<string, any>;
@@ -45,7 +60,7 @@ export interface TelegramApiCall {
 
 let nextMessageId = 1000;
 
-/** Возвращает правдоподобный ответ Telegram Bot API для метода. */
+/** Правдоподобный ответ Bot API для метода. */
 function fakeTelegramResult(method: string, payload: Record<string, any>): unknown {
   const chatId = payload?.chat_id ?? payload?.from_chat_id ?? 1;
   const message = {
@@ -81,6 +96,25 @@ function fakeTelegramResult(method: string, payload: Record<string, any>): unkno
   }
 }
 
+/** Сервисы, лезущие в сеть (MTProto/второй бот), заменяем заглушками. */
+const clientBaseStub = {
+  onModuleInit: async () => undefined,
+  onApplicationBootstrap: async () => undefined,
+  observerChannelPost$: new Subject(),
+  bestMemesDaily$: new Subject(),
+  lastObserverStatus: async () => false,
+  toggleChannelObserver: async () => undefined,
+  postDailyBestMeme: async () => undefined,
+};
+
+const channelMonitorStub = {
+  onModuleInit: async () => undefined,
+  onApplicationBootstrap: async () => undefined,
+  getLastMeme: async () => null,
+  getLastBestMeme: async () => null,
+  getRandomMemeByType: async () => null,
+};
+
 /** Тестовый стенд: приложение, бот, БД и перехваченные вызовы Telegram. */
 export interface E2EHarness {
   moduleRef: TestingModule;
@@ -95,34 +129,39 @@ export interface E2EHarness {
   close(): Promise<void>;
 }
 
-/** Поднимает приложение и харнес; сеть к Telegram подменяется фейковым fetch. */
+/** Поднимает приложение и харнес; исходящий Bot API мокается на уровне grammY. */
 export async function createE2EHarness(): Promise<E2EHarness> {
   const calls: TelegramApiCall[] = [];
 
-  global.fetch = jest.fn(async (input: any, init?: any) => {
-    const url = typeof input === 'string' ? input : input.url;
-    const method = String(url).split('/').pop()!.split('?')[0];
-    const payload = init?.body ? JSON.parse(String(init.body)) : {};
-    calls.push({ method, payload });
-    return new Response(JSON.stringify({ ok: true, result: fakeTelegramResult(method, payload) }), {
-      status: 200,
-      headers: { 'content-type': 'application/json' },
-    });
-  }) as any;
-
   const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
-    // Второй (монитор) бот и MTProto-клиент в e2e не нужны — они ходят в сеть.
     .overrideProvider(ChannelMonitorBotService)
-    .useValue({ onModuleInit: async () => undefined, onApplicationBootstrap: async () => undefined })
+    .useValue(channelMonitorStub)
     .overrideProvider(ClientBaseService)
-    .useValue({ onModuleInit: async () => undefined, onApplicationBootstrap: async () => undefined })
+    .useValue(clientBaseStub)
     .compile();
-
-  await moduleRef.init();
 
   const bot = moduleRef.get<Bot<BotContext>>(BOT);
   const dataSource = moduleRef.get(DataSource);
+
+  // Канонический способ мокать Bot API в grammY (docs: advanced/transformers) —
+  // трансформер на bot.api. Ставим до init(), чтобы поймать уведомление о старте.
+  bot.api.config.use(async (_prev, method, payload) => {
+    calls.push({ method, payload: payload as Record<string, any> });
+    return {
+      ok: true,
+      result: fakeTelegramResult(method, payload as Record<string, any>),
+    } as any;
+  });
+
+  // В проде init делает run(); в тесте раннер замокан — инициализируем сами.
+  if (!bot.isInited()) {
+    await bot.init();
+  }
+
+  await moduleRef.init();
+
   const startupCalls = [...calls];
+  calls.length = 0;
 
   return {
     moduleRef,
@@ -142,6 +181,13 @@ export async function createE2EHarness(): Promise<E2EHarness> {
     },
     close: () => moduleRef.close(),
   };
+}
+
+/** Проверяет, что текст — команда, и возвращает сущность bot_command. */
+function commandEntities(text: string): { type: string; offset: number; length: number }[] | undefined {
+  if (!text.startsWith('/')) return undefined;
+  const command = text.split(/\s+/)[0];
+  return [{ type: 'bot_command', offset: 0, length: command.length }];
 }
 
 /** Собирает update обычного сообщения в личке. */
@@ -166,6 +212,7 @@ export function privateMessageUpdate(options: {
         username: options.username ?? 'user',
       },
       text: options.text,
+      entities: commandEntities(options.text),
     },
   };
 }
@@ -188,6 +235,7 @@ export function groupMessageUpdate(options: {
       chat: { id: chatId, type: 'supergroup', title: 'Test Group' },
       from: { id: userId, is_bot: false, first_name: 'Member' },
       text: options.text,
+      entities: commandEntities(options.text),
     },
   };
 }

@@ -45,3 +45,4 @@ for (const [key, value] of Object.entries(defaults)) {
 }
 
 jest.setTimeout(60000);
+

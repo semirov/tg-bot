@@ -3,7 +3,7 @@ import { BOT } from '../bot/providers/bot.provider';
 import { Bot } from 'grammy';
 import { BotContext } from '../bot/interfaces/bot-context.interface';
 import { Menu } from '@grammyjs/menu';
-import { AdminMenusEnum, ModeratorMenusEnum } from './constants/bot-menus.enum';
+import { ModeratorMenusEnum } from './constants/bot-menus.enum';
 import { UserRequestService } from '../bot/services/user-request.service';
 import { MoreThan } from 'typeorm';
 import { sub } from 'date-fns';

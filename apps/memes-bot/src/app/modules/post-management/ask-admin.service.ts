@@ -2,7 +2,7 @@ import { Inject, Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { Conversation, createConversation } from '@grammyjs/conversations';
 import { ConversationsEnum } from './constants/conversations.enum';
 import { BOT } from '../bot/providers/bot.provider';
-import { Bot, InlineKeyboard } from 'grammy';
+import { Bot } from 'grammy';
 import { BotContext } from '../bot/interfaces/bot-context.interface';
 import { BaseConfigService } from '../config/base-config.service';
 import { UserService } from '../bot/services/user.service';
@@ -56,7 +56,7 @@ export class AskAdminService implements OnModuleInit {
 
   private onAdminUserQuery(): void {
     this.bot.callbackQuery(/admin_user_dialog_start/, async (ctx) => {
-      const [cmd, userId, messageId] = ctx.callbackQuery.data.split('$');
+      const [, userId, messageId] = ctx.callbackQuery.data.split('$');
 
       ctx.session.adminUserConversationUserId = +userId;
       ctx.session.adminUserConversationMessageId = +messageId;
@@ -65,7 +65,7 @@ export class AskAdminService implements OnModuleInit {
     });
 
     this.bot.callbackQuery(/admin_user_dialog_ban_user/, async (ctx) => {
-      const [cmd, userId, messageId] = ctx.callbackQuery.data.split('$');
+      const [, userId, messageId] = ctx.callbackQuery.data.split('$');
 
       await this.userService.repository.update(
         { id: +userId },

@@ -638,7 +638,10 @@ export class YearResultsService {
   /**
    * Форматирует общую статистику для публикации
    */
-  public formatGeneralStatistics(general: any, users: any[]): string {
+  public formatGeneralStatistics(
+    general: YearGeneralStatistics,
+    users: Pick<UserYearStatistics, 'totalProposed' | 'totalPublished' | 'totalCringe'>[]
+  ): string {
     const year = general.year;
     let text = `🎉 <b>Итоги ${year} года</b>\n\n`;
 
@@ -1162,8 +1165,8 @@ export class YearResultsService {
   private formatPersonalMessage(
     user: UserYearStatistics,
     year: number,
-    percentile: number,
-    totalUsers: number
+    _percentile: number,
+    _totalUsers: number
   ): string {
     let text = `<b>Твои итоги ${year} года 🎉</b>\n\n`;
 

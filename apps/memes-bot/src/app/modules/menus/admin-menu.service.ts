@@ -19,6 +19,10 @@ import { formatUsd } from '../troll/constants/deepseek-pricing';
 import { DeepSeekService } from '../troll/services/deepseek.service';
 import { TrollSettingsService } from '../troll/services/troll-settings.service';
 import { TrollService } from '../troll/services/troll.service';
+import {
+  UserYearStatistics,
+  YearResultsPreview,
+} from '../year-results/interfaces/year-statistics.interface';
 import { YearResultsService } from '../year-results/services/year-results.service';
 import { AdminMenusEnum } from './constants/bot-menus.enum';
 
@@ -77,7 +81,7 @@ export class AdminMenuService implements OnModuleInit {
     // Регистрируем команды для итогов года
     this.bot.command('year_result', async (ctx) => {
       if (!ctx.from) return;
-      const user = await this.userService.findById(ctx.from.id);
+      await this.userService.findById(ctx.from.id);
 
       if (!ctx.config.isOwner) {
         await ctx.reply('У вас нет прав для выполнения этой команды');
@@ -88,7 +92,7 @@ export class AdminMenuService implements OnModuleInit {
 
     this.bot.command('year_result_publish', async (ctx) => {
       if (!ctx.from) return;
-      const user = await this.userService.findById(ctx.from.id);
+      await this.userService.findById(ctx.from.id);
       if (!ctx.config.isOwner) {
         await ctx.reply('У вас нет прав для выполнения этой команды');
         return;
@@ -824,7 +828,7 @@ export class AdminMenuService implements OnModuleInit {
    */
   private async sendUserDetailWithNavigation(
     ctx: BotContext,
-    preview: any,
+    preview: YearResultsPreview,
     index: number
   ): Promise<void> {
     const user = preview.users[index];
@@ -893,7 +897,7 @@ export class AdminMenuService implements OnModuleInit {
   /**
    * Форматирует имя пользователя
    */
-  private formatUserName(user: any): string {
+  private formatUserName(user: UserYearStatistics): string {
     if (user.username) {
       return `@${user.username}`;
     }

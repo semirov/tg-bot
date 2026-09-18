@@ -160,7 +160,7 @@ export class ChannelMonitorBotService implements OnModuleInit {
 
           const chunks: Buffer[] = [];
           response.on('data', (chunk) => chunks.push(chunk));
-          response.on('end', () => resolve(Buffer.concat(chunks as any)));
+          response.on('end', () => resolve(Buffer.concat(chunks)));
           response.on('error', reject);
         })
         .on('error', reject);
