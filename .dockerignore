@@ -7,6 +7,7 @@ tmp
 *.env
 .server-creds
 .test-token
+.server
 postgress_backup.*
 coverage
 # Утилиты аудита промптов не нужны в образе

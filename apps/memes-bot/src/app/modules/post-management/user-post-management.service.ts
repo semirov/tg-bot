@@ -21,6 +21,7 @@ import { MattermostService } from '../mattermost/mattermost.service';
 import { TrollService } from '../troll/services/troll.service';
 import { PostModerationMenusEnum } from './constants/post-moderation-menus.enum';
 import { PublicationModesEnum } from './constants/publication-modes.enum';
+import { resolveAdminReply } from './utils/admin-reply';
 
 @Injectable()
 export class UserPostManagementService implements OnModuleInit {
@@ -1121,11 +1122,24 @@ export class UserPostManagementService implements OnModuleInit {
 
   private handleAdminUserResponse(): void {
     this.replyToBotContext.on(['message', 'channel_post'], async (ctx) => {
-      const adminMessageId = ctx?.channelPost?.message_id || ctx?.message?.message_id;
+      const reply = resolveAdminReply(ctx, this.baseConfigService.userRequestMemeChannel);
+
+      if (!reply) {
+        return;
+      }
+
       const message = await this.userRequestService.repository.findOne({
-        where: { userRequestChannelMessageId: ctx.channelPost.reply_to_message.message_id },
+        where: { userRequestChannelMessageId: reply.replyToMessageId },
         relations: { user: true },
       });
+
+      if (!message?.user) {
+        Logger.warn(
+          `Ответ админа игнорирован: заявка на сообщение ${reply.replyToMessageId} не найдена`,
+          UserPostManagementService.name
+        );
+        return;
+      }
 
       try {
         // убираем реакцию у пользователя
@@ -1138,7 +1152,7 @@ export class UserPostManagementService implements OnModuleInit {
       }
 
       // копируем ответ пользователю
-      await this.bot.api.copyMessage(message.user.id, ctx.chat.id, adminMessageId, {
+      await this.bot.api.copyMessage(message.user.id, reply.chatId, reply.adminMessageId, {
         reply_to_message_id: message.originalMessageId,
       });
 
@@ -1436,14 +1450,15 @@ export class UserPostManagementService implements OnModuleInit {
 
   private prepareReplyToBotContext(): void {
     this.replyToBotContext = this.bot.filter(async (ctx: BotContext) => {
-      if (!ctx?.channelPost?.reply_to_message && !ctx?.message?.reply_to_message) {
+      const reply = resolveAdminReply(ctx, this.baseConfigService.userRequestMemeChannel);
+
+      if (!reply) {
         return false;
       }
+
       const message = await this.userRequestService.repository.findOne({
         where: {
-          userRequestChannelMessageId:
-            ctx?.channelPost?.reply_to_message?.message_id ||
-            ctx?.message?.reply_to_message?.message_id,
+          userRequestChannelMessageId: reply.replyToMessageId,
         },
       });
       return !!message;
