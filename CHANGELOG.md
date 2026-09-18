@@ -1,3 +1,17 @@
+## [0.14.4](https://github.com/semirov/tg-bot/compare/v0.14.3...v0.14.4) (2026-09-18)
+
+
+### Bug Fixes
+
+* **ci:** release-job на хост-Node ([#41](https://github.com/semirov/tg-bot/issues/41)) ([a735797](https://github.com/semirov/tg-bot/commit/a735797bdfa4a8f5eb4c878b76eb3b7ff2bb3805))
+* **ci:** release-job на хост-Node (bind-mount /home/filipp/dev не виден docker-демону из раннера) ([3d189e4](https://github.com/semirov/tg-bot/commit/3d189e48233f5d172cd3e0b654c0433efeb048f8))
+
+
+### Performance Improvements
+
+* **ci:** ускорить сборку и деплой ([4476dce](https://github.com/semirov/tg-bot/commit/4476dcefce715112bf59e32275622669178e844d))
+* **ci:** ускорить сборку и деплой ([#40](https://github.com/semirov/tg-bot/issues/40)) ([85d329e](https://github.com/semirov/tg-bot/commit/85d329ea8807d5a80165b7bbd53a0ba89d407df3))
+
 ## [0.14.3](https://github.com/semirov/tg-bot/compare/v0.14.2...v0.14.3) (2026-09-18)
 
 
