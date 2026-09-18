@@ -82,9 +82,22 @@ function fakeTelegramResult(method: string, payload: Record<string, any>): unkno
         supports_inline_queries: false,
       };
     case 'getChat':
-      return { id: chatId, type: 'channel', title: 'Test Chat' };
+      return {
+        id: chatId,
+        type: 'channel',
+        title: 'Test Chat',
+        username: 'test_channel',
+        invite_link: 'https://t.me/+test',
+      };
     case 'getChatMember':
       return { status: 'member', user: { id: payload?.user_id ?? 1, is_bot: false, first_name: 'User' } };
+    case 'getFile':
+      return {
+        file_id: payload?.file_id ?? 'file',
+        file_unique_id: 'unique',
+        file_size: 128,
+        file_path: 'photos/file_1.jpg',
+      };
     case 'sendMessage':
     case 'copyMessage':
     case 'forwardMessage':
@@ -97,23 +110,27 @@ function fakeTelegramResult(method: string, payload: Record<string, any>): unkno
 }
 
 /** Сервисы, лезущие в сеть (MTProto/второй бот), заменяем заглушками. */
-const clientBaseStub = {
-  onModuleInit: async () => undefined,
-  onApplicationBootstrap: async () => undefined,
-  observerChannelPost$: new Subject(),
-  bestMemesDaily$: new Subject(),
-  lastObserverStatus: async () => false,
-  toggleChannelObserver: async () => undefined,
-  postDailyBestMeme: async () => undefined,
-};
+function createClientBaseStub() {
+  return {
+    onModuleInit: async () => undefined,
+    onApplicationBootstrap: async () => undefined,
+    observerChannelPost$: new Subject(),
+    bestMemesDaily$: new Subject(),
+    lastObserverStatus: async () => false,
+    toggleChannelObserver: async () => undefined,
+    postDailyBestMeme: async () => undefined,
+  };
+}
 
-const channelMonitorStub = {
-  onModuleInit: async () => undefined,
-  onApplicationBootstrap: async () => undefined,
-  getLastMeme: async () => null,
-  getLastBestMeme: async () => null,
-  getRandomMemeByType: async () => null,
-};
+function createChannelMonitorStub() {
+  return {
+    onModuleInit: async () => undefined,
+    onApplicationBootstrap: async () => undefined,
+    getLastMeme: async () => null,
+    getLastBestMeme: async () => null,
+    getRandomMemeByType: async () => null,
+  };
+}
 
 /** Тестовый стенд: приложение, бот, БД и перехваченные вызовы Telegram. */
 export interface E2EHarness {
@@ -129,16 +146,34 @@ export interface E2EHarness {
   close(): Promise<void>;
 }
 
+/** Настройки тестового стенда. */
+export interface E2EHarnessOptions {
+  /**
+   * Если true — ClientBaseService не подменяется заглушкой, а работает
+   * настоящий (его сетевую часть тест мокает сам, например `telegram`).
+   */
+  realClientBaseService?: boolean;
+  /** Дополнительные подмены провайдеров (например DeepSeekService). */
+  overrideProviders?: Array<{ provide: unknown; useValue: unknown }>;
+}
+
 /** Поднимает приложение и харнес; исходящий Bot API мокается на уровне grammY. */
-export async function createE2EHarness(): Promise<E2EHarness> {
+export async function createE2EHarness(options: E2EHarnessOptions = {}): Promise<E2EHarness> {
   const calls: TelegramApiCall[] = [];
 
-  const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
+  let builder = Test.createTestingModule({ imports: [AppModule] })
     .overrideProvider(ChannelMonitorBotService)
-    .useValue(channelMonitorStub)
-    .overrideProvider(ClientBaseService)
-    .useValue(clientBaseStub)
-    .compile();
+    .useValue(createChannelMonitorStub());
+
+  if (!options.realClientBaseService) {
+    builder = builder.overrideProvider(ClientBaseService).useValue(createClientBaseStub());
+  }
+
+  for (const override of options.overrideProviders ?? []) {
+    builder = builder.overrideProvider(override.provide as never).useValue(override.useValue);
+  }
+
+  const moduleRef = await builder.compile();
 
   const bot = moduleRef.get<Bot<BotContext>>(BOT);
   const dataSource = moduleRef.get(DataSource);
@@ -251,4 +286,26 @@ export function findCall(
   predicate: (payload: Record<string, any>) => boolean = () => true
 ): TelegramApiCall | undefined {
   return calls.find((call) => call.method === method && predicate(call.payload));
+}
+
+/**
+ * Дожидается выполнения асинхронного побочного эффекта (например подписки
+ * на Subject), периодически повторяя проверку. Не использовать с fake timers.
+ */
+export async function waitFor(
+  assertion: () => void | Promise<void>,
+  timeoutMs = 10000
+): Promise<void> {
+  const startedAt = Date.now();
+  let lastError: unknown;
+  while (Date.now() - startedAt < timeoutMs) {
+    try {
+      await assertion();
+      return;
+    } catch (error) {
+      lastError = error;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error(String(lastError));
 }
