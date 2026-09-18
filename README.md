@@ -20,6 +20,7 @@ apps/
     │   ├── app/
     │   │   ├── app.module.ts          # Корневой модуль приложения
     │   │   ├── app.service.ts         # Основной сервис приложения
+    │   │   ├── version.ts             # Версия приложения (из env/тега)
     │   │   ├── main.ts                # Точка входа приложения
     │   │   └── modules/               # Модули приложения
     │   │       ├── bot/               # Модуль Telegram бота
@@ -35,8 +36,14 @@ apps/
     │   ├── environments/              # Конфигурации окружения
     │   ├── tools/troll-audit/         # Утилиты аудита промптов (в образ не попадают)
     │   └── assets/                    # Статические ресурсы
-    ├── Dockerfile                     # Docker конфигурация
+    ├── test/e2e/                      # E2E-харнес и сценарии
+    ├── Dockerfile                     # Прод-образ (FROM base с зависимостями)
     └── project.json                   # Конфигурация проекта NX
+
+Dockerfile.deps                        # Базовый образ с зависимостями (node20/node22)
+Dockerfile.test / docker-compose.test.yml  # Контейнерный тестовый контур
+tools/ci, tools/deploy                 # CI/CD-скрипты (base, release, deploy)
+.github/workflows/ci.yml               # GitHub Actions
 ```
 
 ### Основные модули
@@ -437,6 +444,42 @@ sequenceDiagram
 Тролль-бот дополнительно пишет **тексты входящих сообщений и своих ответов**, а также расшифровку запроса и сырой ответ модели (уровень `debug`) — чтобы можно было детально разобрать его поведение.
 
 Логи ротируются: раз в сутки последние 24 часа складываются в `/var/log/memes-bot/bot.log`, `logrotate` хранит **текущий файл и два прошлых дня**, а вывод контейнера ограничен по размеру (`max-size=30m`, `max-file=10`). Подробности — в [README тролль-модуля](apps/memes-bot/src/app/modules/troll/README.md#10-логи-и-их-хранение).
+
+## 🧪 Тестирование
+
+Проект покрыт юнит-тестами (порог покрытия **95%**, отчёт в [`COVERAGE.md`](COVERAGE.md)) и e2e-тестами на реальном приложении.
+
+### Юнит-тесты
+
+```bash
+npm run test:memes-bot     # nx test
+npm run coverage           # тесты + покрытие (порог 95%)
+npm run coverage:report    # COVERAGE.md + coverage-badge.svg
+```
+
+### E2E
+
+E2E поднимает **реальное Nest-приложение и реальный grammY Bot**, но без сети: Bot API мокается каноничным трансформером `bot.api.config.use` (в node-сборке grammY ходит через `node-fetch`), внешние границы (axios, MTProto `telegram`, DeepSeek) замоканы, а состояние — реальный Postgres. Входящие апдейты прогоняются через `bot.handleUpdate`.
+
+Покрыто: онбординг/капча/меню, post-management (предложка, лимиты, дубли, модерация, публикация), observatory (в т.ч. user-moderation), MTProto-клиент (наблюдение канала, auth, ad-detection, альбомы, daily best), тролль (`/stat` `/future` `/meme` `/sumarize`, owner-онбординг, дефекты, реакции), cron и итоги года.
+
+```bash
+npm run e2e:docker   # docker compose: Postgres + приложение + прогон e2e
+```
+
+Весь тестовый контур контейнеризован: `Dockerfile.test` + `docker-compose.test.yml` (Postgres c `pg_trgm`).
+
+## 🔁 CI/CD и версионирование
+
+CI/CD — GitHub Actions на **self-hosted раннере в Docker** (на этой машине, рядом с остальными контейнерами).
+
+- **PR**: `lint` → юнит-тесты с покрытием (порог 95%) → сборка прод-образа → **e2e**.
+- **push в `main`**: то же плюс **semantic-release** (версия из conventional commits, git-тег) и **деплой**; при неудачном старте контейнера — автоматический откат на предыдущий образ.
+- **Деплой по тегам**: версия вычисляется автоматически (`feat` → minor, `fix`/`perf` → patch), тег `vX.Y.Z`; версия прокидывается в контейнер как `APP_VERSION` и попадает в уведомление владельцу при старте.
+- **Скорость**: базовые образы зависимостей `telegram-bot-deps:node20` / `:node22` (тег = хэш `package-lock.json`) собираются отдельным job'ом только при изменении пакетов; приложение и тесты собираются `FROM` них. Прод-образ собирается один раз в test-job (тег `sha-<commit>`) и переиспользуется деплоем. `nx`-кэш — через BuildKit.
+- **Секреты**: не хранятся в репозитории — SSH/registry-доступы лежат на хосте раннера и монтируются read-only в `/deploy-secrets`.
+
+Скрипты: `tools/ci/build-base.sh`, `tools/ci/release.sh`, `tools/deploy/deploy.sh`.
 
 ## 🤝 Вклад в проект
 
