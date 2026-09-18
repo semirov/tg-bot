@@ -1,3 +1,11 @@
+## [0.14.1](https://github.com/semirov/tg-bot/compare/v0.14.0...v0.14.1) (2026-09-18)
+
+
+### Bug Fixes
+
+* **ci:** writable DOCKER_CONFIG при деплое ([#37](https://github.com/semirov/tg-bot/issues/37)) ([1d6eed3](https://github.com/semirov/tg-bot/commit/1d6eed38f1e5bc488c97d3b182c2e98be0a9c0ef))
+* **ci:** writable DOCKER_CONFIG при деплое (read-only /deploy-secrets) ([2615aca](https://github.com/semirov/tg-bot/commit/2615aca7c62883f94d0d4eca0d7e51d8ebc40575))
+
 # [0.14.0](https://github.com/semirov/tg-bot/compare/v0.13.4...v0.14.0) (2026-09-18)
 
 
