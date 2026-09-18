@@ -22,6 +22,9 @@ import { TrollService } from '../troll/services/troll.service';
 import { PostModerationMenusEnum } from './constants/post-moderation-menus.enum';
 import { PublicationModesEnum } from './constants/publication-modes.enum';
 import { resolveAdminReply } from './utils/admin-reply';
+import { buildTelegramFileUrl, extractTelegramFileId } from '../../shared/publication/media-url';
+import { sendPostToMattermost } from '../../shared/publication/mattermost-post';
+import { runPublicationMode } from '../../shared/publication/publication-mode';
 
 @Injectable()
 export class UserPostManagementService implements OnModuleInit {
@@ -1108,18 +1111,16 @@ export class UserPostManagementService implements OnModuleInit {
       hash: imageHash,
     };
 
-    switch (mode) {
-      case PublicationModesEnum.NOW_SILENT:
-        return this.onPublishNow(publishContext);
-      case PublicationModesEnum.NEXT_MORNING:
-      case PublicationModesEnum.NEXT_MIDDAY:
-      case PublicationModesEnum.NEXT_EVENING:
-      case PublicationModesEnum.NEXT_INTERVAL:
-      case PublicationModesEnum.NEXT_NIGHT:
-        return this.publishScheduled(publishContext);
-      case PublicationModesEnum.NIGHT_CRINGE:
-        return this.publishNightCringeScheduled(publishContext);
-    }
+    return runPublicationMode(
+      mode,
+      {
+        now: (context: ScheduledPostContextInterface) => this.onPublishNow(context),
+        scheduled: (context: ScheduledPostContextInterface) => this.publishScheduled(context),
+        nightCringe: (context: ScheduledPostContextInterface) =>
+          this.publishNightCringeScheduled(context),
+      },
+      publishContext
+    );
   }
 
   private handleAdminUserResponse(): void {
@@ -1263,16 +1264,14 @@ export class UserPostManagementService implements OnModuleInit {
    * Отправляет пост в Mattermost параллельно с основной публикацией в Telegram.
    */
   private async sendToMattermost(requestChannelMessageId: number, caption: string): Promise<void> {
-    try {
-      const fileUrl = await this.getTelegramFileUrl(requestChannelMessageId);
-      await this.mattermostService.sendPostWithFile({
-        message: caption,
-        fileUrl,
-        fileName: `meme_${requestChannelMessageId}`,
-      });
-    } catch (error) {
-      this.logger.error('Failed to send to Mattermost:', error);
-    }
+    return sendPostToMattermost({
+      mattermostService: this.mattermostService,
+      getFileUrl: (messageId) => this.getTelegramFileUrl(messageId),
+      logger: this.logger,
+      requestChannelMessageId,
+      caption,
+      fileNamePrefix: 'meme_',
+    });
   }
 
   /**
@@ -1290,28 +1289,14 @@ export class UserPostManagementService implements OnModuleInit {
         disable_notification: true,
       });
 
-      let fileId: string | undefined;
-
-      if (forwarded.photo) {
-        fileId = forwarded.photo[forwarded.photo.length - 1].file_id;
-      } else if (forwarded.video) {
-        fileId = forwarded.video.file_id;
-      } else if (forwarded.document) {
-        fileId = forwarded.document.file_id;
-      } else if (forwarded.animation) {
-        fileId = forwarded.animation.file_id;
-      }
+      const fileId = extractTelegramFileId(forwarded);
 
       if (!fileId) return undefined;
 
       const file = await this.bot.api.getFile(fileId);
       if (!file?.file_path) return undefined;
 
-      const tgEnv = this.baseConfigService.tgEnv;
-      if (tgEnv === 'test') {
-        return `https://api.telegram.org/file/bot${token}/test/${file.file_path}`;
-      }
-      return `https://api.telegram.org/file/bot${token}/${file.file_path}`;
+      return buildTelegramFileUrl(token, file.file_path, this.baseConfigService.tgEnv);
     } catch (error) {
       this.logger.error('Failed to get Telegram file URL:', error);
       return undefined;
