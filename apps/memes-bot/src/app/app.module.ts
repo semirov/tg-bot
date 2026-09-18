@@ -35,10 +35,12 @@ import { TrollMessageEntity } from './modules/troll/entities/troll-message.entit
 import { TrollPredictionEntity } from './modules/troll/entities/troll-prediction.entity';
 import { TrollSettingsEntity } from './modules/troll/entities/troll-settings.entity';
 import { TrollModule } from './modules/troll/troll.module';
+import { SharedModule } from './shared/shared.module';
 
 @Module({
   imports: [
     AppConfigModule,
+    SharedModule,
     BotModule,
     ObservatoryModule,
     ChannelMonitorModule,
