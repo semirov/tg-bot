@@ -3,15 +3,15 @@
 # (Dockerfile.deps), поэтому на каждый билд копируется и собирается только код.
 #
 # ARG DEPS_IMAGE задаёт базовый образ (тег = хэш package-lock.json).
-ARG DEPS_IMAGE=cr.yandex/crp8g8jm3p8d780a8hk3/telegram-bot-deps:latest
+ARG DEPS_IMAGE=cr.yandex/crp8g8jm3p8d780a8hk3/telegram-bot-deps:node20
 
 FROM ${DEPS_IMAGE} as builder
 WORKDIR /usr/src/app
 COPY nx.json tsconfig.base.json ./
 COPY apps/memes-bot /usr/src/app/apps/memes-bot
 
-# Build app
-RUN npm run build:memes-bot
+# Build app (nx-кэш переиспользуется между сборками через cache mount).
+RUN --mount=type=cache,target=/usr/src/app/.nx npm run build:memes-bot
 
 RUN npm prune --production
 

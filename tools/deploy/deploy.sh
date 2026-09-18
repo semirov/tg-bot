@@ -19,7 +19,8 @@ set -euo pipefail
 
 export DOCKER_BUILDKIT=1
 
-VERSION="${1:?usage: deploy.sh <version>}"
+VERSION="${1:?usage: deploy.sh <version> [builtSha]}"
+BUILT_SHA="${2:-}"
 SECRETS_DIR="${DEPLOY_SECRETS_DIR:-/deploy-secrets}"
 
 # shellcheck disable=SC1091
@@ -28,24 +29,28 @@ source "$SECRETS_DIR/target.env"
 : "${DEPLOY_HOST:?}"; : "${DEPLOY_USER:?}"; : "${DEPLOY_IMAGE:?}"
 : "${DEPLOY_CONTAINER:?}"; : "${DEPLOY_NETWORK:?}"; : "${DEPLOY_ENV_FILE:?}"
 
-if [ -f "$SECRETS_DIR/docker/config.json" ]; then
-  # /deploy-secrets смонтирован read-only, а docker/buildx пишут в DOCKER_CONFIG.
-  DOCKER_CONFIG_WRITABLE="$(mktemp -d)"
-  cp "$SECRETS_DIR/docker/config.json" "$DOCKER_CONFIG_WRITABLE/config.json"
-  export DOCKER_CONFIG="$DOCKER_CONFIG_WRITABLE"
-fi
+# shellcheck source=/dev/null
+source tools/ci/docker-config.sh
 
 echo "==> Базовый образ с зависимостями"
-DEPS_IMAGE="$(bash tools/ci/build-base.sh | tail -1)"
+DEPS_IMAGE="$(bash tools/ci/build-base.sh 20 | tail -1)"
 echo "    $DEPS_IMAGE"
 
-echo "==> Сборка образа ${DEPLOY_IMAGE}:${VERSION} (linux/amd64)"
-docker build --platform linux/amd64 \
-  --build-arg DEPS_IMAGE="$DEPS_IMAGE" \
-  -f apps/memes-bot/Dockerfile \
-  -t "${DEPLOY_IMAGE}:${VERSION}" .
+# Прод-образ уже собран и запушен test-job'ом (тег sha-<commit>): переиспользуем
+# его, чтобы не собирать webpack повторно в деплое.
+IMAGE_SHA="${DEPLOY_IMAGE}:sha-${BUILT_SHA}"
+if [ -n "$BUILT_SHA" ] && docker pull "$IMAGE_SHA" >/dev/null 2>&1; then
+  echo "==> Используем образ из CI: $IMAGE_SHA"
+  docker tag "$IMAGE_SHA" "${DEPLOY_IMAGE}:${VERSION}"
+else
+  echo "==> Образ sha-${BUILT_SHA:-?} не найден — сборка ${DEPLOY_IMAGE}:${VERSION} (linux/amd64)"
+  docker build --platform linux/amd64 \
+    --build-arg DEPS_IMAGE="$DEPS_IMAGE" \
+    -f apps/memes-bot/Dockerfile \
+    -t "${DEPLOY_IMAGE}:${VERSION}" .
+fi
 
-echo "==> Push образа"
+echo "==> Push образа ${VERSION}"
 docker push "${DEPLOY_IMAGE}:${VERSION}"
 
 # Транспорт к серверу: ключ, если задан, иначе пароль через askpass.

@@ -25,7 +25,7 @@ services:
       context: .
       dockerfile: Dockerfile.test
       args:
-        DEPS_IMAGE: ${DEPS_IMAGE:-cr.yandex/crp8g8jm3p8d780a8hk3/telegram-bot-deps:latest}
+        DEPS_IMAGE: ${DEPS_IMAGE:-cr.yandex/crp8g8jm3p8d780a8hk3/telegram-bot-deps:node20}
     depends_on:
       postgres:
         condition: service_healthy
@@ -66,7 +66,7 @@ services:
       context: .
       dockerfile: Dockerfile.test
       args:
-        DEPS_IMAGE: ${DEPS_IMAGE:-cr.yandex/crp8g8jm3p8d780a8hk3/telegram-bot-deps:latest}
+        DEPS_IMAGE: ${DEPS_IMAGE:-cr.yandex/crp8g8jm3p8d780a8hk3/telegram-bot-deps:node20}
     depends_on:
       postgres:
         condition: service_healthy
