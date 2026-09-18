@@ -1,3 +1,16 @@
+## [0.14.3](https://github.com/semirov/tg-bot/compare/v0.14.2...v0.14.3) (2026-09-18)
+
+
+### Bug Fixes
+
+* **e2e:** валидный jest-e2e конфиг и mock axios (ESM) ([b34d7ef](https://github.com/semirov/tg-bot/commit/b34d7ef245c74f562f9568ec25c1a7036398d2ca))
+
+
+### Performance Improvements
+
+* **ci:** базовый образ зависимостей + fix(e2e) конфиг ([#39](https://github.com/semirov/tg-bot/issues/39)) ([65606ea](https://github.com/semirov/tg-bot/commit/65606ea5f3c6a6501fb0e9ebb1d6ee78ec875df7))
+* **ci:** базовый образ зависимостей и сборка только кода ([4c7778c](https://github.com/semirov/tg-bot/commit/4c7778ce5d25383625819283ced82c770d9e55ce))
+
 ## [0.14.2](https://github.com/semirov/tg-bot/compare/v0.14.1...v0.14.2) (2026-09-18)
 
 
