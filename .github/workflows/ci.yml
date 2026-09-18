@@ -18,6 +18,8 @@ permissions:
 env:
   # Гасим только deprecation-шум рантайма (punycode/url.parse) — ошибки остаются видны.
   NODE_OPTIONS: --no-deprecation
+  # BuildKit нужен для cache mount в Dockerfile (app) и build-base.
+  DOCKER_BUILDKIT: '1'
 
 jobs:
   test:
@@ -26,15 +28,20 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - name: Ensure dependency base image
-        run: bash tools/ci/build-base.sh
+        run: bash tools/ci/build-base.sh 20
       - name: Build test image
         run: docker build -f Dockerfile.test --build-arg DEPS_IMAGE="$(cat .deps-image)" -t memes-bot-tests .
       - name: Lint
         run: docker run --rm -e NODE_OPTIONS=--no-deprecation memes-bot-tests npx nx lint memes-bot
       - name: Unit tests + coverage (порог 95%)
         run: docker run --rm -e NODE_OPTIONS=--no-deprecation memes-bot-tests npx nx test memes-bot --codeCoverage
-      - name: Build
-        run: docker run --rm -e NODE_OPTIONS=--no-deprecation memes-bot-tests npx nx build memes-bot
+      - name: Build & push production image
+        run: |
+          source tools/ci/docker-config.sh
+          IMAGE=cr.yandex/crp8g8jm3p8d780a8hk3/telegram-bot
+          TAG="sha-${GITHUB_SHA::7}"
+          docker build --build-arg DEPS_IMAGE="$(cat .deps-image)" -f apps/memes-bot/Dockerfile -t "$IMAGE:$TAG" .
+          docker push "$IMAGE:$TAG"
 
   release:
     name: Semantic release
@@ -48,17 +55,24 @@ jobs:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
-      - uses: actions/setup-node@v5
-        with:
-          node-version: '22'
-          cache: 'npm'
-      - name: Install
-        run: npm ci --no-audit --no-fund --loglevel=error
-      - name: Semantic release
-        id: semrel
+      - name: Ensure node22 deps image
+        run: bash tools/ci/build-base.sh 22
+      - name: Semantic release (в контейнере, без npm ci)
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: bash tools/ci/release.sh
+        run: |
+          DEPS="$(cat .deps-image)"
+          VOL="semantic-release-node-modules-${DEPS##*:}"
+          docker run --rm \
+            -v "$PWD":/usr/src/app \
+            -v "$VOL":/usr/src/app/node_modules \
+            -e GITHUB_TOKEN \
+            -e GIT_AUTHOR_NAME=github-actions \
+            -e GIT_AUTHOR_EMAIL=github-actions@github.com \
+            -e GIT_COMMITTER_NAME=github-actions \
+            -e GIT_COMMITTER_EMAIL=github-actions@github.com \
+            -w /usr/src/app \
+            "$DEPS" bash tools/ci/release.sh
 
   deploy:
     name: Deploy
@@ -70,4 +84,4 @@ jobs:
         with:
           fetch-depth: 0
       - name: Deploy ${{ needs.release.outputs.version }}
-        run: bash tools/deploy/deploy.sh "${{ needs.release.outputs.version }}"
+        run: bash tools/deploy/deploy.sh "${{ needs.release.outputs.version }}" "${GITHUB_SHA::7}"

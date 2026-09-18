@@ -1,12 +1,13 @@
 # syntax=docker/dockerfile:1.7
-# Базовый образ с зависимостями проекта.
+# Базовый образ с зависимостями проекта для заданной версии Node.
 #
-# Пересобирается ТОЛЬКО при изменении package-lock.json (тег = хэш lock-файла),
-# поэтому CI не устанавливает зависимости заново на каждый прогон:
-# приложение и тесты собираются FROM этого образа.
+# Пересобирается ТОЛЬКО при изменении package-lock.json (тег = версия Node + хэш
+# lock-файла), поэтому CI не устанавливает зависимости заново на каждый прогон:
+# приложение, тесты и semantic-release работают FROM этого образа.
 #
-# Сборка и push: tools/ci/build-base.sh
-FROM node:20
+# Сборка и push: tools/ci/build-base.sh <nodeVersion>
+ARG NODE_VERSION=20
+FROM node:${NODE_VERSION}
 
 WORKDIR /usr/src/app
 

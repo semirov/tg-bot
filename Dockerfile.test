@@ -4,7 +4,7 @@
 #
 # Сборка: docker build -f Dockerfile.test --build-arg DEPS_IMAGE=<base> -t memes-bot-tests .
 # Запуск: docker run --rm memes-bot-tests
-ARG DEPS_IMAGE=cr.yandex/crp8g8jm3p8d780a8hk3/telegram-bot-deps:latest
+ARG DEPS_IMAGE=cr.yandex/crp8g8jm3p8d780a8hk3/telegram-bot-deps:node20
 FROM ${DEPS_IMAGE}
 
 WORKDIR /usr/src/app
