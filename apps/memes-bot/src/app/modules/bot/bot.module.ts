@@ -14,6 +14,7 @@ import { CringeManagementService } from './services/cringe-management.service';
 import { DeduplicationService } from './services/deduplication.service';
 import { PostSchedulerService } from './services/post-scheduler.service';
 import { SettingsService } from './services/settings.service';
+import { StartupNotifierService } from './services/startup-notifier.service';
 import { UserRequestService } from './services/user-request.service';
 import { UserService } from './services/user.service';
 import { SessionManagerService } from './session/session-manager.service';
@@ -43,6 +44,7 @@ import { SessionEntity } from './session/session.entity';
     SettingsService,
     CringeManagementService,
     DeduplicationService,
+    StartupNotifierService,
   ],
   exports: [
     BOT_PROVIDER,
