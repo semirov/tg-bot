@@ -17,6 +17,8 @@
 # /deploy-secrets/docker/config.json  — креды registry для docker push
 set -euo pipefail
 
+export DOCKER_BUILDKIT=1
+
 VERSION="${1:?usage: deploy.sh <version>}"
 SECRETS_DIR="${DEPLOY_SECRETS_DIR:-/deploy-secrets}"
 
@@ -33,8 +35,13 @@ if [ -f "$SECRETS_DIR/docker/config.json" ]; then
   export DOCKER_CONFIG="$DOCKER_CONFIG_WRITABLE"
 fi
 
+echo "==> Базовый образ с зависимостями"
+DEPS_IMAGE="$(bash tools/ci/build-base.sh | tail -1)"
+echo "    $DEPS_IMAGE"
+
 echo "==> Сборка образа ${DEPLOY_IMAGE}:${VERSION} (linux/amd64)"
 docker build --platform linux/amd64 \
+  --build-arg DEPS_IMAGE="$DEPS_IMAGE" \
   -f apps/memes-bot/Dockerfile \
   -t "${DEPLOY_IMAGE}:${VERSION}" .
 

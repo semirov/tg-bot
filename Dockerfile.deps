@@ -1,0 +1,14 @@
+# syntax=docker/dockerfile:1.7
+# Базовый образ с зависимостями проекта.
+#
+# Пересобирается ТОЛЬКО при изменении package-lock.json (тег = хэш lock-файла),
+# поэтому CI не устанавливает зависимости заново на каждый прогон:
+# приложение и тесты собираются FROM этого образа.
+#
+# Сборка и push: tools/ci/build-base.sh
+FROM node:20
+
+WORKDIR /usr/src/app
+
+COPY package.json package-lock.json ./
+RUN --mount=type=cache,target=/root/.npm npm ci
