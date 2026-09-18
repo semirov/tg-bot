@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Between, LessThan, MoreThanOrEqual, Repository } from 'typeorm';
+import { Between, LessThan, MoreThanOrEqual, Repository, UpdateResult } from 'typeorm';
 import { PostSchedulerEntity } from '../entities/post-scheduler.entity';
 import { PublicationModesEnum } from '../../post-management/constants/publication-modes.enum';
 import { SchedulerCommonService } from '../../common/scheduler-common.service';
@@ -79,7 +79,7 @@ export class PostSchedulerService {
   /**
    * Получить все запланированные посты
    */
-  public async getAllScheduledPosts(): Promise<any[]> {
+  public async getAllScheduledPosts(): Promise<PostSchedulerEntity[]> {
     return this.repository.find({
       where: {
         isPublished: false
@@ -93,7 +93,7 @@ export class PostSchedulerService {
   /**
    * Получить запланированный пост по ID
    */
-  public async getScheduledPostById(id: number): Promise<any> {
+  public async getScheduledPostById(id: number): Promise<PostSchedulerEntity | null> {
     return this.repository.findOne({
       where: { id }
     });
@@ -205,7 +205,7 @@ export class PostSchedulerService {
       { seconds: 0, milliseconds: 0 }
     );
   }
-  async markPostAsPublished(id: number): Promise<any> {
+  async markPostAsPublished(id: number): Promise<UpdateResult> {
     return this.postSchedulerEntity.update({ id }, { isPublished: true });
   }
 

@@ -21,6 +21,13 @@ export type BestMemeContext = {
   byLikePostBestMemeId?: number;
 };
 
+interface ResolvedChannelEntity {
+  isExternal?: boolean;
+  url?: string;
+  id?: bigInt.BigInteger;
+  username?: string;
+}
+
 @Injectable()
 export class ClientBaseService implements OnModuleInit {
   constructor(
@@ -503,7 +510,7 @@ export class ClientBaseService implements OnModuleInit {
     );
   }
 
-  private async resolveUrl(url: string): Promise<any> {
+  private async resolveUrl(url: string): Promise<ResolvedChannelEntity> {
     // Telegram может возвращать сокращенные ссылки (t.me/xxx)
     // Нужно раскрыть их до полного URL
     if (url.startsWith('t.me/')) {
@@ -522,7 +529,10 @@ export class ClientBaseService implements OnModuleInit {
     return { isExternal: true, url };
   }
 
-  private isSameChannel(resolvedEntity: any, currentChannel: any): boolean {
+  private isSameChannel(
+    resolvedEntity: ResolvedChannelEntity,
+    currentChannel: ResolvedChannelEntity
+  ): boolean {
     // Если это внешний URL (не Telegram)
     if (resolvedEntity.isExternal) {
       return false;
