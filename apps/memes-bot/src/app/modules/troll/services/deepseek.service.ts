@@ -9,6 +9,7 @@ import {
   TROLL_MAX_CONCURRENT_REQUESTS,
 } from '../constants/troll-limits';
 import { DeepSeekMessage, DeepSeekOptions } from '../interfaces/troll.interface';
+import { parseLlmJson } from '../utils/llm-json';
 import {
   DeepSeekTariff,
   estimateCostUsd,
@@ -219,21 +220,13 @@ export class DeepSeekService {
       return null;
     }
 
-    try {
-      return JSON.parse(raw) as T;
-    } catch {
-      const match = raw.match(/\{[\s\S]*\}/);
-      if (!match) {
-        this.logger.warn('DeepSeek returned non-JSON response');
-        return null;
-      }
-      try {
-        return JSON.parse(match[0]) as T;
-      } catch {
-        this.logger.warn('Failed to parse DeepSeek JSON');
-        return null;
-      }
+    const parsed = parseLlmJson<T>(raw);
+    if (parsed === null) {
+      this.logger.warn('Failed to parse DeepSeek JSON');
+      return null;
     }
+
+    return parsed;
   }
 
   /**
