@@ -8,6 +8,6 @@
     "target": "es2015",
     "lib": ["es2020.bigint"]
   },
-  "exclude": ["jest.config.ts", "**/*.spec.ts", "**/*.test.ts", "tools/**"],
+  "exclude": ["jest.config.ts", "jest-e2e.config.ts", "**/*.spec.ts", "**/*.test.ts", "test/**", "tools/**"],
   "include": ["**/*.ts"]
 }
