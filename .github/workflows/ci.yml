@@ -15,17 +15,22 @@ permissions:
   issues: write
   pull-requests: write
 
+env:
+  # Гасим только deprecation-шум рантайма (punycode/url.parse) — ошибки остаются видны.
+  NODE_OPTIONS: --no-deprecation
+
 jobs:
   test:
     name: Lint, tests, coverage, build
     runs-on: [self-hosted, linux, x64, memes-bot]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: '20'
           cache: 'npm'
-      - run: npm ci
+      - name: Install
+        run: npm ci --no-audit --no-fund --loglevel=error
       - name: Lint
         run: npx nx lint memes-bot
       - name: Unit tests + coverage (порог 95%)
@@ -42,14 +47,15 @@ jobs:
       released: ${{ steps.semrel.outputs.released }}
       version: ${{ steps.semrel.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: '20'
           cache: 'npm'
-      - run: npm ci
+      - name: Install
+        run: npm ci --no-audit --no-fund --loglevel=error
       - name: Semantic release
         id: semrel
         env:
@@ -62,7 +68,7 @@ jobs:
     if: needs.release.outputs.released == 'true'
     runs-on: [self-hosted, linux, x64, memes-bot]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
       - name: Deploy ${{ needs.release.outputs.version }}
