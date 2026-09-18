@@ -12,6 +12,8 @@ import { BotContext } from '../../bot/interfaces/bot-context.interface';
 import { BOT } from '../../bot/providers/bot.provider';
 import { BaseConfigService } from '../../config/base-config.service';
 import { ObservatoryPostEntity } from '../../observatory/entities/observatory-post.entity';
+import { formatUserName as formatDisplayName } from '../../../shared/display-name';
+import { pluralizeRu } from '../../../shared/russian-plural';
 import { YearResultEntity } from '../entities/year-result.entity';
 import {
   UserYearStatistics,
@@ -1080,10 +1082,7 @@ export class YearResultsService {
    * Форматирует имя пользователя
    */
   private formatUserName(user: UserYearStatistics): string {
-    if (user.username) {
-      return `@${user.username}`;
-    }
-    return [user.firstName, user.lastName].filter((item) => !!item).join(' ');
+    return formatDisplayName(user);
   }
 
   /**
@@ -1281,153 +1280,48 @@ export class YearResultsService {
    * Возвращает правильное склонение слова "час"
    */
   private getHoursWord(count: number): string {
-    const lastDigit = count % 10;
-    const lastTwoDigits = count % 100;
-
-    if (lastTwoDigits >= 11 && lastTwoDigits <= 19) {
-      return 'часов';
-    }
-
-    if (lastDigit === 1) {
-      return 'час';
-    }
-
-    if (lastDigit >= 2 && lastDigit <= 4) {
-      return 'часа';
-    }
-
-    return 'часов';
+    return pluralizeRu(count, ['час', 'часа', 'часов']);
   }
 
   /**
    * Возвращает правильное склонение слова "день"
    */
   private getDaysWord(count: number): string {
-    const lastDigit = count % 10;
-    const lastTwoDigits = count % 100;
-
-    if (lastTwoDigits >= 11 && lastTwoDigits <= 19) {
-      return 'дней';
-    }
-
-    if (lastDigit === 1) {
-      return 'день';
-    }
-
-    if (lastDigit >= 2 && lastDigit <= 4) {
-      return 'дня';
-    }
-
-    return 'дней';
+    return pluralizeRu(count, ['день', 'дня', 'дней']);
   }
 
   /**
    * Возвращает правильное склонение слова "пост"
    */
   private getPostsWord(count: number): string {
-    const lastDigit = count % 10;
-    const lastTwoDigits = count % 100;
-
-    if (lastTwoDigits >= 11 && lastTwoDigits <= 19) {
-      return 'постов';
-    }
-
-    if (lastDigit === 1) {
-      return 'пост';
-    }
-
-    if (lastDigit >= 2 && lastDigit <= 4) {
-      return 'поста';
-    }
-
-    return 'постов';
+    return pluralizeRu(count, ['пост', 'поста', 'постов']);
   }
 
   /**
    * Возвращает правильное склонение слова "минута"
    */
   private getMinutesWord(count: number): string {
-    const lastDigit = count % 10;
-    const lastTwoDigits = count % 100;
-
-    if (lastTwoDigits >= 11 && lastTwoDigits <= 19) {
-      return 'минут';
-    }
-
-    if (lastDigit === 1) {
-      return 'минуту';
-    }
-
-    if (lastDigit >= 2 && lastDigit <= 4) {
-      return 'минуты';
-    }
-
-    return 'минут';
+    return pluralizeRu(count, ['минуту', 'минуты', 'минут']);
   }
 
   /**
    * Возвращает правильное склонение слова "автор"
    */
   private getAuthorsWord(count: number): string {
-    const lastDigit = count % 10;
-    const lastTwoDigits = count % 100;
-
-    if (lastTwoDigits >= 11 && lastTwoDigits <= 19) {
-      return 'авторов';
-    }
-
-    if (lastDigit === 1) {
-      return 'автор';
-    }
-
-    if (lastDigit >= 2 && lastDigit <= 4) {
-      return 'автора';
-    }
-
-    return 'авторов';
+    return pluralizeRu(count, ['автор', 'автора', 'авторов']);
   }
 
   /**
    * Возвращает правильное склонение слова "раз"
    */
   private getTimesWord(count: number): string {
-    const lastDigit = count % 10;
-    const lastTwoDigits = count % 100;
-
-    if (lastTwoDigits >= 11 && lastTwoDigits <= 19) {
-      return 'раз';
-    }
-
-    if (lastDigit === 1) {
-      return 'раз';
-    }
-
-    if (lastDigit >= 2 && lastDigit <= 4) {
-      return 'раза';
-    }
-
-    return 'раз';
+    return pluralizeRu(count, ['раз', 'раза', 'раз']);
   }
 
   /**
    * Возвращает правильное склонение слова "обращение"
    */
   private getAppealWord(count: number): string {
-    const lastDigit = count % 10;
-    const lastTwoDigits = count % 100;
-
-    if (lastTwoDigits >= 11 && lastTwoDigits <= 19) {
-      return 'обращений';
-    }
-
-    if (lastDigit === 1) {
-      return 'обращение';
-    }
-
-    if (lastDigit >= 2 && lastDigit <= 4) {
-      return 'обращения';
-    }
-
-    return 'обращений';
+    return pluralizeRu(count, ['обращение', 'обращения', 'обращений']);
   }
 }

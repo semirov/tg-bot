@@ -19,6 +19,7 @@ import { formatUsd } from '../troll/constants/deepseek-pricing';
 import { DeepSeekService } from '../troll/services/deepseek.service';
 import { TrollSettingsService } from '../troll/services/troll-settings.service';
 import { TrollService } from '../troll/services/troll.service';
+import { formatUserName as formatDisplayName } from '../../shared/display-name';
 import {
   UserYearStatistics,
   YearResultsPreview,
@@ -898,10 +899,7 @@ export class AdminMenuService implements OnModuleInit {
    * Форматирует имя пользователя
    */
   private formatUserName(user: UserYearStatistics): string {
-    if (user.username) {
-      return `@${user.username}`;
-    }
-    return [user.firstName, user.lastName].filter((item) => !!item).join(' ');
+    return formatDisplayName(user);
   }
 
   /**
