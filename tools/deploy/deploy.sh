@@ -26,8 +26,11 @@ source "$SECRETS_DIR/target.env"
 : "${DEPLOY_HOST:?}"; : "${DEPLOY_USER:?}"; : "${DEPLOY_IMAGE:?}"
 : "${DEPLOY_CONTAINER:?}"; : "${DEPLOY_NETWORK:?}"; : "${DEPLOY_ENV_FILE:?}"
 
-if [ -d "$SECRETS_DIR/docker" ]; then
-  export DOCKER_CONFIG="$SECRETS_DIR/docker"
+if [ -f "$SECRETS_DIR/docker/config.json" ]; then
+  # /deploy-secrets смонтирован read-only, а docker/buildx пишут в DOCKER_CONFIG.
+  DOCKER_CONFIG_WRITABLE="$(mktemp -d)"
+  cp "$SECRETS_DIR/docker/config.json" "$DOCKER_CONFIG_WRITABLE/config.json"
+  export DOCKER_CONFIG="$DOCKER_CONFIG_WRITABLE"
 fi
 
 echo "==> Сборка образа ${DEPLOY_IMAGE}:${VERSION} (linux/amd64)"
