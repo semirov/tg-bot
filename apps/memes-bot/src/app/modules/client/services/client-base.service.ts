@@ -268,6 +268,12 @@ export class ClientBaseService implements OnModuleInit {
   private async onMessageEvent(event: NewMessageEvent) {
     if (!event.isChannel) return;
 
+    const hasMedia = !!event.message && this.hasMediaContent(event.message);
+    Logger.debug(
+      `Parser: channel message chat=${event.chatId} msg=${event.message?.id} media=${hasMedia} grouped=${!!event.message?.groupedId}`,
+      ClientBaseService.name
+    );
+
     // Пропускаем сообщения из собственных каналов
     const ownChannels = [
       this.baseConfigService.memeChanelId,
@@ -277,19 +283,22 @@ export class ClientBaseService implements OnModuleInit {
     ].map((id) => bigInt(id));
 
     if (ownChannels.some((channelId) => channelId.equals(event.chatId))) {
+      Logger.debug(`Parser: skip own channel ${event.chatId}`, ClientBaseService.name);
       return;
     }
 
     // Парсер интересуют только медиапосты (фото/видео, в т.ч. альбомы).
-    if (!this.hasMediaContent(event.message)) return;
+    if (!hasMedia) return;
 
     // Пытаемся обработать как альбом
     if (await this.handleAlbum(event)) return;
 
     // Одиночное сообщение
-    if (!(await this.isAdPost(event))) {
-      setTimeout(() => this.forwardToBot(event), Math.round(Math.random() * 5 + 5) * 1000);
+    if (await this.isAdPost(event)) {
+      Logger.debug(`Parser: skip ad post chat=${event.chatId}`, ClientBaseService.name);
+      return;
     }
+    setTimeout(() => this.forwardToBot(event), Math.round(Math.random() * 5 + 5) * 1000);
   }
 
   /**
@@ -308,6 +317,10 @@ export class ClientBaseService implements OnModuleInit {
         return;
       }
       await event.message.forwardTo(target);
+      Logger.log(
+        `Parser: post forwarded to bot (chat=${event.chatId}, msg=${event.message?.id})`,
+        ClientBaseService.name
+      );
     } catch (error) {
       Logger.error(`Cannot forward parsed post to bot: ${error}`, ClientBaseService.name);
     }
