@@ -92,6 +92,9 @@ export class ObservatoryService implements OnModuleInit {
         // Не наш случай: отдаём апдейт дальше (капча, предложка, тролль).
         return next();
       }
+      this.logger.log(
+        `Observatory: parsed post from parser (msg=${ctx.message?.message_id ?? 'n/a'})`
+      );
       await this.onNewObservatoryPost(ctx);
     });
   }
