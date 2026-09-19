@@ -451,6 +451,7 @@ describe('E2E: MTProto-клиент и парсер обсерватории', (
       };
 
       await client.handlers[0](event);
+      await flushMicro();
       jest.advanceTimersByTime(10000);
       await flushMicro();
 
