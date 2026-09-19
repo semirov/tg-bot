@@ -25,6 +25,12 @@ import { resolveAdminReply } from './utils/admin-reply';
 import { buildTelegramFileUrl, extractTelegramFileId } from '../../shared/publication/media-url';
 import { sendPostToMattermost } from '../../shared/publication/mattermost-post';
 import { runPublicationMode } from '../../shared/publication/publication-mode';
+import {
+  DuplicatePolicy,
+  pickClosest,
+  ScheduledDuplicate,
+} from './services/duplicate-policy';
+import { UserPostFormatter } from './services/user-post-formatter';
 
 @Injectable()
 export class UserPostManagementService implements OnModuleInit {
@@ -42,13 +48,21 @@ export class UserPostManagementService implements OnModuleInit {
     private clientBaseService: ClientBaseService,
     private mattermostService: MattermostService,
     private trollService: TrollService
-  ) {}
+  ) {
+    this.duplicatePolicy = new DuplicatePolicy(postSchedulerService, deduplicationService);
+  }
 
   private moderatedPostMenu: Menu<BotContext>;
   private replyToBotContext: Composer<BotContext>;
   private duplicateMenu: Menu<BotContext>;
 
   private limitMenu: Menu<BotContext>;
+
+  /** Политика дубликатов (порог схожести, даты, запланированные посты). */
+  private readonly duplicatePolicy: DuplicatePolicy;
+
+  /** Чистые форматтеры текстов предложки. */
+  private readonly formatter = new UserPostFormatter();
 
   public onModuleInit(): void {
     this.buildModeratedPostMenu();
@@ -79,7 +93,10 @@ export class UserPostManagementService implements OnModuleInit {
 
         await ctx.answerCallbackQuery('Лимит снят на 24 часа');
         await ctx.editMessageText(
-          `${ctx.callbackQuery.message.text}\n\n✅ Лимит снят модератором @${ctx.callbackQuery.from.username}`,
+          this.formatter.limitLiftedByModeratorText(
+            ctx.callbackQuery.message.text,
+            ctx.callbackQuery.from.username
+          ),
           { reply_markup: null }
         );
       } catch (error) {
@@ -123,12 +140,7 @@ export class UserPostManagementService implements OnModuleInit {
       for (const [userId, userPosts] of postsByUser) {
         try {
           // Формируем сообщение для пользователя
-          let messageText = '';
-          if (userPosts.length === 1) {
-            messageText = '🎉 Поздравляем! Твой пост стал одним из лучших за сутки!';
-          } else {
-            messageText = '🎉 Поздравляем! Твои посты стали лучшими за сутки!';
-          }
+          const messageText = this.formatter.bestMemesText(userPosts.length);
 
           const keyboard = new InlineKeyboard();
 
@@ -164,7 +176,7 @@ export class UserPostManagementService implements OnModuleInit {
     try {
       await ctx.react('👍');
     } catch (e) {
-      await ctx.reply('Мы получили твоё обращение и скоро ответим');
+      await ctx.reply(this.formatter.requestReactionAckText());
       Logger.warn(
         `Cannot set message reaction for user text message in bot ${ctx.me.id}`,
         UserPostManagementService.name
@@ -175,19 +187,8 @@ export class UserPostManagementService implements OnModuleInit {
       where: { id: ctx.message.from.id },
     });
 
-    const { first_name, last_name, username, is_bot, is_premium } = ctx.message.from;
-
     // Формируем текст для обращения
-    const userText = [
-      '📝 Обращение от',
-      is_premium ? '👑' : null,
-      is_bot ? '🤖' : null,
-      first_name,
-      last_name,
-      username ? `@${username}` : null,
-    ]
-      .filter((v) => !!v)
-      .join(' ');
+    const userText = this.formatter.textRequestText(ctx.message.from);
 
     // Отправляем информацию о пользователе в канал запросов
     await this.bot.api.sendMessage(this.baseConfigService.userRequestMemeChannel, userText, {
@@ -207,7 +208,7 @@ export class UserPostManagementService implements OnModuleInit {
         // Добавляем уточнение, что пользователь ответил на это сообщение
         await this.bot.api.sendMessage(
           this.baseConfigService.userRequestMemeChannel,
-          '👆 Пользователь ответил на это сообщение:',
+          this.formatter.adminReplyHintText(),
           { disable_notification: true }
         );
       } catch (e) {
@@ -219,7 +220,7 @@ export class UserPostManagementService implements OnModuleInit {
         // Если не удалось переслать, то хотя бы поясняем в тексте
         await this.bot.api.sendMessage(
           this.baseConfigService.userRequestMemeChannel,
-          'Пользователь ответил на сообщение, но его не удалось переслать. Возможно, это слишком старое сообщение.',
+          this.formatter.adminReplyForwardFailedText(),
           { disable_notification: true }
         );
       }
@@ -255,7 +256,7 @@ export class UserPostManagementService implements OnModuleInit {
 
   private buildLimitMenu(): Menu<BotContext> {
     return new Menu<BotContext>('limit-menu', { autoAnswer: false }).text(
-      '🔓 Снять лимит',
+      UserPostFormatter.LIFT_LIMIT_LABEL,
       async (ctx) => {
         try {
           const message = await this.userRequestService.repository.findOne({
@@ -296,7 +297,7 @@ export class UserPostManagementService implements OnModuleInit {
             );
             if (hash) {
               const duplicates = await this.deduplicationService.checkDuplicate(hash);
-              if (duplicates.some((d) => d.distance >= 0.5)) {
+              if (this.duplicatePolicy.hasSimilar(duplicates)) {
                 hasDuplicate = true;
               } else {
                 const scheduledDup = await this.checkScheduledDuplicates(hash);
@@ -326,7 +327,7 @@ export class UserPostManagementService implements OnModuleInit {
 
           await this.bot.api.sendMessage(
             message.user.id,
-            '✅ Админ снял для тебя ограничение на публикацию постов на текущие сутки. Можешь отправить этот пост еще раз.',
+            this.formatter.limitLiftedForUserText(),
             { reply_to_message_id: message.originalMessageId }
           );
 
@@ -373,9 +374,7 @@ export class UserPostManagementService implements OnModuleInit {
           addSuffix: true,
         });
 
-        const message =
-          `Ты можешь предложить максимум 5 постов в сутки\n\n` +
-          `Новый лимит будет доступен ${remainingTime}`;
+        const message = this.formatter.limitReachedText(remainingTime);
 
         await ctx.reply(message, {
           reply_to_message_id: ctx.message.message_id,
@@ -435,19 +434,10 @@ export class UserPostManagementService implements OnModuleInit {
           );
 
           // Проверяем статус существующего поста
-          let statusMessage = '';
-          if (existingPost.isPublished) {
-            statusMessage = 'Этот пост уже был опубликован ранее';
-          } else if (existingPost.isApproved === true) {
-            statusMessage = 'Этот пост уже прошел модерацию и находится в очереди на публикацию';
-          } else if (existingPost.isApproved === false) {
-            statusMessage = 'Этот пост уже был отклонен модераторами';
-          } else {
-            statusMessage = 'Этот пост уже находится на модерации';
-          }
+          const statusMessage = this.formatter.duplicateStatusText(existingPost);
 
           // Автоматически отклоняем пост
-          await ctx.reply(`${statusMessage} и не может быть опубликован повторно.`, {
+          await ctx.reply(statusMessage, {
             reply_to_message_id: ctx.message.message_id,
           });
 
@@ -482,7 +472,7 @@ export class UserPostManagementService implements OnModuleInit {
         );
       }
     } catch (e) {
-      await ctx.reply('Мы все получили и скоро ответим');
+      await ctx.reply(this.formatter.requestReceivedText());
       Logger.warn(
         `Cannot set message reaction for user message in bot ${ctx.me.id}`,
         UserPostManagementService.name
@@ -500,19 +490,7 @@ export class UserPostManagementService implements OnModuleInit {
       fileUniqueId = ctx.message.photo[ctx.message.photo.length - 1].file_unique_id;
     }
 
-    const { first_name, last_name, username, is_bot, is_premium } = ctx.message.from;
-
-    let userText = [
-      'Пост от',
-      is_premium ? '👑' : null,
-      is_bot ? '🤖' : null,
-      first_name,
-      last_name,
-      username ? `@${username}` : null,
-      '\n#предложка',
-    ]
-      .filter((v) => !!v)
-      .join(' ');
+    let userText = this.formatter.memeRequestText(ctx.message.from);
 
     // Проверяем на дубликаты только если есть фото (для видео это не работает)
     let menuToUse: Menu<BotContext> = this.moderatedPostMenu;
@@ -526,17 +504,15 @@ export class UserPostManagementService implements OnModuleInit {
         // Проверяем опубликованные посты
         const duplicates = await this.deduplicationService.checkDuplicate(hash);
 
-        if (duplicates.some((duplicate) => duplicate.distance >= 0.5)) {
+        if (this.duplicatePolicy.hasSimilar(duplicates)) {
           // Находим лучшее совпадение
-          bestMatch = duplicates.reduce((prev, current) =>
-            prev.distance > current.distance ? prev : current
-          );
+          bestMatch = pickClosest(duplicates);
 
           // Форматируем процент совпадения
           const matchPercentage = Math.round(bestMatch.distance * 100);
 
           // Добавляем информацию о дубликате в текст сообщения
-          userText += `\n🔄 Возможный дубликат (совпадение ${matchPercentage}%)`;
+          userText += this.formatter.publishedDuplicateNote(matchPercentage);
           hasPossibleDuplicate = true;
 
           // Используем специальное меню для дубликатов
@@ -554,10 +530,13 @@ export class UserPostManagementService implements OnModuleInit {
               });
 
               // Добавляем информацию о запланированном дубликате
-              userText += `\n🕒 Похожий пост (${matchPercentage}%) запланирован на ${formattedDate}`;
+              userText += this.formatter.scheduledDuplicateOnDateNote(
+                matchPercentage,
+                formattedDate
+              );
             } catch (error) {
               // В случае ошибки форматирования, используем более простой вариант
-              userText += `\n🕒 Похожий пост (${matchPercentage}%) запланирован к публикации`;
+              userText += this.formatter.scheduledDuplicateSoonNote(matchPercentage);
             }
 
             hasPossibleDuplicate = true;
@@ -605,14 +584,18 @@ export class UserPostManagementService implements OnModuleInit {
           // Отправляем сообщение о запланированном посте с деталями
           await this.bot.api.sendMessage(
             this.baseConfigService.userRequestMemeChannel,
-            `👆 Похожий пост запланирован на ${formattedDate} (через ${timeDistance})\n\nID поста: ${scheduledDuplicate.postId}`,
+            this.formatter.scheduledDuplicateInfoText(
+              formattedDate,
+              timeDistance,
+              scheduledDuplicate.postId
+            ),
             { disable_notification: true }
           );
         } else {
           // Если дата невалидна, отправляем сообщение без форматирования
           await this.bot.api.sendMessage(
             this.baseConfigService.userRequestMemeChannel,
-            `👆 Похожий пост запланирован к публикации.\n\nID поста: ${scheduledDuplicate.postId}`,
+            this.formatter.scheduledDuplicateInfoSoonText(scheduledDuplicate.postId),
             { disable_notification: true }
           );
         }
@@ -673,71 +656,19 @@ export class UserPostManagementService implements OnModuleInit {
   /**
    * Проверяет наличие похожих постов среди запланированных
    */
-  private async checkScheduledDuplicates(hash: string): Promise<{
-    postId: number;
-    distance: number;
-    scheduledDate: Date;
-  } | null> {
-    if (!hash) return null;
-
-    try {
-      // Получаем все запланированные посты
-      const scheduledPosts = await this.postSchedulerService.getAllScheduledPosts();
-
-      if (!scheduledPosts || scheduledPosts.length === 0) return null;
-
-      // Проходим по запланированным постам и ищем похожие
-      const potentialDuplicates = [];
-
-      for (const post of scheduledPosts) {
-        // Если у поста есть хеш изображения и валидная дата
-        if (post.hash && post.publishDate && this.isValidDate(post.publishDate)) {
-          // Вычисляем "расстояние" между хешами (чем ближе к 1, тем более похожи)
-          const distance = this.deduplicationService.calculateHashDistance(hash, post.hash);
-
-          // Если расстояние достаточно большое (схожесть высокая)
-          if (distance >= 0.5) {
-            potentialDuplicates.push({
-              postId: post.id,
-              distance: distance,
-              scheduledDate: post.publishDate,
-            });
-          }
-        }
-      }
-
-      // Если нашли потенциальные дубликаты, возвращаем самый похожий
-      if (potentialDuplicates.length > 0) {
-        return potentialDuplicates.reduce((prev, current) =>
-          prev.distance > current.distance ? prev : current
-        );
-      }
-
-      return null;
-    } catch (error) {
-      Logger.error(
-        `Failed to check scheduled duplicates: ${error.message}`,
-        UserPostManagementService.name
-      );
-      return null;
-    }
+  private async checkScheduledDuplicates(hash: string): Promise<ScheduledDuplicate | null> {
+    return this.duplicatePolicy.checkScheduledDuplicates(hash);
   }
 
   // Вспомогательная функция для проверки валидности даты
   private isValidDate(date: Date | string | number): boolean {
-    if (!date) return false;
-
-    // Преобразуем в объект Date, если это строка или число
-    const dateObj = date instanceof Date ? date : new Date(date);
-
-    // Проверяем, что это валидная дата (не NaN)
-    return !isNaN(dateObj.getTime());
+    return this.duplicatePolicy.isValidDate(date);
   }
 
   // Обновляем метод buildDuplicateMenu, чтобы он также мог обрабатывать запланированные дубликаты
   private buildDuplicateMenu() {
     return new Menu<BotContext>('duplicate-check-menu', { autoAnswer: false })
-      .text('✅ Дубликат', async (ctx) => {
+      .text(UserPostFormatter.DUPLICATE_CONFIRM_LABEL, async (ctx) => {
         if (this.userService.checkPermission(ctx, UserPermissionEnum.IS_BASE_MODERATOR)) {
           // Обработка подтвержденного дубликата
           const message = await this.userRequestService.repository.findOne({
@@ -762,21 +693,21 @@ export class UserPostManagementService implements OnModuleInit {
               // Уведомляем пользователя о запланированном посте
               await this.bot.api.sendMessage(
                 message.user.id,
-                `Похожий пост уже запланирован к публикации ${scheduledDateFormatted}.\nТы можешь предложить что-нибудь другое`,
+                this.formatter.duplicateScheduledToUserText(scheduledDateFormatted),
                 { reply_to_message_id: message.originalMessageId }
               );
             } else {
               // Стандартное сообщение, если не удалось получить детали о запланированном посте
               await this.bot.api.sendMessage(
                 message.user.id,
-                'Похожий пост уже запланирован к публикации. Ты можешь предложить что-нибудь другое'
+                this.formatter.duplicateScheduledSoonToUserText()
               );
             }
           } else {
             // Стандартное сообщение для дубликата опубликованного поста
             await this.bot.api.sendMessage(
               message.user.id,
-              'Этот пост уже публиковался, ты можешь предложить что-нибудь другое'
+              this.formatter.publishedDuplicateToUserText()
             );
 
             // Находим дубликат снова и пересылаем его
@@ -786,9 +717,7 @@ export class UserPostManagementService implements OnModuleInit {
             if (hash) {
               const duplicates = await this.deduplicationService.checkDuplicate(hash);
               if (duplicates.length > 0) {
-                const bestMatch = duplicates.reduce((prev, current) =>
-                  prev.distance > current.distance ? prev : current
-                );
+                const bestMatch = pickClosest(duplicates);
 
                 // Отправляем оригинальный пост
                 try {
@@ -823,7 +752,7 @@ export class UserPostManagementService implements OnModuleInit {
           await ctx.deleteMessage();
         }
       })
-      .text('❌ Не дубликат', async (ctx) => {
+      .text(UserPostFormatter.DUPLICATE_DENY_LABEL, async (ctx) => {
         if (this.userService.checkPermission(ctx, UserPermissionEnum.IS_BASE_MODERATOR)) {
           // Получаем информацию о сообщении
           const message = await this.userRequestService.repository.findOne({
@@ -877,13 +806,13 @@ export class UserPostManagementService implements OnModuleInit {
   }
   private buildModeratedPostMenu() {
     const menu = new Menu<BotContext>(PostModerationMenusEnum.MODERATION, { autoAnswer: false })
-      .text('👍 Одобрить', async (ctx) => {
+      .text(UserPostFormatter.APPROVE_LABEL, async (ctx) => {
         if (this.userService.checkPermission(ctx, UserPermissionEnum.IS_BASE_MODERATOR)) {
           await this.onModeratorApprovalActions(ctx);
           ctx.menu.nav(PostModerationMenusEnum.APPROVAL);
         }
       })
-      .text('👎 Отклонить', async (ctx) => {
+      .text(UserPostFormatter.REJECT_LABEL, async (ctx) => {
         if (this.userService.checkPermission(ctx, UserPermissionEnum.IS_BASE_MODERATOR)) {
           await this.onModeratorRejectActions(ctx);
           ctx.menu.nav(PostModerationMenusEnum.REJECT);
@@ -902,7 +831,7 @@ export class UserPostManagementService implements OnModuleInit {
             where: { userRequestChannelMessageId: ctx.callbackQuery.message.message_id },
             relations: { processedByModerator: true },
           });
-          return `✅ Опубликовать (${message.processedByModerator.username})`;
+          return this.formatter.publishButtonLabel(message.processedByModerator.username);
         },
         async (ctx) => {
           if (this.userService.checkPermission(ctx, UserPermissionEnum.ALLOW_PUBLISH_TO_CHANNEL)) {
@@ -913,34 +842,48 @@ export class UserPostManagementService implements OnModuleInit {
       .row()
       .text(async (ctx) => {
         const statistic = await this.userRequestService.userPostDiscardStatistic(ctx);
-        return `👎 ${statistic.total} (${statistic.week})`;
+        return this.formatter.discardStatisticLabel(statistic.total, statistic.week);
       })
       .text(async (ctx) => {
         const statistic = await this.userRequestService.userPostApprovedStatistic(ctx);
-        return `👍 ${statistic.total} (${statistic.day})`;
+        return this.formatter.approvedStatisticLabel(statistic.total, statistic.day);
       })
       .text(async (ctx) => {
         const lastPostInfo = await this.userRequestService.lastPublishedPostTimeAgo(ctx);
-        return `🗓 ${lastPostInfo}`;
+        return this.formatter.lastPostLabel(lastPostInfo);
       })
       .row();
 
     const publishSubmenu = new Menu<BotContext>(PostModerationMenusEnum.PUBLICATION, {
       autoAnswer: false,
     })
-      .text('Кринж', async (ctx) => this.onPublishActions(ctx, PublicationModesEnum.NIGHT_CRINGE))
-      .text('Сейчас', async (ctx) => this.onPublishActions(ctx, PublicationModesEnum.NOW_SILENT))
+      .text(UserPostFormatter.PUBLISH_NIGHT_CRINGE_LABEL, async (ctx) =>
+        this.onPublishActions(ctx, PublicationModesEnum.NIGHT_CRINGE)
+      )
+      .text(UserPostFormatter.PUBLISH_NOW_LABEL, async (ctx) =>
+        this.onPublishActions(ctx, PublicationModesEnum.NOW_SILENT)
+      )
       .row()
-      .text('Ближайший слот', async (ctx) =>
+      .text(UserPostFormatter.PUBLISH_NEXT_INTERVAL_LABEL, async (ctx) =>
         this.onPublishActions(ctx, PublicationModesEnum.NEXT_INTERVAL)
       )
       .row()
-      .text('Ночью', async (ctx) => this.onPublishActions(ctx, PublicationModesEnum.NEXT_NIGHT))
-      .text('Утром', async (ctx) => this.onPublishActions(ctx, PublicationModesEnum.NEXT_MORNING))
-      .text('Днем', async (ctx) => this.onPublishActions(ctx, PublicationModesEnum.NEXT_MIDDAY))
-      .text('Вечером', async (ctx) => this.onPublishActions(ctx, PublicationModesEnum.NEXT_EVENING))
+      .text(UserPostFormatter.PUBLISH_NIGHT_LABEL, async (ctx) =>
+        this.onPublishActions(ctx, PublicationModesEnum.NEXT_NIGHT)
+      )
+      .text(UserPostFormatter.PUBLISH_MORNING_LABEL, async (ctx) =>
+        this.onPublishActions(ctx, PublicationModesEnum.NEXT_MORNING)
+      )
+      .text(UserPostFormatter.PUBLISH_MIDDAY_LABEL, async (ctx) =>
+        this.onPublishActions(ctx, PublicationModesEnum.NEXT_MIDDAY)
+      )
+      .text(UserPostFormatter.PUBLISH_EVENING_LABEL, async (ctx) =>
+        this.onPublishActions(ctx, PublicationModesEnum.NEXT_EVENING)
+      )
       .row()
-      .text('Назад', (ctx) => ctx.menu.nav(PostModerationMenusEnum.APPROVAL));
+      .text(UserPostFormatter.BACK_LABEL, (ctx) =>
+        ctx.menu.nav(PostModerationMenusEnum.APPROVAL)
+      );
 
     const rejectSubmenu = new Menu<BotContext>(PostModerationMenusEnum.REJECT, {
       autoAnswer: false,
@@ -953,7 +896,7 @@ export class UserPostManagementService implements OnModuleInit {
             relations: { processedByModerator: true },
           });
           await ctx.unpinChatMessage(ctx.callbackQuery.message.message_id);
-          return `👨 Отклонен ❌ (${message.processedByModerator.username})`;
+          return this.formatter.rejectedButtonLabel(message.processedByModerator.username);
         },
         async (ctx) => {
           if (
@@ -964,7 +907,7 @@ export class UserPostManagementService implements OnModuleInit {
         }
       )
       .row()
-      .text('🔁', async (ctx) => {
+      .text(UserPostFormatter.RESTORE_LABEL, async (ctx) => {
         if (
           this.userService.checkPermission(ctx, UserPermissionEnum.ALLOW_RESTORE_DISCARDED_POST)
         ) {
@@ -975,7 +918,7 @@ export class UserPostManagementService implements OnModuleInit {
       .text(
         async (ctx) => {
           const stikesCount = await this.getUserStrikesCount(ctx);
-          return `❗ ${stikesCount || 0}`;
+          return this.formatter.strikesLabel(stikesCount);
         },
         async (ctx) => {
           if (this.userService.checkPermission(ctx, UserPermissionEnum.ALLOW_SET_STRIKE)) {
@@ -983,7 +926,7 @@ export class UserPostManagementService implements OnModuleInit {
           }
         }
       )
-      .text('💀', async (ctx) => {
+      .text(UserPostFormatter.BAN_LABEL, async (ctx) => {
         if (this.userService.checkPermission(ctx, UserPermissionEnum.ALLOW_MAKE_BAN)) {
           await this.onAdminApproveAfterReject(ctx);
           ctx.menu.nav(PostModerationMenusEnum.BAN);
@@ -992,14 +935,14 @@ export class UserPostManagementService implements OnModuleInit {
       .row();
 
     const banConfirmation = new Menu<BotContext>(PostModerationMenusEnum.BAN, { autoAnswer: false })
-      .text('Точно в бан?', async (ctx) => {
+      .text(UserPostFormatter.BAN_CONFIRM_LABEL, async (ctx) => {
         if (this.userService.checkPermission(ctx, UserPermissionEnum.ALLOW_MAKE_BAN)) {
           await this.banUser(ctx);
           await ctx.deleteMessage();
         }
         return;
       })
-      .text('Нет', async (ctx) => {
+      .text(UserPostFormatter.NO_LABEL, async (ctx) => {
         ctx.menu.nav(PostModerationMenusEnum.REJECT);
       })
       .row();
@@ -1007,13 +950,13 @@ export class UserPostManagementService implements OnModuleInit {
     const strikeConfirmation = new Menu<BotContext>(PostModerationMenusEnum.STRIKE, {
       autoAnswer: false,
     })
-      .text('Точно добавить страйк?', async (ctx) => {
+      .text(UserPostFormatter.STRIKE_CONFIRM_LABEL, async (ctx) => {
         if (this.userService.checkPermission(ctx, UserPermissionEnum.ALLOW_SET_STRIKE)) {
           await this.makeUserStrike(ctx);
           ctx.menu.nav(PostModerationMenusEnum.REJECT);
         }
       })
-      .text('Нет', async (ctx) => {
+      .text(UserPostFormatter.NO_LABEL, async (ctx) => {
         ctx.menu.nav(PostModerationMenusEnum.REJECT);
       })
       .row();
@@ -1083,10 +1026,7 @@ export class UserPostManagementService implements OnModuleInit {
     await this.bot.api
       .forwardMessage(message.user.id, message.user.id, message.originalMessageId)
       .catch();
-    await this.bot.api.sendMessage(
-      message.user.id,
-      'Мы не можем такое опубликовать, твой пост отклонен'
-    );
+    await this.bot.api.sendMessage(message.user.id, this.formatter.rejectedPostText());
   }
 
   /**
@@ -1218,13 +1158,12 @@ export class UserPostManagementService implements OnModuleInit {
     const channelInfo = await this.bot.api.getChat(this.baseConfigService.memeChanelId);
     await this.bot.api.forwardMessage(message.user.id, channelInfo.id, publishedMessage.message_id);
 
-    let userFeedbackMessage = 'Твой пост опубликован \n';
-    if (publishContext.mode !== PublicationModesEnum.NIGHT_CRINGE) {
-      userFeedbackMessage += 'Присылай еще!\n';
-    } else {
-      const cringeChannelLink = await this.settingsService.cringeChannelHtmlLink();
-      userFeedbackMessage += `Утром пост будет перемещен в канал ${cringeChannelLink}`;
-    }
+    const userFeedbackMessage =
+      publishContext.mode === PublicationModesEnum.NIGHT_CRINGE
+        ? this.formatter.postPublishedNightCringeText(
+            await this.settingsService.cringeChannelHtmlLink()
+          )
+        : this.formatter.postPublishedText();
 
     await this.bot.api.sendMessage(message.user.id, userFeedbackMessage, { parse_mode: 'HTML' });
 
@@ -1233,7 +1172,9 @@ export class UserPostManagementService implements OnModuleInit {
     });
 
     const url = await this.settingsService.channelLinkUrl();
-    const inlineKeyboard = new InlineKeyboard().url(`👨 Опубликован (${user.username})`, url).row();
+    const inlineKeyboard = new InlineKeyboard()
+      .url(this.formatter.publishedKeyboardLabel(user.username), url)
+      .row();
 
     await this.bot.api.editMessageReplyMarkup(
       this.baseConfigService.userRequestMemeChannel,
@@ -1330,7 +1271,7 @@ export class UserPostManagementService implements OnModuleInit {
     });
 
     const inlineKeyboard = new InlineKeyboard()
-      .text(`⏰ ${dateFormatted} (${user.username})`)
+      .text(this.formatter.scheduledTimeLabel(dateFormatted, user.username))
       .row();
 
     await this.bot.api.editMessageReplyMarkup(
@@ -1348,12 +1289,14 @@ export class UserPostManagementService implements OnModuleInit {
 
     await this.bot.api.forwardMessage(message.user.id, message.user.id, message.originalMessageId);
 
-    let userFeedbackMessage = `Твой пост будет опубликован ${dateFormatted} ⏱\n\n`;
+    let userFeedbackMessage = this.formatter.postScheduledText(dateFormatted);
     if (publishContext.mode === PublicationModesEnum.NIGHT_CRINGE) {
       const cringeChannelLink = await this.settingsService.cringeChannelHtmlLink();
-      userFeedbackMessage += `Пост попал в особую рубрику, которая публикуется только ночью, а утром перемещается в отдельный канал: ${cringeChannelLink}\n`;
+      userFeedbackMessage = this.formatter.postScheduledNightCringeText(
+        dateFormatted,
+        cringeChannelLink
+      );
     }
-    userFeedbackMessage += 'Присылай еще 😉️';
 
     await this.bot.api.sendMessage(message.user.id, userFeedbackMessage, { parse_mode: 'HTML' });
 
@@ -1377,14 +1320,7 @@ export class UserPostManagementService implements OnModuleInit {
     );
 
     await this.bot.api.forwardMessage(message.user.id, message.user.id, message.originalMessageId);
-    await this.bot.api.sendMessage(
-      message.user.id,
-      'Мы передумали! 🤯\n\n' +
-        'Такое иногда бывает, мы долго думали, смеяли пост со всех сторон, показывали его всем кому могли, ' +
-        'в итоге он будет опубликован! 🎉\n' +
-        'Прости что так поступили с тобой, в следующий раз мы будем внимательнее. 🥺\n' +
-        'P.S. Тебе придет отдельное сообщение, когда пост будет опубликован 😉'
-    );
+    await this.bot.api.sendMessage(message.user.id, this.formatter.restoredAfterRejectText());
   }
 
   public async banUser(ctx: BotContext) {
@@ -1402,14 +1338,7 @@ export class UserPostManagementService implements OnModuleInit {
       }
     );
 
-    await this.bot.api.sendMessage(
-      message.user.id,
-      'К сожалению, мы вынуждены ограничить доступ к боту, т.к. ' +
-        'ты серьезно нарушил правила публикации и нашего сообщества, ' +
-        'нам жаль что пришлось применить столь серьезную меру, ' +
-        'но у нас не осталось иного выхода.\n\n' +
-        'Бот больше не будет реагировать на сообщения'
-    );
+    await this.bot.api.sendMessage(message.user.id, this.formatter.bannedUserText());
   }
 
   private async makeUserStrike(ctx: BotContext) {
