@@ -1,4 +1,4 @@
-import { Observable } from 'rxjs';
+import { Logger } from '@nestjs/common';
 import * as bigInt from 'big-integer';
 import { Api, TelegramClient } from 'telegram';
 import { ClientBaseService } from './client-base.service';
@@ -35,7 +35,11 @@ function makeRepo() {
 
 function makeBot() {
   return {
-    api: { sendMessage: jest.fn().mockResolvedValue({}), copyMessage: jest.fn() },
+    api: {
+      sendMessage: jest.fn().mockResolvedValue({}),
+      copyMessage: jest.fn(),
+      getMe: jest.fn().mockResolvedValue({ id: 999, username: 'test_bot' }),
+    },
     use: jest.fn(),
     callbackQuery: jest.fn(),
     on: jest.fn(),
@@ -49,8 +53,9 @@ function makeConfig() {
     ownerId: 42,
     memeChanelId: -1001000000001,
     cringeMemeChannelId: -1001000000002,
-    observerChannel: -1001000000003,
+    userRequestMemeChannel: -1001000000003,
     bestMemeChanelId: -1001000000004,
+    parserUserId: 4242,
   };
 }
 
@@ -100,7 +105,7 @@ describe('ClientBaseService', () => {
 
       expect(bot.use).toHaveBeenCalledTimes(3);
       expect(bot.callbackQuery).toHaveBeenCalledTimes(3);
-      expect(bot.on).toHaveBeenCalledTimes(1);
+      expect(bot.on).not.toHaveBeenCalled();
       expect(repo.update).not.toHaveBeenCalledWith({ station: 'main' }, { isActive: true });
     });
 
@@ -121,16 +126,6 @@ describe('ClientBaseService', () => {
   });
 
   describe('getters', () => {
-    it('observerChannelPost$ отдаёт значения из внутреннего субъекта', () => {
-      const { service } = setup();
-      const received: any[] = [];
-      service.observerChannelPost$.subscribe((value) => received.push(value));
-
-      expect(service.observerChannelPost$).toBeInstanceOf(Observable);
-      (service as any).observerChannelPostSubject.next({ id: 'ctx' });
-      expect(received).toEqual([{ id: 'ctx' }]);
-    });
-
     it('bestMemesDaily$ отдаёт значения из внутреннего субъекта', () => {
       const { service } = setup();
       const received: any[] = [];
@@ -432,14 +427,15 @@ describe('ClientBaseService', () => {
       await expect((service as any).handleAlbum(event)).resolves.toBe(false);
     });
 
-    it('пересылает альбом в канал обсерватории, если это не реклама', async () => {
+    it('пересылает альбом боту, если это не реклама', async () => {
       jest.useFakeTimers();
-      const { service, config } = setup();
+      const { service } = setup();
       jest.spyOn(service as any, 'isAdPost').mockResolvedValue(false);
       const forwardTo = jest.fn().mockResolvedValue(undefined);
       const event = {
         message: {
           groupedId: { toString: () => '777' },
+          photo: [{ file_id: 'p' }],
           forwardTo,
         },
       };
@@ -449,7 +445,7 @@ describe('ClientBaseService', () => {
       await flush();
       await flush();
 
-      expect(forwardTo).toHaveBeenCalledWith(bigInt(config.observerChannel));
+      expect(forwardTo).toHaveBeenCalledWith('@test_bot');
       expect((service as any).lastProcessedGroup).toBeUndefined();
     });
 
@@ -479,7 +475,9 @@ describe('ClientBaseService', () => {
       jest.spyOn(service as any, 'isAdPost').mockResolvedValue(false);
       const clearSpy = jest.spyOn(global, 'clearTimeout');
       (service as any).lastProcessedGroup = { id: '999', timer: 123 as any };
-      const event = { message: { groupedId: { toString: () => '999' }, forwardTo: jest.fn() } };
+      const event = {
+        message: { groupedId: { toString: () => '999' }, photo: [{ file_id: 'p' }], forwardTo: jest.fn() },
+      };
 
       await (service as any).handleAlbum(event);
 
@@ -507,9 +505,9 @@ describe('ClientBaseService', () => {
       expect(handleSpy).not.toHaveBeenCalled();
     });
 
-    it('пересылает одиночное сообщение с задержкой, если это не реклама', async () => {
+    it('пересылает одиночное сообщение с медиа боту с задержкой, если это не реклама', async () => {
       jest.useFakeTimers();
-      const { service, config } = setup();
+      const { service } = setup();
       jest.spyOn(service as any, 'handleAlbum').mockResolvedValue(false);
       jest.spyOn(service as any, 'isAdPost').mockResolvedValue(false);
       jest.spyOn(Math, 'random').mockReturnValue(0);
@@ -517,14 +515,25 @@ describe('ClientBaseService', () => {
       const event = {
         isChannel: true,
         chatId: bigInt(-1009999999999),
-        message: { forwardTo },
+        message: { photo: [{ file_id: 'p' }], forwardTo },
       };
 
       await (service as any).onMessageEvent(event);
       jest.advanceTimersByTime(5000);
       await flush();
 
-      expect(forwardTo).toHaveBeenCalledWith(bigInt(config.observerChannel));
+      expect(forwardTo).toHaveBeenCalledWith('@test_bot');
+    });
+
+    it('не пересылает текстовый пост без медиа', async () => {
+      const { service } = setup();
+      jest.spyOn(service as any, 'handleAlbum').mockResolvedValue(false);
+      const isAdSpy = jest.spyOn(service as any, 'isAdPost');
+      const event = { isChannel: true, chatId: bigInt(-1009999999999), message: {} };
+
+      await (service as any).onMessageEvent(event);
+
+      expect(isAdSpy).not.toHaveBeenCalled();
     });
 
     it('не пересылает одиночную рекламу', async () => {
@@ -533,7 +542,11 @@ describe('ClientBaseService', () => {
       jest.spyOn(service as any, 'handleAlbum').mockResolvedValue(false);
       jest.spyOn(service as any, 'isAdPost').mockResolvedValue(true);
       const forwardTo = jest.fn();
-      const event = { isChannel: true, chatId: bigInt(-5), message: { forwardTo } };
+      const event = {
+        isChannel: true,
+        chatId: bigInt(-5),
+        message: { photo: [{ file_id: 'p' }], forwardTo },
+      };
 
       await (service as any).onMessageEvent(event);
       jest.runOnlyPendingTimers();
@@ -546,35 +559,52 @@ describe('ClientBaseService', () => {
       const { service } = setup();
       jest.spyOn(service as any, 'handleAlbum').mockResolvedValue(true);
       const isAdSpy = jest.spyOn(service as any, 'isAdPost');
-      await (service as any).onMessageEvent({ isChannel: true, chatId: bigInt(-6), message: {} });
+      const event = {
+        isChannel: true,
+        chatId: bigInt(-6),
+        message: { photo: [{ file_id: 'p' }] },
+      };
+
+      await (service as any).onMessageEvent(event);
+
       expect(isAdSpy).not.toHaveBeenCalled();
     });
   });
 
-  describe('onObserverChannelPost', () => {
-    it('пропускает посты не из канала-обсерватории и пропускает валидные', () => {
-      const { service, bot, config } = setup();
-      let handler: any;
-      bot.on.mockImplementation((_event: any, cb: any) => {
-        handler = cb;
-      });
+  describe('forwardToBot', () => {
+    it('форвардит пост боту и кэширует адресата', async () => {
+      const { service, bot } = setup();
+      const forwardTo = jest.fn().mockResolvedValue(undefined);
+      const event = { message: { forwardTo } };
 
-      (service as any).onObserverChannelPost();
+      await (service as any).forwardToBot(event);
 
-      expect(bot.on).toHaveBeenCalledWith(
-        ['channel_post:photo', 'channel_post:video'],
-        expect.any(Function)
-      );
+      expect(bot.api.getMe).toHaveBeenCalledTimes(1);
+      expect(forwardTo).toHaveBeenCalledWith('@test_bot');
 
-      const received: any[] = [];
-      (service as any).observerChannelPostSubject.subscribe((ctx: any) => received.push(ctx));
+      await (service as any).forwardToBot(event);
+      expect(bot.api.getMe).toHaveBeenCalledTimes(1);
+    });
 
-      handler({ channelPost: { sender_chat: { id: 1 } } });
-      expect(received).toHaveLength(0);
+    it('без username бота не форвардит и логирует ошибку', async () => {
+      const { service, bot } = setup();
+      bot.api.getMe.mockResolvedValue({ id: 777, username: undefined });
+      const loggerSpy = jest.spyOn(Logger, 'error').mockImplementation(() => undefined);
+      const forwardTo = jest.fn().mockResolvedValue(undefined);
 
-      const ctx = { channelPost: { sender_chat: { id: config.observerChannel } } };
-      handler(ctx);
-      expect(received).toEqual([ctx]);
+      await expect((service as any).forwardToBot({ message: { forwardTo } })).resolves.toBeUndefined();
+
+      expect(forwardTo).not.toHaveBeenCalled();
+      expect(loggerSpy).toHaveBeenCalled();
+    });
+
+    it('логирует ошибку форварда и не падает', async () => {
+      const { service } = setup();
+      const loggerSpy = jest.spyOn(Logger, 'error').mockImplementation(() => undefined);
+      const event = { message: { forwardTo: jest.fn().mockRejectedValue(new Error('fail')) } };
+
+      await expect((service as any).forwardToBot(event)).resolves.toBeUndefined();
+      expect(loggerSpy).toHaveBeenCalled();
     });
   });
 

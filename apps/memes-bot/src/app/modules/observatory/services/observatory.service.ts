@@ -6,7 +6,6 @@ import { UserService } from '../../bot/services/user.service';
 import { Bot } from 'grammy';
 import { BOT } from '../../bot/providers/bot.provider';
 import { BaseConfigService } from '../../config/base-config.service';
-import { ClientBaseService } from '../../client/services/client-base.service';
 import { ObservatoryPostMenusEnum } from '../contsants/observatory-post-menus.enum';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -38,7 +37,6 @@ export class ObservatoryService implements OnModuleInit {
     @Inject(BOT) private bot: Bot<BotContext>,
     private baseConfigService: BaseConfigService,
     private userService: UserService,
-    private clientBaseService: ClientBaseService,
     @InjectRepository(ObservatoryPostEntity)
     private observatoryPostRepository: Repository<ObservatoryPostEntity>,
     private postSchedulerService: PostSchedulerService,
@@ -67,7 +65,7 @@ export class ObservatoryService implements OnModuleInit {
 
   public onModuleInit(): void {
     this.bot.use(this.userModeratedPostService.buildUserModeratePost());
-    this.onNewObservatoryPost();
+    this.onParserPost();
     this.onNewUserModeratedPost();
     this.waitDeleteObserverPost();
     this.buildObservatoryPostMenu();
@@ -79,72 +77,91 @@ export class ObservatoryService implements OnModuleInit {
     });
   }
 
-  private onNewObservatoryPost() {
-    this.clientBaseService.observerChannelPost$.subscribe(async (ctx) => {
-      const imageHash = await this.deduplicationService.getPostImageHash(ctx?.channelPost?.photo);
-      const duplicates = await this.deduplicationService.checkDuplicate(imageHash);
-      // если есть дубликат с похожестью больше 0.5 - выкидываем пост
-      if (hasSimilarDistance(duplicates)) {
-        return;
+  /**
+   * Принимает пост от доверенного парсера: userbot форвардит найденный
+   * медиапост боту в личку, бот кладёт его в предложку с подписью источника
+   * и меню модерации.
+   *
+   * Канал-коллектор больше не нужен (TGB-34). Капчу и проверку подписки для
+   * аккаунта-парсера пропускает `AppService`.
+   */
+  private onParserPost(): void {
+    this.bot.on(['message:photo', 'message:video'], async (ctx, next) => {
+      const parserUserId = this.baseConfigService.parserUserId;
+      if (!parserUserId || ctx.chat?.type !== 'private' || ctx.from?.id !== parserUserId) {
+        // Не наш случай: отдаём апдейт дальше (капча, предложка, тролль).
+        return next();
       }
-
-      // Служебная подпись со ссылкой на исходный пост исходного канала.
-      const source = this.resolveSource(ctx?.channelPost ?? null);
-      const caption = this.formatter.sourceCaption(source);
-
-      const message = await ctx.api.copyMessage(
-        this.baseConfigService.userRequestMemeChannel,
-        ctx.channelPost.sender_chat.id,
-        ctx.channelPost.message_id,
-        {
-          disable_notification: true,
-          caption,
-          ...(caption ? { parse_mode: 'HTML' as const } : {}),
-          reply_markup: this.observatoryPostMenu,
-        }
-      );
-
-      const post = await this.observatoryPostRepository.create({
-        requestChannelMessageId: message.message_id,
-        sourceChatId: source?.chatId ?? null,
-        sourceMessageId: source?.messageId ?? null,
-        sourceUsername: source?.username ?? null,
-        sourceTitle: source?.title ?? null,
-        sourceUrl: source?.url ?? null,
-        originalCaption: ctx?.channelPost?.caption ?? null,
-      });
-      await this.observatoryPostRepository.save(post);
+      await this.onNewObservatoryPost(ctx);
     });
   }
 
+  private async onNewObservatoryPost(ctx: BotContext): Promise<void> {
+    const message = ctx?.message;
+    if (!ctx?.chat || !message) {
+      return;
+    }
+
+    const imageHash = await this.deduplicationService.getPostImageHash(message?.photo);
+    const duplicates = await this.deduplicationService.checkDuplicate(imageHash);
+    // если есть дубликат с похожестью больше 0.5 - выкидываем пост
+    if (hasSimilarDistance(duplicates)) {
+      return;
+    }
+
+    // Служебная подпись со ссылкой на исходный пост исходного канала.
+    const source = this.resolveSource(message ?? null);
+    const caption = this.formatter.sourceCaption(source);
+
+    const copied = await ctx.api.copyMessage(
+      this.baseConfigService.userRequestMemeChannel,
+      ctx.chat.id,
+      message.message_id,
+      {
+        disable_notification: true,
+        caption,
+        ...(caption ? { parse_mode: 'HTML' as const } : {}),
+        reply_markup: this.observatoryPostMenu,
+      }
+    );
+
+    const post = await this.observatoryPostRepository.create({
+      requestChannelMessageId: copied.message_id,
+      sourceChatId: source?.chatId ?? null,
+      sourceMessageId: source?.messageId ?? null,
+      sourceUsername: source?.username ?? null,
+      sourceTitle: source?.title ?? null,
+      sourceUrl: source?.url ?? null,
+      originalCaption: message.caption ?? null,
+    });
+    await this.observatoryPostRepository.save(post);
+  }
+
   /**
-   * Извлекает источник поста из forward-заголовка поста канала-обсерватории.
+   * Извлекает источник из forward-заголовка присланного парсером сообщения.
    *
    * Сначала смотрит `forward_origin` (Bot API 7+), затем legacy-поля
    * `forward_from_chat` / `forward_from_message_id`.
    *
-   * @param channelPost пост в канале-обсерватории
+   * @param message сообщение от парсера
    * @returns источник поста или `null`, если заголовок недоступен
    */
-  private resolveSource(channelPost: {
+  private resolveSource(message: {
     forward_origin?: { type?: string; chat?: unknown; message_id?: number };
     forward_from_chat?: unknown;
     forward_from_message_id?: number;
   } | null): TelegramPostSource | null {
-    if (!channelPost) {
+    if (!message) {
       return null;
     }
 
-    const origin = channelPost.forward_origin;
+    const origin = message.forward_origin;
     if (origin?.chat && (origin.type === 'channel' || origin.type === 'chat')) {
       return this.buildSource(origin.chat, origin.message_id ?? null);
     }
 
-    if (channelPost.forward_from_chat) {
-      return this.buildSource(
-        channelPost.forward_from_chat,
-        channelPost.forward_from_message_id ?? null
-      );
+    if (message.forward_from_chat) {
+      return this.buildSource(message.forward_from_chat, message.forward_from_message_id ?? null);
     }
 
     return null;

@@ -6,7 +6,6 @@ import { UserRequestEntity } from '../../src/app/modules/bot/entities/user-reque
 import { UserEntity } from '../../src/app/modules/bot/entities/user.entity';
 import { SessionEntity } from '../../src/app/modules/bot/session/session.entity';
 import { DeduplicationService } from '../../src/app/modules/bot/services/deduplication.service';
-import { ClientBaseService } from '../../src/app/modules/client/services/client-base.service';
 import { ObservatoryPostEntity } from '../../src/app/modules/observatory/entities/observatory-post.entity';
 import { UserModeratedPostEntity } from '../../src/app/modules/observatory/entities/user-moderated-post.entity';
 import { UserModeratedPostService } from '../../src/app/modules/observatory/services/user-moderated-post.service';
@@ -27,7 +26,8 @@ jest.mock('imghash', () => ({
 const OWNER_ID = Number(process.env.BOT_OWNER_ID);
 const REQUEST_CHANNEL = -1003333333333;
 const MEME_CHANNEL = -1001111111111;
-const OBSERVER_CHANNEL = -1005555555555;
+const PARSER_ID = Number(process.env.PARSER_USER_ID);
+const SOURCE_CHANNEL = -1001234567890;
 
 const USER_ID = 515151;
 const MOD_ID = 777;
@@ -352,28 +352,44 @@ describe('E2E: post-management, menus и observatory', () => {
   });
 
   describe('observatory', () => {
-    it('observerChannelPost$ копирует пост обсерватории в канал обращений', async () => {
-      const client = h.moduleRef.get(ClientBaseService, { strict: false }) as any;
-      const copyMessage = jest.fn().mockResolvedValue({ message_id: 700 });
-      const ctx = {
-        channelPost: { message_id: 555, sender_chat: { id: OBSERVER_CHANNEL }, photo: PHOTO },
-        api: { copyMessage },
-      };
-
-      client.observerChannelPost$.next(ctx);
-
-      await waitFor(async () => {
-        expect(
-          await observatoryRepo.findOne({ where: { requestChannelMessageId: 700 } })
-        ).not.toBeNull();
+    it('пост от парсера в личке копируется в предложку с подписью источника', async () => {
+      await h.sendUpdate({
+        update_id: 556,
+        message: {
+          message_id: 555,
+          date: Math.floor(Date.now() / 1000),
+          chat: { id: PARSER_ID, type: 'private' },
+          from: { id: PARSER_ID, is_bot: false, first_name: 'Parser', username: 'parser' },
+          photo: PHOTO,
+          forward_origin: {
+            type: 'channel',
+            message_id: 777,
+            chat: { id: SOURCE_CHANNEL, username: 'source', title: 'Источник' },
+          },
+        },
       });
 
-      expect(copyMessage).toHaveBeenCalledWith(
-        REQUEST_CHANNEL,
-        OBSERVER_CHANNEL,
-        555,
-        expect.objectContaining({ disable_notification: true })
-      );
+      await waitFor(() => {
+        expect(findCall(h.calls, 'copyMessage', (p) => p.from_chat_id === PARSER_ID)).toBeDefined();
+      });
+
+      const copy = findCall(h.calls, 'copyMessage', (p) => p.from_chat_id === PARSER_ID)!;
+      expect(copy.payload.chat_id).toBe(REQUEST_CHANNEL);
+      expect(copy.payload.message_id).toBe(555);
+      expect(String(copy.payload.caption)).toContain('🔎 Источник:');
+
+      const saved = await observatoryRepo.findOne({ where: { sourceUsername: 'source' } });
+      expect(saved).not.toBeNull();
+      expect(Number(saved!.sourceChatId)).toBe(SOURCE_CHANNEL);
+      expect(Number(saved!.sourceMessageId)).toBe(777);
+      expect(saved!.sourceTitle).toBe('Источник');
+    });
+
+    it('фото обычного пользователя не копируется в предложку (идёт в капчу)', async () => {
+      await h.sendUpdate(privatePhotoUpdate({ userId: 818181, messageId: 556, updateId: 557 }));
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(findCall(h.calls, 'copyMessage', (p) => p.from_chat_id === 818181)).toBeUndefined();
     });
 
     it('user-moderation round: голос пользователя и публикация по итогу', async () => {

@@ -24,7 +24,7 @@ const defaults: Record<string, string> = {
   BEST_MANAGED_CHANNEL: '-1002222222222',
   USER_REQUEST_CHANNEL: '-1003333333333',
   CRINGE_CHANNEL: '-1004444444444',
-  OBSERVER_CHANNEL: '-1005555555555',
+  PARSER_USER_ID: '777777',
   S3_ENDPOINT: 'https://storage.example.test',
   S3_REGION: 'ru-central1',
   S3_BUCKET: 'test-bucket',

@@ -114,7 +114,6 @@ function createClientBaseStub() {
   return {
     onModuleInit: async () => undefined,
     onApplicationBootstrap: async () => undefined,
-    observerChannelPost$: new Subject(),
     bestMemesDaily$: new Subject(),
     lastObserverStatus: async () => false,
     toggleChannelObserver: async () => undefined,
