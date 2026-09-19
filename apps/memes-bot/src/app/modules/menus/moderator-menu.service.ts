@@ -4,12 +4,16 @@ import { Bot } from 'grammy';
 import { BotContext } from '../bot/interfaces/bot-context.interface';
 import { Menu } from '@grammyjs/menu';
 import { ModeratorMenusEnum } from './constants/bot-menus.enum';
+import { MenuPresenter } from './menu-presenter';
 import { UserRequestService } from '../bot/services/user-request.service';
 import { MoreThan } from 'typeorm';
 import { sub } from 'date-fns';
 
 @Injectable()
 export class ModeratorMenuService {
+  /** Общие хелперы сборки меню (переходы между меню). */
+  private readonly menuPresenter = new MenuPresenter();
+
   constructor(
     @Inject(BOT) private bot: Bot<BotContext>,
     private userRequestService: UserRequestService
@@ -17,11 +21,7 @@ export class ModeratorMenuService {
 
   public buildStartModeratorMenu(userStartMenu: Menu<BotContext>): Menu<BotContext> {
     return new Menu<BotContext>(ModeratorMenusEnum.MODERATOR_START_MENU)
-      .text('Меню пользователя', (ctx) =>
-        ctx.reply('Выбери то, что хочешь сделать', {
-          reply_markup: userStartMenu,
-        })
-      )
+      .text('Меню пользователя', this.menuPresenter.switchToMenu(userStartMenu))
       .row()
       .text('Показать статистику', async (ctx) => this.showModeratorStatistic(ctx))
       .row();

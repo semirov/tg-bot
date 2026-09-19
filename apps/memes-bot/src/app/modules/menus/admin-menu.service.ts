@@ -19,16 +19,23 @@ import { formatUsd } from '../troll/constants/deepseek-pricing';
 import { DeepSeekService } from '../troll/services/deepseek.service';
 import { TrollSettingsService } from '../troll/services/troll-settings.service';
 import { TrollService } from '../troll/services/troll.service';
-import { formatUserName as formatDisplayName } from '../../shared/display-name';
 import {
   UserYearStatistics,
   YearResultsPreview,
 } from '../year-results/interfaces/year-statistics.interface';
 import { YearResultsService } from '../year-results/services/year-results.service';
 import { AdminMenusEnum } from './constants/bot-menus.enum';
+import { AdminSettingsPresets } from './admin-settings-presets';
+import { MenuPresenter } from './menu-presenter';
+import { YearResultsMenuText } from './year-results-menu-text';
 
 @Injectable()
 export class AdminMenuService implements OnModuleInit {
+  /** Чистые тексты админ-меню (итоги года, лимиты мемов). */
+  private readonly menuText = new YearResultsMenuText();
+  /** Общие хелперы сборки меню (ownerGuard, переходы). */
+  private readonly menuPresenter = new MenuPresenter();
+
   constructor(
     @Inject(BOT) private bot: Bot<BotContext>,
     private userService: UserService,
@@ -43,31 +50,12 @@ export class AdminMenuService implements OnModuleInit {
 
   /** Пропускает действие только для владельца; остальным пишет отказ. */
   private ownerGuard(handler: (ctx: BotContext & MenuFlavor) => Promise<void> | void) {
-    return async (ctx: BotContext & MenuFlavor): Promise<void> => {
-      if (!ctx.config?.isOwner) {
-        try {
-          await ctx.answerCallbackQuery('Доступно только владельцу');
-        } catch {
-          // callback уже мог быть отвечён
-        }
-        return;
-      }
-      await handler(ctx);
-    };
+    return this.menuPresenter.ownerGuard(handler);
   }
 
   /** Следующее значение из списка пресетов (по кругу). */
   private cycle(value: number, presets: number[]): number {
-    const exact = presets.findIndex((preset) => Math.abs(preset - value) < 1e-9);
-    if (exact !== -1) {
-      return presets[(exact + 1) % presets.length];
-    }
-    const nearest = presets.reduce(
-      (best, preset) => (Math.abs(preset - value) < Math.abs(best - value) ? preset : best),
-      presets[0]
-    );
-    const index = presets.indexOf(nearest);
-    return presets[(index + 1) % presets.length];
+    return AdminSettingsPresets.cycle(value, presets);
   }
 
   onModuleInit() {
@@ -143,17 +131,9 @@ export class AdminMenuService implements OnModuleInit {
         await this.clientBaseService.postDailyBestMeme(ctx.from.id);
       })
       .row()
-      .text('Меню модератора', (ctx) =>
-        ctx.reply('Выбери то, что хочешь сделать', {
-          reply_markup: moderatorStartMenu,
-        })
-      )
+      .text('Меню модератора', this.menuPresenter.switchToMenu(moderatorStartMenu))
       .row()
-      .text('Меню пользователя', (ctx) =>
-        ctx.reply('Выбери то, что хочешь сделать', {
-          reply_markup: userStartMenu,
-        })
-      )
+      .text('Меню пользователя', this.menuPresenter.switchToMenu(userStartMenu))
       .row();
 
     const moderatorsListMenu = new Menu<BotContext>('moderators-list').dynamic(async () => {
@@ -294,46 +274,21 @@ export class AdminMenuService implements OnModuleInit {
     );
 
     const memeLimitOptionsMenu = new Menu<BotContext>('meme-limit-options')
-      .text('Снять лимит на 24 часа', async (ctx) => {
+      .text(this.menuText.limitButtonLabel(24), async (ctx) => {
         await this.userService.disableMemeLimitForUser(ctx.session.memeLimitUserId, 24);
-        await ctx.reply(`Лимит мемов снят для пользователя на 24 часа`);
+        await ctx.reply(this.menuText.limitRemovedMessage(24));
         ctx.menu.nav(AdminMenusEnum.ADMIN_START_MENU);
       })
       .row()
-      .text('Снять лимит на 1 час', async (ctx) => {
+      .text(this.menuText.limitButtonLabel(1), async (ctx) => {
         await this.userService.disableMemeLimitForUser(ctx.session.memeLimitUserId, 1);
-        await ctx.reply(`Лимит мемов снят для пользователя на 1 час`);
+        await ctx.reply(this.menuText.limitRemovedMessage(1));
         ctx.menu.nav(AdminMenusEnum.ADMIN_START_MENU);
       })
       .row()
       .back('Назад');
 
     const current = () => this.trollSettings.current;
-    const pct = (value: number) => `${Math.round(value * 100)}%`;
-    const formatDuration = (sec: number): string => {
-      if (sec <= 0) return 'без паузы';
-      if (sec < 60) return `${sec} с`;
-      if (sec < 3600) return `${Math.round(sec / 60)} мин`;
-      return `${Math.round(sec / 3600)} ч`;
-    };
-
-    const thresholdPresets = [0.3, 0.4, 0.5, 0.6, 0.7];
-    const highThresholdPresets = [0.7, 0.8, 0.9];
-    const analyzeCooldownPresets = [0, 5, 10, 15, 30, 60];
-    const sarcasmChancePresets = [0.01, 0.03, 0.05, 0.1, 0.15, 0.2];
-    const sarcasmCooldownPresets = [0, 60, 300, 600, 1800, 3600];
-    const mirrorChancePresets = [0.01, 0.03, 0.05, 0.1, 0.15, 0.2];
-    const mirrorCooldownPresets = [0, 60, 300, 600, 1800, 3600];
-    const reactionChancePresets = [0.01, 0.03, 0.05, 0.1, 0.15, 0.2];
-    const reactionCooldownPresets = [0, 60, 300, 600, 1800, 3600];
-    const jerkWindowPresets = [0, 10, 15, 30, 60, 120];
-    const jerkCooldownPresets = [0, 30, 60, 120, 180, 300, 600];
-    const dialogPausePresets = [5, 10, 15, 30, 60, 120, 360];
-    /** Порог самопроверки: ниже него ответ отправляется на переписывание. */
-    const selfCheckThresholdPresets = [0.4, 0.5, 0.6, 0.7, 0.8];
-    const memeChancePresets = [0.05, 0.1, 0.2, 0.3, 0.5];
-    const dailyLimitPresets = [100, 200, 500, 1000, 2000, 5000, 10000];
-    const maxInputPresets = [500, 800, 1000, 1500, 2000, 3000];
 
     const trollChatsMenu = new Menu<BotContext>(AdminMenusEnum.TROLL_CHATS_MENU).dynamic(
       async () => {
@@ -367,7 +322,9 @@ export class AdminMenuService implements OnModuleInit {
       .text(
         () => `Бот: ${current().enabled ? '🟢 включён' : '⚪️ выключен'}`,
         this.ownerGuard(async (ctx) => {
-          await this.trollSettings.update({ enabled: !current().enabled });
+          await this.trollSettings.update({
+            enabled: AdminSettingsPresets.toggle(current().enabled),
+          });
           ctx.menu.update();
         })
       )
@@ -375,28 +332,20 @@ export class AdminMenuService implements OnModuleInit {
       .text(
         () => `Проверка УК РФ: ${current().criminalEnabled ? '🟢 вкл' : '⚪️ выкл'}`,
         this.ownerGuard(async (ctx) => {
-          await this.trollSettings.update({ criminalEnabled: !current().criminalEnabled });
-          ctx.menu.update();
-        })
-      )
-      .row()
-      .text(
-        () => `Порог статьи: ${pct(current().criminalThreshold)}`,
-        this.ownerGuard(async (ctx) => {
           await this.trollSettings.update({
-            criminalThreshold: this.cycle(current().criminalThreshold, thresholdPresets),
+            criminalEnabled: AdminSettingsPresets.toggle(current().criminalEnabled),
           });
           ctx.menu.update();
         })
       )
       .row()
       .text(
-        () => `«Почти наверняка»: ${pct(current().criminalHighThreshold)}`,
+        () => `Порог статьи: ${AdminSettingsPresets.percent(current().criminalThreshold)}`,
         this.ownerGuard(async (ctx) => {
           await this.trollSettings.update({
-            criminalHighThreshold: this.cycle(
-              current().criminalHighThreshold,
-              highThresholdPresets
+            criminalThreshold: this.cycle(
+              current().criminalThreshold,
+              AdminSettingsPresets.CRIMINAL_THRESHOLD
             ),
           });
           ctx.menu.update();
@@ -404,10 +353,26 @@ export class AdminMenuService implements OnModuleInit {
       )
       .row()
       .text(
-        () => `Пауза анализа УК: ${formatDuration(current().analyzeCooldownSec)}`,
+        () => `«Почти наверняка»: ${AdminSettingsPresets.percent(current().criminalHighThreshold)}`,
         this.ownerGuard(async (ctx) => {
           await this.trollSettings.update({
-            analyzeCooldownSec: this.cycle(current().analyzeCooldownSec, analyzeCooldownPresets),
+            criminalHighThreshold: this.cycle(
+              current().criminalHighThreshold,
+              AdminSettingsPresets.CRIMINAL_HIGH_THRESHOLD
+            ),
+          });
+          ctx.menu.update();
+        })
+      )
+      .row()
+      .text(
+        () => `Пауза анализа УК: ${AdminSettingsPresets.duration(current().analyzeCooldownSec)}`,
+        this.ownerGuard(async (ctx) => {
+          await this.trollSettings.update({
+            analyzeCooldownSec: this.cycle(
+              current().analyzeCooldownSec,
+              AdminSettingsPresets.ANALYZE_COOLDOWN_SEC
+            ),
           });
           ctx.menu.update();
         })
@@ -416,26 +381,34 @@ export class AdminMenuService implements OnModuleInit {
       .text(
         () => `Сарказм: ${current().sarcasmEnabled ? '🟢 вкл' : '⚪️ выкл'}`,
         this.ownerGuard(async (ctx) => {
-          await this.trollSettings.update({ sarcasmEnabled: !current().sarcasmEnabled });
-          ctx.menu.update();
-        })
-      )
-      .row()
-      .text(
-        () => `Шанс сарказма: ${pct(current().sarcasmChance)}`,
-        this.ownerGuard(async (ctx) => {
           await this.trollSettings.update({
-            sarcasmChance: this.cycle(current().sarcasmChance, sarcasmChancePresets),
+            sarcasmEnabled: AdminSettingsPresets.toggle(current().sarcasmEnabled),
           });
           ctx.menu.update();
         })
       )
       .row()
       .text(
-        () => `Пауза сарказма: ${formatDuration(current().sarcasmCooldownSec)}`,
+        () => `Шанс сарказма: ${AdminSettingsPresets.percent(current().sarcasmChance)}`,
         this.ownerGuard(async (ctx) => {
           await this.trollSettings.update({
-            sarcasmCooldownSec: this.cycle(current().sarcasmCooldownSec, sarcasmCooldownPresets),
+            sarcasmChance: this.cycle(
+              current().sarcasmChance,
+              AdminSettingsPresets.SARCASM_CHANCE
+            ),
+          });
+          ctx.menu.update();
+        })
+      )
+      .row()
+      .text(
+        () => `Пауза сарказма: ${AdminSettingsPresets.duration(current().sarcasmCooldownSec)}`,
+        this.ownerGuard(async (ctx) => {
+          await this.trollSettings.update({
+            sarcasmCooldownSec: this.cycle(
+              current().sarcasmCooldownSec,
+              AdminSettingsPresets.SARCASM_COOLDOWN_SEC
+            ),
           });
           ctx.menu.update();
         })
@@ -444,26 +417,31 @@ export class AdminMenuService implements OnModuleInit {
       .text(
         () => `Кривляния: ${current().mirrorEnabled ? '🟢 вкл' : '⚪️ выкл'}`,
         this.ownerGuard(async (ctx) => {
-          await this.trollSettings.update({ mirrorEnabled: !current().mirrorEnabled });
-          ctx.menu.update();
-        })
-      )
-      .row()
-      .text(
-        () => `Шанс кривляния: ${pct(current().mirrorChance)}`,
-        this.ownerGuard(async (ctx) => {
           await this.trollSettings.update({
-            mirrorChance: this.cycle(current().mirrorChance, mirrorChancePresets),
+            mirrorEnabled: AdminSettingsPresets.toggle(current().mirrorEnabled),
           });
           ctx.menu.update();
         })
       )
       .row()
       .text(
-        () => `Пауза кривляния: ${formatDuration(current().mirrorCooldownSec)}`,
+        () => `Шанс кривляния: ${AdminSettingsPresets.percent(current().mirrorChance)}`,
         this.ownerGuard(async (ctx) => {
           await this.trollSettings.update({
-            mirrorCooldownSec: this.cycle(current().mirrorCooldownSec, mirrorCooldownPresets),
+            mirrorChance: this.cycle(current().mirrorChance, AdminSettingsPresets.MIRROR_CHANCE),
+          });
+          ctx.menu.update();
+        })
+      )
+      .row()
+      .text(
+        () => `Пауза кривляния: ${AdminSettingsPresets.duration(current().mirrorCooldownSec)}`,
+        this.ownerGuard(async (ctx) => {
+          await this.trollSettings.update({
+            mirrorCooldownSec: this.cycle(
+              current().mirrorCooldownSec,
+              AdminSettingsPresets.MIRROR_COOLDOWN_SEC
+            ),
           });
           ctx.menu.update();
         })
@@ -472,26 +450,34 @@ export class AdminMenuService implements OnModuleInit {
       .text(
         () => `Реакции 🤡/💩: ${current().reactionEnabled ? '🟢 вкл' : '⚪️ выкл'}`,
         this.ownerGuard(async (ctx) => {
-          await this.trollSettings.update({ reactionEnabled: !current().reactionEnabled });
-          ctx.menu.update();
-        })
-      )
-      .row()
-      .text(
-        () => `Шанс реакции: ${pct(current().reactionChance)}`,
-        this.ownerGuard(async (ctx) => {
           await this.trollSettings.update({
-            reactionChance: this.cycle(current().reactionChance, reactionChancePresets),
+            reactionEnabled: AdminSettingsPresets.toggle(current().reactionEnabled),
           });
           ctx.menu.update();
         })
       )
       .row()
       .text(
-        () => `Пауза реакции: ${formatDuration(current().reactionCooldownSec)}`,
+        () => `Шанс реакции: ${AdminSettingsPresets.percent(current().reactionChance)}`,
         this.ownerGuard(async (ctx) => {
           await this.trollSettings.update({
-            reactionCooldownSec: this.cycle(current().reactionCooldownSec, reactionCooldownPresets),
+            reactionChance: this.cycle(
+              current().reactionChance,
+              AdminSettingsPresets.REACTION_CHANCE
+            ),
+          });
+          ctx.menu.update();
+        })
+      )
+      .row()
+      .text(
+        () => `Пауза реакции: ${AdminSettingsPresets.duration(current().reactionCooldownSec)}`,
+        this.ownerGuard(async (ctx) => {
+          await this.trollSettings.update({
+            reactionCooldownSec: this.cycle(
+              current().reactionCooldownSec,
+              AdminSettingsPresets.REACTION_COOLDOWN_SEC
+            ),
           });
           ctx.menu.update();
         })
@@ -500,7 +486,9 @@ export class AdminMenuService implements OnModuleInit {
       .text(
         () => `Ответы на обращения: ${current().jerkEnabled ? '🟢 вкл' : '⚪️ выкл'}`,
         this.ownerGuard(async (ctx) => {
-          await this.trollSettings.update({ jerkEnabled: !current().jerkEnabled });
+          await this.trollSettings.update({
+            jerkEnabled: AdminSettingsPresets.toggle(current().jerkEnabled),
+          });
           ctx.menu.update();
         })
       )
@@ -509,37 +497,46 @@ export class AdminMenuService implements OnModuleInit {
         () => `Реакция на клички/мат: ${current().addressReactionEnabled ? '🟢 вкл' : '⚪️ выкл'}`,
         this.ownerGuard(async (ctx) => {
           await this.trollSettings.update({
-            addressReactionEnabled: !current().addressReactionEnabled,
+            addressReactionEnabled: AdminSettingsPresets.toggle(current().addressReactionEnabled),
           });
           ctx.menu.update();
         })
       )
       .row()
       .text(
-        () => `Пауза перед ответом: ${formatDuration(current().jerkBatchWindowSec)}`,
+        () => `Пауза перед ответом: ${AdminSettingsPresets.duration(current().jerkBatchWindowSec)}`,
         this.ownerGuard(async (ctx) => {
           await this.trollSettings.update({
-            jerkBatchWindowSec: this.cycle(current().jerkBatchWindowSec, jerkWindowPresets),
+            jerkBatchWindowSec: this.cycle(
+              current().jerkBatchWindowSec,
+              AdminSettingsPresets.JERK_WINDOW_SEC
+            ),
           });
           ctx.menu.update();
         })
       )
       .row()
       .text(
-        () => `Пауза между ответами: ${formatDuration(current().jerkCooldownSec)}`,
+        () => `Пауза между ответами: ${AdminSettingsPresets.duration(current().jerkCooldownSec)}`,
         this.ownerGuard(async (ctx) => {
           await this.trollSettings.update({
-            jerkCooldownSec: this.cycle(current().jerkCooldownSec, jerkCooldownPresets),
+            jerkCooldownSec: this.cycle(
+              current().jerkCooldownSec,
+              AdminSettingsPresets.JERK_COOLDOWN_SEC
+            ),
           });
           ctx.menu.update();
         })
       )
       .row()
       .text(
-        () => `Пауза новой беседы: ${formatDuration(current().dialogPauseMin * 60)}`,
+        () => `Пауза новой беседы: ${AdminSettingsPresets.duration(current().dialogPauseMin * 60)}`,
         this.ownerGuard(async (ctx) => {
           await this.trollSettings.update({
-            dialogPauseMin: this.cycle(current().dialogPauseMin, dialogPausePresets),
+            dialogPauseMin: this.cycle(
+              current().dialogPauseMin,
+              AdminSettingsPresets.DIALOG_PAUSE_MIN
+            ),
           });
           ctx.menu.update();
         })
@@ -548,16 +545,21 @@ export class AdminMenuService implements OnModuleInit {
       .text(
         () => `Анонсы мемов: ${current().memeAnnounceEnabled ? '🟢 вкл' : '⚪️ выкл'}`,
         this.ownerGuard(async (ctx) => {
-          await this.trollSettings.update({ memeAnnounceEnabled: !current().memeAnnounceEnabled });
+          await this.trollSettings.update({
+            memeAnnounceEnabled: AdminSettingsPresets.toggle(current().memeAnnounceEnabled),
+          });
           ctx.menu.update();
         })
       )
       .row()
       .text(
-        () => `Шанс анонса мема: ${pct(current().memeAnnounceChance)}`,
+        () => `Шанс анонса мема: ${AdminSettingsPresets.percent(current().memeAnnounceChance)}`,
         this.ownerGuard(async (ctx) => {
           await this.trollSettings.update({
-            memeAnnounceChance: this.cycle(current().memeAnnounceChance, memeChancePresets),
+            memeAnnounceChance: this.cycle(
+              current().memeAnnounceChance,
+              AdminSettingsPresets.MEME_ANNOUNCE_CHANCE
+            ),
           });
           ctx.menu.update();
         })
@@ -567,7 +569,10 @@ export class AdminMenuService implements OnModuleInit {
         () => `Лимит запросов/сутки: ${current().dailyRequestLimit}`,
         this.ownerGuard(async (ctx) => {
           await this.trollSettings.update({
-            dailyRequestLimit: this.cycle(current().dailyRequestLimit, dailyLimitPresets),
+            dailyRequestLimit: this.cycle(
+              current().dailyRequestLimit,
+              AdminSettingsPresets.DAILY_REQUEST_LIMIT
+            ),
           });
           ctx.menu.update();
         })
@@ -577,7 +582,10 @@ export class AdminMenuService implements OnModuleInit {
         () => `Макс. длина входа: ${current().maxInputChars}`,
         this.ownerGuard(async (ctx) => {
           await this.trollSettings.update({
-            maxInputChars: this.cycle(current().maxInputChars, maxInputPresets),
+            maxInputChars: this.cycle(
+              current().maxInputChars,
+              AdminSettingsPresets.MAX_INPUT_CHARS
+            ),
           });
           ctx.menu.update();
         })
@@ -586,16 +594,21 @@ export class AdminMenuService implements OnModuleInit {
       .text(
         () => `Проверка ответа: ${current().selfCheckEnabled ? '🟢 вкл' : '⚪️ выкл'}`,
         this.ownerGuard(async (ctx) => {
-          await this.trollSettings.update({ selfCheckEnabled: !current().selfCheckEnabled });
+          await this.trollSettings.update({
+            selfCheckEnabled: AdminSettingsPresets.toggle(current().selfCheckEnabled),
+          });
           ctx.menu.update();
         })
       )
       .row()
       .text(
-        () => `Порог проверки: ${pct(current().selfCheckThreshold)}`,
+        () => `Порог проверки: ${AdminSettingsPresets.percent(current().selfCheckThreshold)}`,
         this.ownerGuard(async (ctx) => {
           await this.trollSettings.update({
-            selfCheckThreshold: this.cycle(current().selfCheckThreshold, selfCheckThresholdPresets),
+            selfCheckThreshold: this.cycle(
+              current().selfCheckThreshold,
+              AdminSettingsPresets.SELF_CHECK_THRESHOLD
+            ),
           });
           ctx.menu.update();
         })
@@ -788,7 +801,7 @@ export class AdminMenuService implements OnModuleInit {
    */
   private async showYearResults(ctx: BotContext): Promise<void> {
     try {
-      await ctx.reply('Генерирую итоги года...');
+      await ctx.reply(this.menuText.generating());
 
       const currentYear = new Date().getFullYear();
       const preview = await this.yearResultsService.generateYearResults(currentYear);
@@ -798,16 +811,15 @@ export class AdminMenuService implements OnModuleInit {
         preview.general,
         preview.users
       );
-      await ctx.reply('<b>📊 Предпросмотр общей статистики для канала:</b>\n\n' + generalMessage, {
+      await ctx.reply(this.menuText.generalPreviewHeader() + generalMessage, {
         parse_mode: 'HTML',
       });
 
       // Показываем персональные сообщения пользователей
       if (preview.users.length > 0) {
-        await ctx.reply(
-          `<b>📨 Персональные сообщения (${preview.users.length}):</b>\n\nИспользуйте кнопки для навигации`,
-          { parse_mode: 'HTML' }
-        );
+        await ctx.reply(this.menuText.personalListHeader(preview.users.length), {
+          parse_mode: 'HTML',
+        });
 
         ctx.session.yearResultsPreview = preview;
         ctx.session.yearResultsCurrentUserIndex = 0;
@@ -815,12 +827,12 @@ export class AdminMenuService implements OnModuleInit {
         await this.sendUserDetailWithNavigation(ctx, preview, 0);
       }
 
-      await ctx.reply('Для публикации итогов используйте команду /year_result_publish', {
+      await ctx.reply(this.menuText.publishHint(), {
         parse_mode: 'HTML',
       });
     } catch (error) {
       Logger.error('Error showing year results:', error);
-      await ctx.reply('Произошла ошибка при генерации итогов года');
+      await ctx.reply(this.menuText.generationError());
     }
   }
 
@@ -855,25 +867,23 @@ export class AdminMenuService implements OnModuleInit {
       allResults.length
     );
 
+    const navigation = this.menuText.navigation(index, preview.users.length);
     const keyboard = new InlineKeyboard();
 
-    if (index > 0) {
-      keyboard.text('⬅️ Предыдущий', `year_user_prev_${index}`);
+    if (navigation.previous) {
+      keyboard.text(navigation.previous, `year_user_prev_${index}`);
     }
 
-    keyboard.text(`${index + 1}/${preview.users.length}`, 'year_user_count');
+    keyboard.text(navigation.counter, 'year_user_count');
 
-    if (index < preview.users.length - 1) {
-      keyboard.text('Следующий ➡️', `year_user_next_${index}`);
+    if (navigation.next) {
+      keyboard.text(navigation.next, `year_user_next_${index}`);
     }
 
-    await ctx.reply(
-      `<b>📨 Предпросмотр сообщения для ${this.formatUserName(user)}:</b>\n\n${message}`,
-      {
-        parse_mode: 'HTML',
-        reply_markup: keyboard,
-      }
-    );
+    await ctx.reply(this.menuText.userPreviewText(user, message), {
+      parse_mode: 'HTML',
+      reply_markup: keyboard,
+    });
 
     // Регистрируем обработчики для навигации
     this.bot.callbackQuery(/year_user_prev_(\d+)/, async (ctx) => {
@@ -899,7 +909,7 @@ export class AdminMenuService implements OnModuleInit {
    * Форматирует имя пользователя
    */
   private formatUserName(user: UserYearStatistics): string {
-    return formatDisplayName(user);
+    return this.menuText.formatUserName(user);
   }
 
   /**
@@ -907,22 +917,22 @@ export class AdminMenuService implements OnModuleInit {
    */
   private async publishYearResults(ctx: BotContext): Promise<void> {
     try {
-      await ctx.reply('Публикую итоги года...');
+      await ctx.reply(this.menuText.publishing());
 
       const currentYear = new Date().getFullYear();
 
       // Публикуем общую статистику в канал
       await this.yearResultsService.publishGeneralStatistics(currentYear);
-      await ctx.reply('✅ Общая статистика опубликована в канал');
+      await ctx.reply(this.menuText.generalPublished());
 
       // Отправляем персональную статистику пользователям
       await this.yearResultsService.publishPersonalStatistics(currentYear);
-      await ctx.reply('✅ Персональная статистика отправлена пользователям');
+      await ctx.reply(this.menuText.personalPublished());
 
-      await ctx.reply('🎉 Итоги года успешно опубликованы!');
+      await ctx.reply(this.menuText.published());
     } catch (error) {
       Logger.error('Error publishing year results:', error);
-      await ctx.reply('Произошла ошибка при публикации итогов года');
+      await ctx.reply(this.menuText.publishError());
     }
   }
 }
