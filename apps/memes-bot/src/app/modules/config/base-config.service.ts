@@ -106,11 +106,11 @@ export class BaseConfigService {
   }
 
   get mattermostToken(): string {
-    return this.configService.get<string>('MATTERMOST_TOKEN') || 'wkthpwfpstrp3kt1xfau576q1y';
+    return this.configService.get<string>('MATTERMOST_TOKEN') ?? '';
   }
 
   get mattermostChannelId(): string {
-    return this.configService.get<string>('MATTERMOST_CHANNEL_ID') || 'cxbgr1bbi3ypzfc6nc53womtph';
+    return this.configService.get<string>('MATTERMOST_CHANNEL_ID') ?? '';
   }
 
   /**
@@ -260,6 +260,10 @@ export class BaseConfigService {
 
   private getNumber(key: string, fallback: number): number {
     const raw = this.configService.get<string>(key);
+    // Пустая строка — это отсутствующее значение, а не 0.
+    if (raw === undefined || raw === null || `${raw}`.trim() === '') {
+      return fallback;
+    }
     const parsed = Number(raw);
     return Number.isFinite(parsed) ? parsed : fallback;
   }
