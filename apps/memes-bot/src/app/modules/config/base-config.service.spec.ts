@@ -76,8 +76,8 @@ describe('BaseConfigService', () => {
   describe('переменные с дефолтом', () => {
     const cases: Array<[string, string, string]> = [
       ['mattermostBaseUrl', 'MATTERMOST_BASE_URL', 'https://time.tbank.ru'],
-      ['mattermostToken', 'MATTERMOST_TOKEN', 'wkthpwfpstrp3kt1xfau576q1y'],
-      ['mattermostChannelId', 'MATTERMOST_CHANNEL_ID', 'cxbgr1bbi3ypzfc6nc53womtph'],
+      ['mattermostToken', 'MATTERMOST_TOKEN', ''],
+      ['mattermostChannelId', 'MATTERMOST_CHANNEL_ID', ''],
       ['mattermostImageBaseUrl', 'MATTERMOST_IMAGE_BASE_URL', ''],
       ['deepseekBaseUrl', 'DEEPSEEK_BASE_URL', 'https://api.deepseek.com'],
       ['deepseekModel', 'DEEPSEEK_MODEL', 'deepseek-flash'],
@@ -145,6 +145,11 @@ describe('BaseConfigService', () => {
       expect(getter(service, 'trollSarcasmChance')).toBe(0.05);
       // Infinity не проходит Number.isFinite — тоже дефолт.
       expect(getter(service, 'trollMirrorChance')).toBe(0.05);
+    });
+
+    it('пустая строка — это отсутствие значения, а не 0', () => {
+      const service = new BaseConfigService(makeConfig({ TROLL_DAILY_REQUEST_LIMIT: '' }));
+      expect(getter(service, 'trollDailyRequestLimit')).toBe(2000);
     });
   });
 
