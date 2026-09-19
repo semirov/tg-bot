@@ -1,3 +1,11 @@
+# [0.15.0](https://github.com/semirov/tg-bot/compare/v0.14.5...v0.15.0) (2026-09-19)
+
+
+### Features
+
+* **observatory:** политика ссылок и атрибуция источника поста ([74d3479](https://github.com/semirov/tg-bot/commit/74d3479f8e306412d58db47cbd80661787abe297))
+* **observatory:** политика ссылок и атрибуция источника поста ([#57](https://github.com/semirov/tg-bot/issues/57)) ([17f30a5](https://github.com/semirov/tg-bot/commit/17f30a5bccf81d6f8279ba32b2309d01195b9545))
+
 ## [0.14.5](https://github.com/semirov/tg-bot/compare/v0.14.4...v0.14.5) (2026-09-19)
 
 
