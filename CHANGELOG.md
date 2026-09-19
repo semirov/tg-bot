@@ -1,3 +1,11 @@
+## [0.14.5](https://github.com/semirov/tg-bot/compare/v0.14.4...v0.14.5) (2026-09-19)
+
+
+### Bug Fixes
+
+* **config:** секрет Mattermost + getNumber('') ([#55](https://github.com/semirov/tg-bot/issues/55)) ([333a30f](https://github.com/semirov/tg-bot/commit/333a30ff1b4efbfad082a1e329745dc96b6a6aaa))
+* **config:** убрать захардкоженный Mattermost-секрет и починить getNumber('') ([4545a47](https://github.com/semirov/tg-bot/commit/4545a478f5b064f7d5147bafaf56a144cac4d8ab))
+
 ## [0.14.4](https://github.com/semirov/tg-bot/compare/v0.14.3...v0.14.4) (2026-09-18)
 
 
