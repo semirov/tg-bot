@@ -1,3 +1,10 @@
+# [0.16.0](https://github.com/semirov/tg-bot/compare/v0.15.0...v0.16.0) (2026-09-19)
+
+
+### Features
+
+* **observatory:** парсер шлёт посты напрямую боту, без канала-коллектора ([#59](https://github.com/semirov/tg-bot/issues/59)) ([ab1a6d8](https://github.com/semirov/tg-bot/commit/ab1a6d806044f6eeadc43c91c49f5cfcbecfce6e))
+
 # [0.15.0](https://github.com/semirov/tg-bot/compare/v0.14.5...v0.15.0) (2026-09-19)
 
 
