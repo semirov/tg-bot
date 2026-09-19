@@ -200,10 +200,71 @@ describe('ObservatoryService', () => {
       );
       expect(observatoryPostRepository.create).toHaveBeenCalledWith({
         requestChannelMessageId: 77,
+        sourceChatId: null,
+        sourceMessageId: null,
+        sourceUsername: null,
+        sourceTitle: null,
+        sourceUrl: null,
+        originalCaption: null,
       });
       expect(observatoryPostRepository.save).toHaveBeenCalledWith({
         requestChannelMessageId: 77,
+        sourceChatId: null,
+        sourceMessageId: null,
+        sourceUsername: null,
+        sourceTitle: null,
+        sourceUrl: null,
+        originalCaption: null,
       });
+    });
+
+    it('добавляет служебную подпись источника из forward_origin и сохраняет поля', async () => {
+      const {
+        service,
+        observerSubject,
+        deduplicationService,
+        observatoryPostRepository,
+        baseConfigService,
+      } = setup();
+      service.onModuleInit();
+      deduplicationService.getPostImageHash.mockResolvedValue('hash');
+      deduplicationService.checkDuplicate.mockResolvedValue([]);
+      const ctx = makeCtx({
+        channelPost: {
+          photo: [{ file_id: 'photo' }],
+          sender_chat: { id: -400 },
+          message_id: 11,
+          caption: 'исходный текст',
+          forward_origin: {
+            type: 'channel',
+            message_id: 777,
+            chat: { id: -1001234567890, username: 'source', title: 'Источник' },
+          },
+        },
+      });
+
+      observerSubject.next(ctx);
+      await flush();
+
+      expect(ctx.api.copyMessage).toHaveBeenCalledWith(
+        baseConfigService.userRequestMemeChannel,
+        -400,
+        11,
+        expect.objectContaining({
+          caption: '🔎 Источник: <a href="https://t.me/source/777">Источник</a>',
+          parse_mode: 'HTML',
+        })
+      );
+      expect(observatoryPostRepository.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          sourceChatId: -1001234567890,
+          sourceMessageId: 777,
+          sourceUsername: 'source',
+          sourceTitle: 'Источник',
+          sourceUrl: 'https://t.me/source/777',
+          originalCaption: 'исходный текст',
+        })
+      );
     });
 
     it('выкидывает пост при похожести дубля >= 0.5', async () => {
@@ -389,7 +450,6 @@ describe('ObservatoryService', () => {
         mode: PublicationModesEnum.NEXT_NIGHT,
         requestChannelMessageId: 11,
         processedByModerator: 5,
-        caption: 'подпись',
         isUserPost: false,
         hash: 'hash',
       });

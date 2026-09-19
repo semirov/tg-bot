@@ -1,5 +1,6 @@
 import { InlineKeyboard } from 'grammy';
 import { UserPostFormatter } from '../../post-management/services/user-post-formatter';
+import { escapeHtml, TelegramPostSource } from '../../../shared/publication/telegram-link';
 import { ObservatoryPostMenusEnum } from '../contsants/observatory-post-menus.enum';
 
 /**
@@ -51,6 +52,27 @@ export class ObservatoryPostFormatter {
 
   /** Метка кнопки возврата (общая с post-management). */
   public static readonly BACK_LABEL = UserPostFormatter.BACK_LABEL;
+
+  /** Префикс служебной подписи источника. */
+  public static readonly SOURCE_LABEL = '🔎 Источник:';
+
+  /**
+   * Собирает служебную подпись со ссылкой на исходный пост.
+   *
+   * Подпись показывается только в предложке и в публикуемый пост не попадает.
+   * Если ссылка на источник неизвестна — возвращает пустую строку.
+   *
+   * @param source источник поста (канал, пост, ссылка)
+   * @returns HTML-строка подписи или `''`
+   */
+  public sourceCaption(source: TelegramPostSource | null | undefined): string {
+    if (!source?.url) {
+      return '';
+    }
+
+    const title = escapeHtml(source.title || source.username || 'исходный канал');
+    return `${ObservatoryPostFormatter.SOURCE_LABEL} <a href="${source.url}">${title}</a>`;
+  }
 
   /**
    * Собирает подпись публикуемого поста из исходной подписи и ссылки на канал.

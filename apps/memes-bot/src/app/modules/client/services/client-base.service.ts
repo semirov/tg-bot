@@ -311,8 +311,8 @@ export class ClientBaseService implements OnModuleInit {
    * `extractUrls`, `resolveUrl` и `isSameChannel`, на которые опирается
    * существующая white-box спецификация.
    */
-  private isAdPost(event: NewMessageEvent): Promise<boolean> {
-    return this.adDetector.isAdPost(event, {
+  private async isAdPost(event: NewMessageEvent): Promise<boolean> {
+    const result = await this.adDetector.classifyPost(event, {
       isPostWithLinks: (messageEvent) => this.isPostWithLinks(messageEvent),
       extractUrls: (messageEvent) => this.extractUrls(messageEvent),
       resolveUrl: (url) => this.resolveUrl(url),
@@ -320,6 +320,15 @@ export class ClientBaseService implements OnModuleInit {
       getCurrentChannel: (chatId) => this.telegramClient.getEntity(chatId),
       loggerContext: ClientBaseService.name,
     });
+
+    if (result.isAd) {
+      Logger.log(
+        `Skip post as ad (${result.reason}): ${result.foreignLinks.join(', ')}`,
+        ClientBaseService.name
+      );
+    }
+
+    return result.isAd;
   }
 
   // 21:00 МСК
@@ -471,7 +480,33 @@ export class ClientBaseService implements OnModuleInit {
 
   /** Тонкая обёртка над `AdDetector.resolveUrl` с текущим MTProto-клиентом. */
   private resolveUrl(url: string): Promise<ResolvedChannelEntity> {
-    return this.adDetector.resolveUrl(url, this.telegramClient);
+    return this.adDetector.resolveUrl(url, {
+      getEntity: (entity) => this.telegramClient.getEntity(entity),
+      checkInvite: (hash) => this.checkInvite(hash),
+    });
+  }
+
+  /**
+   * Резолвит invite-ссылку в чат через MTProto `messages.CheckChatInvite`.
+   *
+   * Ошибка резолва логируется и трактуется как внешняя ссылка (не свой канал).
+   *
+   * @param hash хеш приглашения из `t.me/+hash` / `joinchat`
+   * @returns сущность чата или `undefined`
+   */
+  private async checkInvite(hash: string): Promise<ResolvedChannelEntity | undefined> {
+    try {
+      const result = await this.telegramClient.invoke(
+        new Api.messages.CheckChatInvite({ hash })
+      );
+      return (result as { chat?: ResolvedChannelEntity })?.chat;
+    } catch (error) {
+      Logger.error(
+        `Error checking invite ${hash}: ${error}`,
+        ClientBaseService.name
+      );
+      return undefined;
+    }
   }
 
   /** Тонкая обёртка над `AdDetector.isSameChannel`. */

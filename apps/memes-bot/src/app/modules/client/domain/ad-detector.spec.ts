@@ -134,6 +134,44 @@ describe('AdDetector', () => {
       });
       expect(getEntity).not.toHaveBeenCalled();
     });
+
+    it('разбирает приватную ссылку t.me/c как internalId', async () => {
+      const getEntity = jest.fn();
+      await expect(
+        detector.resolveUrl('https://t.me/c/1234567890/5', { getEntity })
+      ).resolves.toEqual({ internalId: bigInt(1234567890) });
+      expect(getEntity).not.toHaveBeenCalled();
+    });
+
+    it('резолвит invite-ссылку через checkInvite', async () => {
+      const getEntity = jest.fn();
+      const checkInvite = jest.fn().mockResolvedValue({ id: bigInt(42) });
+
+      await expect(
+        detector.resolveUrl('https://t.me/+AbCdEf', { getEntity, checkInvite })
+      ).resolves.toEqual({ id: bigInt(42) });
+      expect(checkInvite).toHaveBeenCalledWith('AbCdEf');
+      expect(getEntity).not.toHaveBeenCalled();
+    });
+
+    it('считает invite внешней без checkInvite', async () => {
+      const getEntity = jest.fn();
+      await expect(
+        detector.resolveUrl('t.me/joinchat/xyz', { getEntity })
+      ).resolves.toEqual({ isExternal: true, url: 't.me/joinchat/xyz' });
+    });
+
+    it('разбирает tg://resolve?domain=', async () => {
+      const getEntity = jest.fn().mockResolvedValue({ id: bigInt(3) });
+      await detector.resolveUrl('tg://resolve?domain=somechannel', { getEntity });
+      expect(getEntity).toHaveBeenCalledWith('somechannel');
+    });
+
+    it('разбирает telegram.me и игнорирует query-параметры', async () => {
+      const getEntity = jest.fn().mockResolvedValue({ id: bigInt(3) });
+      await detector.resolveUrl('https://telegram.me/channel?utm=1', { getEntity });
+      expect(getEntity).toHaveBeenCalledWith('channel');
+    });
   });
 
   describe('isSameChannel', () => {
@@ -159,6 +197,11 @@ describe('AdDetector', () => {
 
     it('false, если сравнивать нечего', () => {
       expect(detector.isSameChannel({}, {})).toBe(false);
+    });
+
+    it('сравнивает internalId с id текущего канала', () => {
+      expect(detector.isSameChannel({ internalId: bigInt(5) }, { id: bigInt(5) })).toBe(true);
+      expect(detector.isSameChannel({ internalId: bigInt(5) }, { id: bigInt(6) })).toBe(false);
     });
   });
 
@@ -229,6 +272,40 @@ describe('AdDetector', () => {
       });
       await detector.isAdPost(event, ports);
       expect(ports.getCurrentChannel).toHaveBeenCalledWith(event.chatId);
+    });
+  });
+
+  describe('classifyPost', () => {
+    const event = { chatId: bigInt(-1), message: { message: 'x' } } as any;
+
+    it('нет ссылок — репост с причиной no-links', async () => {
+      const ports = makePorts({ isPostWithLinks: jest.fn().mockResolvedValue(false) });
+      await expect(detector.classifyPost(event, ports)).resolves.toMatchObject({
+        isAd: false,
+        reason: 'no-links',
+      });
+    });
+
+    it('только свои ссылки — репост с причиной own-links-only', async () => {
+      const ports = makePorts({ isSameChannel: jest.fn().mockReturnValue(true) });
+      await expect(detector.classifyPost(event, ports)).resolves.toMatchObject({
+        isAd: false,
+        reason: 'own-links-only',
+        foreignLinks: [],
+      });
+    });
+
+    it('чужая ссылка — спам с перечнем foreignLinks', async () => {
+      const ports = makePorts({
+        extractUrls: jest.fn().mockResolvedValue(['https://t.me/a', 'https://t.me/b']),
+        isSameChannel: jest.fn().mockReturnValueOnce(true).mockReturnValueOnce(false),
+      });
+
+      await expect(detector.classifyPost(event, ports)).resolves.toMatchObject({
+        isAd: true,
+        reason: 'foreign-link',
+        foreignLinks: ['https://t.me/b'],
+      });
     });
   });
 });
