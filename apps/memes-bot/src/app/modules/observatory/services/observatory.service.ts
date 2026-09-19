@@ -26,6 +26,7 @@ import { TrollService } from '../../troll/services/troll.service';
 import { buildTelegramFileUrl, extractTelegramFileId } from '../../../shared/publication/media-url';
 import { sendPostToMattermost } from '../../../shared/publication/mattermost-post';
 import { runPublicationMode } from '../../../shared/publication/publication-mode';
+import { hasSimilarDistance } from '../../post-management/services/duplicate-policy';
 
 @Injectable()
 export class ObservatoryService implements OnModuleInit {
@@ -71,7 +72,7 @@ export class ObservatoryService implements OnModuleInit {
       const imageHash = await this.deduplicationService.getPostImageHash(ctx?.channelPost?.photo);
       const duplicates = await this.deduplicationService.checkDuplicate(imageHash);
       // если есть дубликат с похожестью больше 0.5 - выкидываем пост
-      if (duplicates.some((duplicate) => duplicate.distance >= 0.5)) {
+      if (hasSimilarDistance(duplicates)) {
         return;
       }
       const message = await ctx.api.copyMessage(
