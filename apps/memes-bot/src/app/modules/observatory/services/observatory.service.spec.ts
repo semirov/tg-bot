@@ -170,6 +170,15 @@ describe('ObservatoryService', () => {
         captured.some((item) => item.menuId === ObservatoryPostMenusEnum.USER_MODERATE_POST)
       ).toBe(true);
     });
+
+    it('ставит меню до обработчика парсера (иначе copyMessage с меню падает)', () => {
+      const { service, bot } = setup();
+      service.onModuleInit();
+
+      const lastUse = Math.max(...bot.use.mock.invocationCallOrder);
+      const parserOn = bot.on.mock.invocationCallOrder[0];
+      expect(lastUse).toBeLessThan(parserOn);
+    });
   });
 
   describe('onParserPost', () => {

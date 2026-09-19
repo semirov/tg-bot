@@ -65,10 +65,15 @@ export class ObservatoryService implements OnModuleInit {
 
   public onModuleInit(): void {
     this.bot.use(this.userModeratedPostService.buildUserModeratePost());
-    this.onParserPost();
     this.onNewUserModeratedPost();
     this.waitDeleteObserverPost();
+    // Меню ставится через `bot.use` до обработчика парсера: обработчик отдаёт
+    // пост в предложку с `reply_markup: observatoryPostMenu`, а grammY умеет
+    // подменять меню на инлайн-клавиатуру только если middleware меню уже
+    // прошёл раньше в цепочке апдейта. Иначе `copyMessage` падает с
+    // «Did you forget to use bot.use() for it?».
     this.buildObservatoryPostMenu();
+    this.onParserPost();
   }
 
   private onNewUserModeratedPost() {
