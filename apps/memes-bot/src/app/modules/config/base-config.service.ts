@@ -29,8 +29,19 @@ export class BaseConfigService {
     return +this.configService.getOrThrow<string>('CRINGE_CHANNEL');
   }
 
-  get observerChannel(): number {
-    return +this.configService.getOrThrow<string>('OBSERVER_CHANNEL');
+  /**
+   * Id аккаунта-парсера (userbot), которому бот доверяет: его посты в личке
+   * принимаются без капчи и без проверки подписки и уходят в предложку.
+   *
+   * Не задан — доверенного парсера нет, фича выключена.
+   */
+  get parserUserId(): number | undefined {
+    const raw = this.configService.get<string>('PARSER_USER_ID');
+    if (raw === undefined || raw === null || `${raw}`.trim() === '') {
+      return undefined;
+    }
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) ? parsed : undefined;
   }
 
   get databaseHost(): string {

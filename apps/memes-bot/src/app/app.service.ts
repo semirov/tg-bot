@@ -98,6 +98,12 @@ export class AppService implements OnModuleInit {
         return next();
       }
 
+      // Сообщения доверенного парсера (userbot) обрабатывает обсерватория:
+      // пропускаем их без капчи и без проверки подписки.
+      if (this.baseConfigService.parserUserId && ctx.from?.id === this.baseConfigService.parserUserId) {
+        return next();
+      }
+
       // Проверка на прохождение капчи
       if (!ctx.session.captchaSolved) {
         return this.sendCaptcha(ctx);

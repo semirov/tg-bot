@@ -5,7 +5,7 @@
  * пакет `telegram` замокан: TelegramClient — фейк, который лишь запоминает
  * переданные колбэки и умеет отдавать заранее заданные сущности/сообщения.
  * Это позволяет прогнать реальную логику парсера (ad-detection, альбомы,
- * пересылка в канал-обсерваторию) и мост «channel_post → предложка».
+ * пересылку постов боту в личку) и мост «парсер → предложка».
  */
 import * as bigInt from 'big-integer';
 
@@ -83,7 +83,28 @@ const telegramState = mockedTelegram.__mockTelegramState as {
 };
 
 const OWNER_ID = Number(process.env.BOT_OWNER_ID);
+const PARSER_ID = Number(process.env.PARSER_USER_ID);
 const EXTERNAL_CHANNEL = -1009999999999;
+
+/** Update форварда парсера боту в личку: фото с (опциональным) источником. */
+function privateParserPhotoUpdate(options: {
+  messageId: number;
+  updateId: number;
+  forwardOrigin?: Record<string, any>;
+}): Record<string, any> {
+  return {
+    update_id: options.updateId,
+    message: {
+      message_id: options.messageId,
+      date: Math.floor(Date.now() / 1000),
+      chat: { id: PARSER_ID, type: 'private' },
+      from: { id: PARSER_ID, is_bot: false, first_name: 'Parser', username: 'parser' },
+      caption: options.forwardOrigin ? 'исходный текст' : undefined,
+      photo: [{ file_id: 'f1', file_unique_id: 'u1', width: 400, height: 400, file_size: 1000 }],
+      forward_origin: options.forwardOrigin,
+    },
+  };
+}
 
 /** Отдаёт управление циклу событий (микрозадачи + одна макро-итерация). */
 const flush = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
@@ -178,22 +199,12 @@ describe('E2E: MTProto-клиент и парсер обсерватории', (
     }
   });
 
-  describe('мост channel_post из канала-обсерватории в предложку', () => {
-    it('копирует фото из observer-канала в user-request канал и пишет ObservatoryPost', async () => {
+  describe('парсер в личке → предложка', () => {
+    it('копирует фото от парсера в предложку и пишет ObservatoryPost', async () => {
       const config = h.moduleRef.get(BaseConfigService);
-      const observerChannel = config.observerChannel;
       const userRequestChannel = config.userRequestMemeChannel;
 
-      await h.sendUpdate({
-        update_id: 9001,
-        channel_post: {
-          message_id: 501,
-          date: Math.floor(Date.now() / 1000),
-          chat: { id: observerChannel, type: 'channel', title: 'Observer' },
-          sender_chat: { id: observerChannel, type: 'channel', title: 'Observer' },
-          photo: [{ file_id: 'f1', file_unique_id: 'u1', width: 400, height: 400, file_size: 1000 }],
-        },
-      });
+      await h.sendUpdate(privateParserPhotoUpdate({ messageId: 501, updateId: 9001 }));
 
       await waitFor(() => {
         expect(
@@ -201,7 +212,7 @@ describe('E2E: MTProto-клиент и парсер обсерватории', (
             h.calls,
             'copyMessage',
             (payload) =>
-              payload.chat_id === userRequestChannel && payload.from_chat_id === observerChannel
+              payload.chat_id === userRequestChannel && payload.from_chat_id === PARSER_ID
           )
         ).toBeDefined();
       });
@@ -217,21 +228,13 @@ describe('E2E: MTProto-клиент и парсер обсерватории', (
 
     it('переносит источник из forward_origin в служебную подпись и в ObservatoryPost', async () => {
       const config = h.moduleRef.get(BaseConfigService);
-      const observerChannel = config.observerChannel;
       const userRequestChannel = config.userRequestMemeChannel;
 
-      await h.sendUpdate({
-        update_id: 9003,
-        channel_post: {
-          message_id: 601,
-          date: Math.floor(Date.now() / 1000),
-          chat: { id: observerChannel, type: 'channel', title: 'Observer' },
-          sender_chat: { id: observerChannel, type: 'channel', title: 'Observer' },
-          caption: 'исходный текст',
-          photo: [
-            { file_id: 'f3', file_unique_id: 'u3', width: 400, height: 400, file_size: 1000 },
-          ],
-          forward_origin: {
+      await h.sendUpdate(
+        privateParserPhotoUpdate({
+          messageId: 601,
+          updateId: 9003,
+          forwardOrigin: {
             type: 'channel',
             date: Math.floor(Date.now() / 1000),
             message_id: 501,
@@ -242,8 +245,8 @@ describe('E2E: MTProto-клиент и парсер обсерватории', (
               username: 'source',
             },
           },
-        },
-      });
+        })
+      );
 
       await waitFor(() => {
         expect(
@@ -275,36 +278,7 @@ describe('E2E: MTProto-клиент и парсер обсерватории', (
       });
     });
 
-    it('observerChannelPost$ пишет ObservatoryPost с точным message_id после копирования', async () => {
-      const service = h.moduleRef.get(ClientBaseService);
-      const config = h.moduleRef.get(BaseConfigService);
-      const copyMessage = jest.fn().mockResolvedValue({ message_id: 4242 });
-
-      (service as any).observerChannelPostSubject.next({
-        channelPost: {
-          message_id: 55,
-          sender_chat: { id: config.observerChannel },
-          photo: [],
-        },
-        api: { copyMessage },
-      });
-
-      await waitFor(async () => {
-        const row = await h.dataSource
-          .getRepository(ObservatoryPostEntity)
-          .findOne({ where: { requestChannelMessageId: 4242 } });
-        expect(row).not.toBeNull();
-      });
-
-      expect(copyMessage).toHaveBeenCalledWith(
-        config.userRequestMemeChannel,
-        config.observerChannel,
-        55,
-        expect.objectContaining({ disable_notification: true })
-      );
-    });
-
-    it('игнорирует channel_post из другого канала', async () => {
+    it('channel_post из канала-коллектора больше не обрабатывается', async () => {
       await h.sendUpdate({
         update_id: 9002,
         channel_post: {
@@ -316,9 +290,26 @@ describe('E2E: MTProto-клиент и парсер обсерватории', (
         },
       });
 
-      // Даём подписке шанс сработать и убеждаемся, что её не было.
       await flush();
       expect(findCall(h.calls, 'copyMessage')).toBeUndefined();
+      expect(await h.dataSource.getRepository(ObservatoryPostEntity).count()).toBe(0);
+    });
+
+    it('игнорирует фото в личке не от парсера', async () => {
+      const strangerId = 818181;
+      await h.sendUpdate({
+        update_id: 9004,
+        message: {
+          message_id: 503,
+          date: Math.floor(Date.now() / 1000),
+          chat: { id: strangerId, type: 'private' },
+          from: { id: strangerId, is_bot: false, first_name: 'Stranger', username: 'stranger' },
+          photo: [{ file_id: 'f9', file_unique_id: 'u9', width: 100, height: 100, file_size: 1 }],
+        },
+      });
+
+      await flush();
+      expect(findCall(h.calls, 'copyMessage', (p) => p.from_chat_id === strangerId)).toBeUndefined();
       expect(await h.dataSource.getRepository(ObservatoryPostEntity).count()).toBe(0);
     });
   });
@@ -385,8 +376,7 @@ describe('E2E: MTProto-клиент и парсер обсерватории', (
       return { service, client: lastClient() };
     }
 
-    it('пересылает одиночный не-рекламный пост в канал-обсерваторию', async () => {
-      const config = h.moduleRef.get(BaseConfigService);
+    it('пересылает одиночный не-рекламный медиапост боту', async () => {
       const { client } = await startedService();
       jest.useFakeTimers();
       jest.spyOn(Math, 'random').mockReturnValue(0);
@@ -394,7 +384,7 @@ describe('E2E: MTProto-клиент и парсер обсерватории', (
       const event = {
         isChannel: true,
         chatId: bigInt(EXTERNAL_CHANNEL),
-        message: { forwardTo },
+        message: { photo: [{ file_id: 'p' }], forwardTo },
       };
 
       await client.handlers[0](event);
@@ -405,7 +395,7 @@ describe('E2E: MTProto-клиент и парсер обсерватории', (
       await flushMicro();
 
       expect(forwardTo).toHaveBeenCalledTimes(1);
-      expect(forwardTo.mock.calls[0][0].equals(bigInt(config.observerChannel))).toBe(true);
+      expect(forwardTo).toHaveBeenCalledWith('@test_bot');
     });
 
     it('не пересылает рекламу со ссылкой на другой канал', async () => {
@@ -420,6 +410,7 @@ describe('E2E: MTProto-клиент и парсер обсерватории', (
         isChannel: true,
         chatId: bigInt(EXTERNAL_CHANNEL),
         message: {
+          photo: [{ file_id: 'p' }],
           message: 't.me/other',
           entities: [new Api.MessageEntityUrl({ offset: 0, length: 9 })],
           forwardTo,
@@ -434,7 +425,6 @@ describe('E2E: MTProto-клиент и парсер обсерватории', (
     });
 
     it('пересылает пост со ссылкой на собственный канал', async () => {
-      const config = h.moduleRef.get(BaseConfigService);
       const { client } = await startedService();
       jest.useFakeTimers();
       jest.spyOn(Math, 'random').mockReturnValue(0);
@@ -444,6 +434,7 @@ describe('E2E: MTProto-клиент и парсер обсерватории', (
         isChannel: true,
         chatId: bigInt(EXTERNAL_CHANNEL),
         message: {
+          photo: [{ file_id: 'p' }],
           message: 't.me/own',
           entities: [new Api.MessageEntityUrl({ offset: 0, length: 7 })],
           forwardTo,
@@ -456,18 +447,17 @@ describe('E2E: MTProto-клиент и парсер обсерватории', (
       await flushMicro();
 
       expect(forwardTo).toHaveBeenCalledTimes(1);
-      expect(forwardTo.mock.calls[0][0].equals(bigInt(config.observerChannel))).toBe(true);
+      expect(forwardTo).toHaveBeenCalledWith('@test_bot');
     });
 
     it('пересылает альбом после дебаунса', async () => {
-      const config = h.moduleRef.get(BaseConfigService);
       const { client } = await startedService();
       jest.useFakeTimers();
       const forwardTo = jest.fn().mockResolvedValue(undefined);
       const event = {
         isChannel: true,
         chatId: bigInt(EXTERNAL_CHANNEL),
-        message: { groupedId: { toString: () => '777' }, forwardTo },
+        message: { groupedId: { toString: () => '777' }, photo: [{ file_id: 'p' }], forwardTo },
       };
 
       await client.handlers[0](event);
@@ -475,7 +465,7 @@ describe('E2E: MTProto-клиент и парсер обсерватории', (
       await flushMicro();
 
       expect(forwardTo).toHaveBeenCalledTimes(1);
-      expect(forwardTo.mock.calls[0][0].equals(bigInt(config.observerChannel))).toBe(true);
+      expect(forwardTo).toHaveBeenCalledWith('@test_bot');
     });
 
     it('не пересылает альбом-рекламу', async () => {
@@ -490,6 +480,7 @@ describe('E2E: MTProto-клиент и парсер обсерватории', (
         chatId: bigInt(EXTERNAL_CHANNEL),
         message: {
           groupedId: { toString: () => '888' },
+          photo: [{ file_id: 'p' }],
           message: 't.me/other',
           entities: [new Api.MessageEntityUrl({ offset: 0, length: 9 })],
           forwardTo,
@@ -937,12 +928,12 @@ describe('E2E: MTProto-клиент и парсер обсерватории', (
       const first = {
         isChannel: true,
         chatId: bigInt(EXTERNAL_CHANNEL),
-        message: { groupedId: { toString: () => '555' }, forwardTo },
+        message: { groupedId: { toString: () => '555' }, photo: [{ file_id: 'p' }], forwardTo },
       };
       const second = {
         isChannel: true,
         chatId: bigInt(EXTERNAL_CHANNEL),
-        message: { groupedId: { toString: () => '555' }, forwardTo },
+        message: { groupedId: { toString: () => '555' }, photo: [{ file_id: 'p' }], forwardTo },
       };
 
       await client.handlers[0](first);

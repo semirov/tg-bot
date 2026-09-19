@@ -61,7 +61,7 @@ describe('AppService', () => {
       initStartMenu: jest.fn(),
       getRoleBasedStartMenu: jest.fn().mockReturnValue({ menu: 'role' }),
     };
-    baseConfigService = { memeChanelId: -100500, ownerId: 999 };
+    baseConfigService = { memeChanelId: -100500, ownerId: 999, parserUserId: 4242 };
     userPostManagementService = {
       handleUserMemeRequest: jest.fn().mockResolvedValue(undefined),
       handleUserTextRequest: jest.fn().mockResolvedValue(undefined),
@@ -189,6 +189,24 @@ describe('AppService', () => {
       const next = jest.fn();
       await events['message'](ctx, next);
       expect(next).toHaveBeenCalledTimes(1);
+    });
+
+    it('сообщение парсера пропускает без капчи и передаёт дальше', async () => {
+      const ctx = makeCtx({ from: { id: 4242 }, session: { captchaSolved: false } });
+      const next = jest.fn();
+      await events['message'](ctx, next);
+
+      expect(next).toHaveBeenCalledTimes(1);
+      expect(ctx.conversation.enter).not.toHaveBeenCalled();
+      expect(bot.api.getChatMember).not.toHaveBeenCalled();
+    });
+
+    it('без PARSER_USER_ID сообщение идёт обычным путём (капча)', async () => {
+      baseConfigService.parserUserId = undefined;
+      const ctx = makeCtx({ from: { id: 4242 }, session: { captchaSolved: false } });
+      await events['message'](ctx, jest.fn());
+
+      expect(ctx.conversation.enter).toHaveBeenCalledWith('privateBotCaptcha');
     });
 
     it('без решённой капчи запускает капчу и создаёт значения', async () => {

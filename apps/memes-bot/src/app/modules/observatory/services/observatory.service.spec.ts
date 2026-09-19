@@ -21,7 +21,6 @@ const flush = async () => {
 type CapturedText = { menuId: string; label: string; handler: (ctx: any) => any };
 
 function setup() {
-  const observerSubject = new Subject<any>();
   const moderatedSubject = new Subject<any>();
 
   const bot = {
@@ -40,12 +39,12 @@ function setup() {
     memeChanelId: -300,
     botToken: 'TEST_TOKEN',
     tgEnv: 'prod',
+    parserUserId: 4242,
   };
   const userService = {
     checkPermission: jest.fn(),
     repository: { findOne: jest.fn() },
   };
-  const clientBaseService = { observerChannelPost$: observerSubject.asObservable() };
   const observatoryPostRepository = {
     create: jest.fn().mockImplementation((value) => value),
     save: jest.fn().mockResolvedValue(undefined),
@@ -75,7 +74,6 @@ function setup() {
     bot as any,
     baseConfigService as any,
     userService as any,
-    clientBaseService as any,
     observatoryPostRepository as any,
     postSchedulerService as any,
     settingsService as any,
@@ -91,7 +89,6 @@ function setup() {
     bot,
     baseConfigService,
     userService,
-    clientBaseService,
     observatoryPostRepository,
     postSchedulerService,
     settingsService,
@@ -100,16 +97,16 @@ function setup() {
     userModeratedPostService,
     mattermostService,
     trollService,
-    observerSubject,
     moderatedSubject,
   };
 }
 
 function makeCtx(overrides: any = {}) {
   return {
-    channelPost: {
+    chat: { id: 4242, type: 'private' },
+    from: { id: 4242, username: 'parser' },
+    message: {
       photo: [{ file_id: 'photo' }],
-      sender_chat: { id: -400 },
       message_id: 11,
     },
     api: {
@@ -175,11 +172,45 @@ describe('ObservatoryService', () => {
     });
   });
 
-  describe('onNewObservatoryPost', () => {
-    it('пересылает пост в буферный канал и сохраняет запись', async () => {
+  describe('onParserPost', () => {
+    function parserHandler(bot: any) {
+      const call = bot.on.mock.calls.find(
+        ([event]: any[]) => Array.isArray(event) && event.includes('message:photo')
+      );
+      return call?.[1];
+    }
+
+    it('регистрирует обработчик приватных сообщений парсера', () => {
+      const { service, bot } = setup();
+      service.onModuleInit();
+      expect(bot.on).toHaveBeenCalledWith(
+        ['message:photo', 'message:video'],
+        expect.any(Function)
+      );
+    });
+
+    it('игнорирует сообщения не от парсера и не из лички', async () => {
+      const { service, bot, deduplicationService } = setup();
+      service.onModuleInit();
+      deduplicationService.getPostImageHash.mockResolvedValue('hash');
+      deduplicationService.checkDuplicate.mockResolvedValue([]);
+      const handler = parserHandler(bot);
+      const ctx = makeCtx();
+      const next = jest.fn();
+
+      await handler({ chat: { type: 'private' }, from: { id: 1 }, message: {} }, next);
+      await handler({ chat: { type: 'supergroup' }, from: { id: 4242 }, message: {} }, next);
+      await handler(ctx, next);
+
+      expect(next).toHaveBeenCalledTimes(2);
+      expect(deduplicationService.getPostImageHash).toHaveBeenCalledTimes(1);
+      expect(ctx.api.copyMessage).toHaveBeenCalledTimes(1);
+    });
+
+    it('копирует пост парсера в предложку и сохраняет запись', async () => {
       const {
         service,
-        observerSubject,
+        bot,
         deduplicationService,
         observatoryPostRepository,
         baseConfigService,
@@ -187,15 +218,16 @@ describe('ObservatoryService', () => {
       service.onModuleInit();
       deduplicationService.getPostImageHash.mockResolvedValue('hash');
       deduplicationService.checkDuplicate.mockResolvedValue([{ distance: 0.1 }]);
+      const handler = parserHandler(bot);
       const ctx = makeCtx();
 
-      observerSubject.next(ctx);
+      await handler(ctx);
       await flush();
 
       expect(ctx.api.copyMessage).toHaveBeenCalledWith(
         baseConfigService.userRequestMemeChannel,
-        ctx.channelPost.sender_chat.id,
-        ctx.channelPost.message_id,
+        ctx.chat.id,
+        ctx.message.message_id,
         expect.objectContaining({ disable_notification: true, caption: '' })
       );
       expect(observatoryPostRepository.create).toHaveBeenCalledWith({
@@ -221,7 +253,7 @@ describe('ObservatoryService', () => {
     it('добавляет служебную подпись источника из forward_origin и сохраняет поля', async () => {
       const {
         service,
-        observerSubject,
+        bot,
         deduplicationService,
         observatoryPostRepository,
         baseConfigService,
@@ -229,10 +261,10 @@ describe('ObservatoryService', () => {
       service.onModuleInit();
       deduplicationService.getPostImageHash.mockResolvedValue('hash');
       deduplicationService.checkDuplicate.mockResolvedValue([]);
+      const handler = parserHandler(bot);
       const ctx = makeCtx({
-        channelPost: {
+        message: {
           photo: [{ file_id: 'photo' }],
-          sender_chat: { id: -400 },
           message_id: 11,
           caption: 'исходный текст',
           forward_origin: {
@@ -243,12 +275,12 @@ describe('ObservatoryService', () => {
         },
       });
 
-      observerSubject.next(ctx);
+      await handler(ctx);
       await flush();
 
       expect(ctx.api.copyMessage).toHaveBeenCalledWith(
         baseConfigService.userRequestMemeChannel,
-        -400,
+        ctx.chat.id,
         11,
         expect.objectContaining({
           caption: '🔎 Источник: <a href="https://t.me/source/777">Источник</a>',
@@ -268,44 +300,57 @@ describe('ObservatoryService', () => {
     });
 
     it('выкидывает пост при похожести дубля >= 0.5', async () => {
-      const { service, observerSubject, deduplicationService, observatoryPostRepository, bot } =
-        setup();
+      const { service, bot, deduplicationService, observatoryPostRepository } = setup();
       service.onModuleInit();
       deduplicationService.getPostImageHash.mockResolvedValue('hash');
       deduplicationService.checkDuplicate.mockResolvedValue([{ distance: 0.5 }]);
+      const handler = parserHandler(bot);
+      const ctx = makeCtx();
 
-      observerSubject.next(makeCtx());
+      await handler(ctx);
       await flush();
 
-      expect(bot.api.copyMessage).not.toHaveBeenCalled();
+      expect(ctx.api.copyMessage).not.toHaveBeenCalled();
       expect(observatoryPostRepository.save).not.toHaveBeenCalled();
     });
 
     it('пропускает пост без похожих дублей', async () => {
-      const { service, observerSubject, deduplicationService } = setup();
+      const { service, bot, deduplicationService } = setup();
       service.onModuleInit();
       deduplicationService.getPostImageHash.mockResolvedValue('hash');
       deduplicationService.checkDuplicate.mockResolvedValue([{ distance: 0.2 }, { distance: 0.1 }]);
+      const handler = parserHandler(bot);
       const ctx = makeCtx();
 
-      observerSubject.next(ctx);
+      await handler(ctx);
       await flush();
 
       expect(ctx.api.copyMessage).toHaveBeenCalled();
     });
 
-    it('безопасно разбирает контекст без канала', async () => {
-      const { service, observerSubject, deduplicationService } = setup();
+    it('без PARSER_USER_ID пропускает сообщение дальше и ничего не копирует', async () => {
+      const { service, bot, baseConfigService, deduplicationService } = setup();
+      baseConfigService.parserUserId = undefined;
       service.onModuleInit();
-      deduplicationService.getPostImageHash.mockResolvedValue('hash');
-      deduplicationService.checkDuplicate.mockResolvedValue([{ distance: 0.9 }]);
+      const handler = parserHandler(bot);
+      const ctx = makeCtx();
+      const next = jest.fn();
 
-      observerSubject.next({});
-      observerSubject.next(undefined);
-      await flush();
+      await handler(ctx, next);
 
-      expect(deduplicationService.getPostImageHash).toHaveBeenCalledWith(undefined);
-      expect(deduplicationService.checkDuplicate).toHaveBeenCalledTimes(2);
+      expect(next).toHaveBeenCalledTimes(1);
+      expect(deduplicationService.getPostImageHash).not.toHaveBeenCalled();
+      expect(ctx.api.copyMessage).not.toHaveBeenCalled();
+    });
+
+    it('безопасно разбирает контекст без сообщения', async () => {
+      const { service, deduplicationService, observatoryPostRepository } = setup();
+
+      await expect((service as any).onNewObservatoryPost({})).resolves.toBeUndefined();
+      await expect((service as any).onNewObservatoryPost(undefined)).resolves.toBeUndefined();
+
+      expect(deduplicationService.getPostImageHash).not.toHaveBeenCalled();
+      expect(observatoryPostRepository.save).not.toHaveBeenCalled();
     });
   });
 

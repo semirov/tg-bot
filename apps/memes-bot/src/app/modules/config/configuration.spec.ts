@@ -7,8 +7,8 @@ describe('configuration', () => {
     'MANAGED_CHANNEL',
     'BEST_MANAGED_CHANNEL',
     'USER_REQUEST_CHANNEL',
-    'OBSERVER_CHANNEL',
     'CRINGE_CHANNEL',
+    'PARSER_USER_ID',
     'DATABASE_HOST',
     'DATABASE_PORT',
     'DATABASE_USERNAME',
@@ -81,14 +81,14 @@ describe('configuration', () => {
     expect(config.BOT_TOKEN).toBe('token');
   });
 
-  it('OBSERVER_CHANNEL и MONITOR_* берутся из общих переменных', () => {
-    process.env.USER_REQUEST_CHANNEL = '-1001';
+  it('PARSER_USER_ID и MONITOR_* берутся из переменных окружения', () => {
+    process.env.PARSER_USER_ID = '4242';
     process.env.MANAGED_CHANNEL = '-1002';
     process.env.BEST_MANAGED_CHANNEL = '-1003';
 
     const config = configuration();
 
-    expect(config.OBSERVER_CHANNEL).toBe('-1001');
+    expect(config.PARSER_USER_ID).toBe('4242');
     expect(config.MONITOR_MAIN_CHANNEL).toBe('-1002');
     expect(config.MONITOR_BEST_CHANNEL).toBe('-1003');
   });

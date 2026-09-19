@@ -39,18 +39,15 @@ export class ClientBaseService implements OnModuleInit {
   private phoneCodeSubject = new Subject<string>();
   private telegramClient: TelegramClient;
 
-  private observerChannelPostSubject = new Subject<BotContext>();
   private bestMemesDailytSubject = new Subject<BestMemeContext>();
+
+  /** Промис-кэш адресата форварда: личка главного бота. */
+  private botForwardTarget?: Promise<string | undefined>;
 
   async onModuleInit(): Promise<void> {
     this.registerConversations();
     this.waitingClientCommands();
-    this.onObserverChannelPost();
     await this.checkAutoRunObserver();
-  }
-
-  public get observerChannelPost$(): Observable<BotContext> {
-    return this.observerChannelPostSubject.asObservable();
   }
 
   public get bestMemesDaily$(): Observable<BestMemeContext> {
@@ -259,7 +256,7 @@ export class ClientBaseService implements OnModuleInit {
       id: groupId,
       timer: setTimeout(async () => {
         if (!(await this.isAdPost(event))) {
-          await event.message.forwardTo(bigInt(this.baseConfigService.observerChannel));
+          await this.forwardToBot(event);
         }
         this.lastProcessedGroup = undefined;
       }, 800), // Оптимальная задержка для альбомов
@@ -275,33 +272,75 @@ export class ClientBaseService implements OnModuleInit {
     const ownChannels = [
       this.baseConfigService.memeChanelId,
       this.baseConfigService.cringeMemeChannelId,
-      this.baseConfigService.observerChannel,
       this.baseConfigService.bestMemeChanelId,
+      this.baseConfigService.userRequestMemeChannel,
     ].map((id) => bigInt(id));
 
     if (ownChannels.some((channelId) => channelId.equals(event.chatId))) {
       return;
     }
 
+    // Парсер интересуют только медиапосты (фото/видео, в т.ч. альбомы).
+    if (!this.hasMediaContent(event.message)) return;
+
     // Пытаемся обработать как альбом
     if (await this.handleAlbum(event)) return;
 
     // Одиночное сообщение
     if (!(await this.isAdPost(event))) {
-      setTimeout(
-        () => event.message.forwardTo(bigInt(this.baseConfigService.observerChannel)),
-        Math.round(Math.random() * 5 + 5) * 1000
-      );
+      setTimeout(() => this.forwardToBot(event), Math.round(Math.random() * 5 + 5) * 1000);
     }
   }
 
-  private onObserverChannelPost() {
-    this.bot.on(['channel_post:photo', 'channel_post:video'], async (ctx) => {
-      if (ctx.channelPost.sender_chat.id !== this.baseConfigService.observerChannel) {
+  /**
+   * Форвардит найденный пост в личку главному боту.
+   *
+   * Раньше пост уходил в отдельный канал-коллектор, а бот ловил там
+   * `channel_post`. Теперь коллектор не нужен: бот принимает форвард в личке
+   * (см. `ObservatoryService`) и сам кладёт пост в предложку. Личный аккаунт
+   * по-прежнему делает write-операцию, поэтому read-only/загрузку ботом
+   * вынесем отдельным этапом (TGB-DOC-5).
+   */
+  private async forwardToBot(event: NewMessageEvent): Promise<void> {
+    try {
+      const target = await this.resolveBotForwardTarget();
+      if (!target) {
         return;
       }
-      this.observerChannelPostSubject.next(ctx);
-    });
+      await event.message.forwardTo(target);
+    } catch (error) {
+      Logger.error(`Cannot forward parsed post to bot: ${error}`, ClientBaseService.name);
+    }
+  }
+
+  /**
+   * Возвращает адресата форварда парсера — главного бота (`@username`).
+   *
+   * Резолв идёт один раз за процесс: кэшируется промис, чтобы параллельные
+   * посты не дёргали `getMe` повторно. Если у бота нет username — форвардить
+   * некуда, пишем ошибку и пропускаем. Неудачный резолв не кэшируется:
+   * следующий пост попробует снова.
+   */
+  private resolveBotForwardTarget(): Promise<string | undefined> {
+    if (!this.botForwardTarget) {
+      this.botForwardTarget = this.bot.api
+        .getMe()
+        .then((me) => {
+          if (!me.username) {
+            Logger.error(
+              'Главный бот без username — парсеру некуда форвардить посты',
+              ClientBaseService.name
+            );
+            return undefined;
+          }
+          return `@${me.username}`;
+        })
+        .catch((error) => {
+          this.botForwardTarget = undefined;
+          throw error;
+        });
+    }
+    return this.botForwardTarget;
   }
 
   /**

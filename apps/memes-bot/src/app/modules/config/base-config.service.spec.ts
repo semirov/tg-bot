@@ -54,7 +54,6 @@ describe('BaseConfigService', () => {
       ['bestMemeChanelId', 'BEST_MANAGED_CHANNEL', -100501],
       ['userRequestMemeChannel', 'USER_REQUEST_CHANNEL', -100502],
       ['cringeMemeChannelId', 'CRINGE_CHANNEL', -100503],
-      ['observerChannel', 'OBSERVER_CHANNEL', -100504],
       ['databasePort', 'DATABASE_PORT', 5432],
       ['appApiId', 'APP_API_ID', 2040],
     ];
@@ -193,6 +192,26 @@ describe('BaseConfigService', () => {
       );
       expect(getter(service, 'deepseekPriceCacheHit')).toBeUndefined();
       expect(getter(service, 'deepseekPriceCacheMiss')).toBeUndefined();
+    });
+  });
+
+  describe('parserUserId', () => {
+    it('возвращает число, если PARSER_USER_ID задан', () => {
+      const service = new BaseConfigService(makeConfig({ PARSER_USER_ID: '4242' }));
+      expect(getter(service, 'parserUserId')).toBe(4242);
+    });
+
+    it('undefined без env, для пустой строки, null и мусора', () => {
+      expect(getter(new BaseConfigService(makeConfig({})), 'parserUserId')).toBeUndefined();
+      expect(
+        getter(new BaseConfigService(makeConfig({ PARSER_USER_ID: '' })), 'parserUserId')
+      ).toBeUndefined();
+      expect(
+        getter(new BaseConfigService(makeConfig({ PARSER_USER_ID: null })), 'parserUserId')
+      ).toBeUndefined();
+      expect(
+        getter(new BaseConfigService(makeConfig({ PARSER_USER_ID: 'abc' })), 'parserUserId')
+      ).toBeUndefined();
     });
   });
 });
