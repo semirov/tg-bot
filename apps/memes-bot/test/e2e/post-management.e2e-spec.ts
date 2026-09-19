@@ -377,6 +377,9 @@ describe('E2E: post-management, menus и observatory', () => {
       expect(copy.payload.chat_id).toBe(REQUEST_CHANNEL);
       expect(copy.payload.message_id).toBe(555);
       expect(String(copy.payload.caption)).toContain('🔎 Источник:');
+      // Меню должно быть заменено middleware меню на обычную инлайн-клавиатуру;
+      // иначе сериализация payload в харнесе упала бы (см. harness.ts).
+      expect(Array.isArray(copy.payload.reply_markup?.inline_keyboard)).toBe(true);
 
       const saved = await observatoryRepo.findOne({ where: { sourceUsername: 'source' } });
       expect(saved).not.toBeNull();

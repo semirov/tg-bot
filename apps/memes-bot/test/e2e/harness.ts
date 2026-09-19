@@ -183,11 +183,20 @@ export async function createE2EHarness(options: E2EHarnessOptions = {}): Promise
 
   // Канонический способ мокать Bot API в grammY (docs: advanced/transformers) —
   // трансформер на bot.api. Ставим до init(), чтобы поймать уведомление о старте.
+  //
+  // Сериализуем payload так же, как это делает реальный Bot API-клиент: без
+  // этого «сырое» меню в `reply_markup` (не заменённое middleware меню) в тестах
+  // проходило бы молча, а в проде падало на Proxy меню. Здесь падаем заранее.
   bot.api.config.use(async (_prev, method, payload) => {
-    calls.push({ method, payload: payload as Record<string, any> });
+    // `undefined` payload бывает у методов без аргументов (getMe и т.п.).
+    const serialized =
+      payload === undefined
+        ? ({} as Record<string, any>)
+        : (JSON.parse(JSON.stringify(payload)) as Record<string, any>);
+    calls.push({ method, payload: serialized });
     return {
       ok: true,
-      result: fakeTelegramResult(method, payload as Record<string, any>),
+      result: fakeTelegramResult(method, serialized),
     } as any;
   });
 
