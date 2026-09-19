@@ -1,3 +1,11 @@
+## [0.16.1](https://github.com/semirov/tg-bot/compare/v0.16.0...v0.16.1) (2026-09-19)
+
+
+### Bug Fixes
+
+* **observatory:** ставить меню до обработчика парсера ([#62](https://github.com/semirov/tg-bot/issues/62)) ([b677100](https://github.com/semirov/tg-bot/commit/b677100df77aa0338c1608f6e991bb5fa28d902f))
+* **parser:** логи адресата форварда и решений парсера ([#61](https://github.com/semirov/tg-bot/issues/61)) ([f040c85](https://github.com/semirov/tg-bot/commit/f040c850bfb57adb1ec073d4f34d76fd22f62fff))
+
 # [0.16.0](https://github.com/semirov/tg-bot/compare/v0.15.0...v0.16.0) (2026-09-19)
 
 
