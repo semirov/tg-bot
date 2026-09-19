@@ -13,6 +13,7 @@ import { BotContext } from '../../bot/interfaces/bot-context.interface';
 import { BOT } from '../../bot/providers/bot.provider';
 import { BaseConfigService } from '../../config/base-config.service';
 import { ClientSessionEntity } from '../entities/client-session.entity';
+import { AdDetector, ResolvedChannelEntity } from '../domain/ad-detector';
 
 export type BestMemeContext = {
   byViewPostMemeId?: number;
@@ -20,13 +21,6 @@ export type BestMemeContext = {
   byViewPostBestMemeId?: number;
   byLikePostBestMemeId?: number;
 };
-
-interface ResolvedChannelEntity {
-  isExternal?: boolean;
-  url?: string;
-  id?: bigInt.BigInteger;
-  username?: string;
-}
 
 @Injectable()
 export class ClientBaseService implements OnModuleInit {
@@ -36,6 +30,9 @@ export class ClientBaseService implements OnModuleInit {
     @InjectRepository(ClientSessionEntity)
     private userRequestRepository: Repository<ClientSessionEntity>
   ) {}
+
+  /** Чистая детекция рекламы (вынесена из god-class). */
+  private readonly adDetector = new AdDetector();
 
   private phoneSubject = new Subject<string>();
   private passwordSubject = new Subject<string>();
@@ -307,38 +304,22 @@ export class ClientBaseService implements OnModuleInit {
     });
   }
 
-  private async isAdPost(event: NewMessageEvent): Promise<boolean> {
-    // Проверяем наличие ссылок
-    const hasLinks = await this.isPostWithLinks(event);
-    if (!hasLinks) return false;
-
-    const message = event.message.message;
-    if (!message) return false;
-
-    // Получаем все ссылки из сообщения
-    const urls = await this.extractUrls(event);
-    if (urls.length === 0) return false;
-
-    // Получаем информацию о текущем канале
-    const currentChannel = await this.telegramClient.getEntity(event.chatId);
-
-    // Проверяем каждую ссылку
-    for (const url of urls) {
-      try {
-        const resolved = await this.resolveUrl(url);
-
-        // Если ссылка ведет не на текущий канал - считаем рекламой
-        if (!this.isSameChannel(resolved, currentChannel)) {
-          return true;
-        }
-      } catch (error) {
-        Logger.error(`Error resolving URL ${url}: ${error}`, ClientBaseService.name);
-        // Если не удалось разрешить URL, считаем что это внешняя ссылка
-        return true;
-      }
-    }
-
-    return false;
+  /**
+   * Тонкая обёртка над `AdDetector.isAdPost`.
+   *
+   * Через порт коллабораторов сохраняются точки подмены `isPostWithLinks`,
+   * `extractUrls`, `resolveUrl` и `isSameChannel`, на которые опирается
+   * существующая white-box спецификация.
+   */
+  private isAdPost(event: NewMessageEvent): Promise<boolean> {
+    return this.adDetector.isAdPost(event, {
+      isPostWithLinks: (messageEvent) => this.isPostWithLinks(messageEvent),
+      extractUrls: (messageEvent) => this.extractUrls(messageEvent),
+      resolveUrl: (url) => this.resolveUrl(url),
+      isSameChannel: (resolved, current) => this.isSameChannel(resolved, current),
+      getCurrentChannel: (chatId) => this.telegramClient.getEntity(chatId),
+      loggerContext: ClientBaseService.name,
+    });
   }
 
   // 21:00 МСК
@@ -478,95 +459,31 @@ export class ClientBaseService implements OnModuleInit {
     }
   }
 
-  private async extractUrls(event: NewMessageEvent): Promise<string[]> {
-    const urls: string[] = [];
-    const message = event.message;
-
-    if (!message.entities) return urls;
-
-    for (const entity of message.entities) {
-      if (entity instanceof Api.MessageEntityUrl) {
-        const offset = entity.offset;
-        const length = entity.length;
-        urls.push(message.message.substring(offset, offset + length));
-      } else if (entity instanceof Api.MessageEntityTextUrl) {
-        urls.push(entity.url);
-      }
-    }
-
-    return urls;
+  /** Тонкая обёртка над `AdDetector.extractUrls`. */
+  private extractUrls(event: NewMessageEvent): Promise<string[]> {
+    return this.adDetector.extractUrls(event);
   }
 
-  // Проверяет, содержит ли сообщение медиа контент (фото или видео)
+  /** Тонкая обёртка над `AdDetector.hasMediaContent`. */
   private hasMediaContent(message: Api.Message): boolean {
-    return !!(
-      message.photo ||
-      message.video ||
-      (message.media &&
-        (message.media instanceof Api.MessageMediaPhoto ||
-          (message.media instanceof Api.MessageMediaDocument &&
-            message.media.document instanceof Api.Document &&
-            message.media.document.mimeType.startsWith('video/'))))
-    );
+    return this.adDetector.hasMediaContent(message);
   }
 
-  private async resolveUrl(url: string): Promise<ResolvedChannelEntity> {
-    // Telegram может возвращать сокращенные ссылки (t.me/xxx)
-    // Нужно раскрыть их до полного URL
-    if (url.startsWith('t.me/')) {
-      url = `https://${url}`;
-    }
-
-    // Для Telegram ссылок используем getEntity
-    if (url.includes('t.me/')) {
-      const username = url.split('t.me/')[1].split('/')[0];
-      return await this.telegramClient.getEntity(username);
-    }
-
-    // Для других ссылок можно использовать HTTP запрос
-    // (но нужно учитывать редиректы)
-    // Здесь простейшая реализация - в реальном коде нужно обрабатывать редиректы
-    return { isExternal: true, url };
+  /** Тонкая обёртка над `AdDetector.resolveUrl` с текущим MTProto-клиентом. */
+  private resolveUrl(url: string): Promise<ResolvedChannelEntity> {
+    return this.adDetector.resolveUrl(url, this.telegramClient);
   }
 
+  /** Тонкая обёртка над `AdDetector.isSameChannel`. */
   private isSameChannel(
     resolvedEntity: ResolvedChannelEntity,
     currentChannel: ResolvedChannelEntity
   ): boolean {
-    // Если это внешний URL (не Telegram)
-    if (resolvedEntity.isExternal) {
-      return false;
-    }
-
-    // Сравниваем ID каналов
-    if (resolvedEntity.id && currentChannel.id) {
-      return resolvedEntity.id.equals(currentChannel.id);
-    }
-
-    // Сравниваем usernames каналов
-    if (resolvedEntity.username && currentChannel.username) {
-      return resolvedEntity.username.toLowerCase() === currentChannel.username.toLowerCase();
-    }
-
-    return false;
+    return this.adDetector.isSameChannel(resolvedEntity, currentChannel);
   }
 
-  private async isPostWithLinks(event: NewMessageEvent) {
-    const caption = event?.message?.message;
-    const entities = event?.message?.entities || [];
-
-    if (!caption) {
-      return false;
-    }
-
-    for (const entity of entities) {
-      switch (true) {
-        case entity instanceof Api.MessageEntityUrl:
-        case entity instanceof Api.MessageEntityTextUrl: {
-          return true;
-        }
-      }
-    }
-    return false;
+  /** Тонкая обёртка над `AdDetector.isPostWithLinks`. */
+  private isPostWithLinks(event: NewMessageEvent): Promise<boolean> {
+    return this.adDetector.isPostWithLinks(event);
   }
 }

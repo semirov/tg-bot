@@ -3,7 +3,7 @@ import { Menu } from '@grammyjs/menu';
 import { BotContext } from '../../bot/interfaces/bot-context.interface';
 import { UserPermissionEnum } from '../../bot/constants/user-permission.enum';
 import { UserService } from '../../bot/services/user.service';
-import { Bot, InlineKeyboard } from 'grammy';
+import { Bot } from 'grammy';
 import { BOT } from '../../bot/providers/bot.provider';
 import { BaseConfigService } from '../../config/base-config.service';
 import { ClientBaseService } from '../../client/services/client-base.service';
@@ -25,8 +25,9 @@ import { MattermostService } from '../../mattermost/mattermost.service';
 import { TrollService } from '../../troll/services/troll.service';
 import { buildTelegramFileUrl, extractTelegramFileId } from '../../../shared/publication/media-url';
 import { sendPostToMattermost } from '../../../shared/publication/mattermost-post';
-import { runPublicationMode } from '../../../shared/publication/publication-mode';
 import { hasSimilarDistance } from '../../post-management/services/duplicate-policy';
+import { ObservatoryPostFormatter } from './observatory-post-formatter';
+import { ObservatoryPublishPolicy } from './observatory-publish-policy';
 
 @Injectable()
 export class ObservatoryService implements OnModuleInit {
@@ -52,6 +53,16 @@ export class ObservatoryService implements OnModuleInit {
    * Меню публикации одобренного поста
    */
   private observatoryPostMenu: Menu<BotContext>;
+
+  /** Чистые builder'ы сообщений и клавиатур обсерватории. */
+  private readonly formatter = new ObservatoryPostFormatter();
+
+  /** Маршрутизация публикации по режимам (seam над shared publication-mode). */
+  private readonly publishPolicy = new ObservatoryPublishPolicy({
+    now: (context) => this.onPublishNow(context),
+    scheduled: (context) => this.publishScheduled(context),
+    nightCringe: (context) => this.publishNightCringeScheduled(context),
+  });
 
   public onModuleInit(): void {
     this.bot.use(this.userModeratedPostService.buildUserModeratePost());
@@ -93,20 +104,20 @@ export class ObservatoryService implements OnModuleInit {
     this.observatoryPostMenu = new Menu<BotContext>(ObservatoryPostMenusEnum.POST_MENU, {
       autoAnswer: false,
     })
-      .text('🤖 Пост обсерватории')
+      .text(ObservatoryPostFormatter.POST_MENU_LABEL)
       .row()
-      .text('Опубликовать', async (ctx) => {
+      .text(ObservatoryPostFormatter.PUBLISH_LABEL, async (ctx) => {
         if (this.userService.checkPermission(ctx, UserPermissionEnum.IS_BASE_MODERATOR)) {
           ctx.menu.nav(ObservatoryPostMenusEnum.OBSERVATORY_PUBLICATION);
         }
       })
-      .text('Отклонить', async (ctx) => {
+      .text(ObservatoryPostFormatter.REJECT_LABEL, async (ctx) => {
         if (this.userService.checkPermission(ctx, UserPermissionEnum.IS_BASE_MODERATOR)) {
           await this.rejectObserverPost(ctx);
         }
       })
       .row()
-      .text('На модерацию пользователям', async (ctx) => {
+      .text(ObservatoryPostFormatter.MODERATE_BY_USERS_LABEL, async (ctx) => {
         if (this.userService.checkPermission(ctx, UserPermissionEnum.IS_BASE_MODERATOR)) {
           ctx.menu.nav(ObservatoryPostMenusEnum.USER_MODERATE_POST);
         }
@@ -116,35 +127,61 @@ export class ObservatoryService implements OnModuleInit {
     const publishSubmenu = new Menu<BotContext>(ObservatoryPostMenusEnum.OBSERVATORY_PUBLICATION, {
       autoAnswer: false,
     })
-      .text('Кринж', async (ctx) => this.publishPost(ctx, PublicationModesEnum.NIGHT_CRINGE))
-      .text('Сейчас', async (ctx) => this.publishPost(ctx, PublicationModesEnum.NOW_SILENT))
+      .text(ObservatoryPostFormatter.PUBLISH_NIGHT_CRINGE_LABEL, async (ctx) =>
+        this.publishPost(ctx, PublicationModesEnum.NIGHT_CRINGE)
+      )
+      .text(ObservatoryPostFormatter.PUBLISH_NOW_LABEL, async (ctx) =>
+        this.publishPost(ctx, PublicationModesEnum.NOW_SILENT)
+      )
       .row()
-      .text('Ближайший слот', async (ctx) =>
+      .text(ObservatoryPostFormatter.PUBLISH_NEXT_INTERVAL_LABEL, async (ctx) =>
         this.publishPost(ctx, PublicationModesEnum.NEXT_INTERVAL)
       )
       .row()
-      .text('Ночью', async (ctx) => this.publishPost(ctx, PublicationModesEnum.NEXT_NIGHT))
-      .text('Утром', async (ctx) => this.publishPost(ctx, PublicationModesEnum.NEXT_MORNING))
-      .text('Днем', async (ctx) => this.publishPost(ctx, PublicationModesEnum.NEXT_MIDDAY))
-      .text('Вечером', async (ctx) => this.publishPost(ctx, PublicationModesEnum.NEXT_EVENING))
+      .text(ObservatoryPostFormatter.PUBLISH_NIGHT_LABEL, async (ctx) =>
+        this.publishPost(ctx, PublicationModesEnum.NEXT_NIGHT)
+      )
+      .text(ObservatoryPostFormatter.PUBLISH_MORNING_LABEL, async (ctx) =>
+        this.publishPost(ctx, PublicationModesEnum.NEXT_MORNING)
+      )
+      .text(ObservatoryPostFormatter.PUBLISH_MIDDAY_LABEL, async (ctx) =>
+        this.publishPost(ctx, PublicationModesEnum.NEXT_MIDDAY)
+      )
+      .text(ObservatoryPostFormatter.PUBLISH_EVENING_LABEL, async (ctx) =>
+        this.publishPost(ctx, PublicationModesEnum.NEXT_EVENING)
+      )
       .row()
-      .text('Назад', (ctx) => ctx.menu.nav(ObservatoryPostMenusEnum.POST_MENU));
+      .text(ObservatoryPostFormatter.BACK_LABEL, (ctx) =>
+        ctx.menu.nav(ObservatoryPostMenusEnum.POST_MENU)
+      );
 
     const userModeratePost = new Menu<BotContext>(ObservatoryPostMenusEnum.USER_MODERATE_POST, {
       autoAnswer: false,
     })
-      .text('Сейчас', async (ctx) => this.moderateViaUsers(ctx, PublicationModesEnum.NOW_SILENT))
+      .text(ObservatoryPostFormatter.PUBLISH_NOW_LABEL, async (ctx) =>
+        this.moderateViaUsers(ctx, PublicationModesEnum.NOW_SILENT)
+      )
       .row()
-      .text('Ближайший слот', async (ctx) =>
+      .text(ObservatoryPostFormatter.PUBLISH_NEXT_INTERVAL_LABEL, async (ctx) =>
         this.publishPost(ctx, PublicationModesEnum.NEXT_INTERVAL)
       )
       .row()
-      .text('Ночью', async (ctx) => this.moderateViaUsers(ctx, PublicationModesEnum.NEXT_NIGHT))
-      .text('Утром', async (ctx) => this.moderateViaUsers(ctx, PublicationModesEnum.NEXT_MORNING))
-      .text('Днем', async (ctx) => this.moderateViaUsers(ctx, PublicationModesEnum.NEXT_MIDDAY))
-      .text('Вечером', async (ctx) => this.moderateViaUsers(ctx, PublicationModesEnum.NEXT_EVENING))
+      .text(ObservatoryPostFormatter.PUBLISH_NIGHT_LABEL, async (ctx) =>
+        this.moderateViaUsers(ctx, PublicationModesEnum.NEXT_NIGHT)
+      )
+      .text(ObservatoryPostFormatter.PUBLISH_MORNING_LABEL, async (ctx) =>
+        this.moderateViaUsers(ctx, PublicationModesEnum.NEXT_MORNING)
+      )
+      .text(ObservatoryPostFormatter.PUBLISH_MIDDAY_LABEL, async (ctx) =>
+        this.moderateViaUsers(ctx, PublicationModesEnum.NEXT_MIDDAY)
+      )
+      .text(ObservatoryPostFormatter.PUBLISH_EVENING_LABEL, async (ctx) =>
+        this.moderateViaUsers(ctx, PublicationModesEnum.NEXT_EVENING)
+      )
       .row()
-      .text('Назад', (ctx) => ctx.menu.nav(ObservatoryPostMenusEnum.POST_MENU));
+      .text(ObservatoryPostFormatter.BACK_LABEL, (ctx) =>
+        ctx.menu.nav(ObservatoryPostMenusEnum.POST_MENU)
+      );
 
     this.observatoryPostMenu.register(publishSubmenu);
     this.observatoryPostMenu.register(userModeratePost);
@@ -171,31 +208,22 @@ export class ObservatoryService implements OnModuleInit {
     return this.publishWithContext(mode, publishContext);
   }
 
+  /**
+   * Тонкий делегат в `ObservatoryPublishPolicy`.
+   */
   private publishWithContext(
     mode: PublicationModesEnum,
     publishContext: ScheduledPostContextInterface
   ) {
-    return runPublicationMode(
-      mode,
-      {
-        now: (context: ScheduledPostContextInterface) => this.onPublishNow(context),
-        scheduled: (context: ScheduledPostContextInterface) => this.publishScheduled(context),
-        nightCringe: (context: ScheduledPostContextInterface) =>
-          this.publishNightCringeScheduled(context),
-      },
-      publishContext
-    );
+    return this.publishPolicy.run(mode, publishContext);
   }
 
   public async onPublishNow(publishContext: ScheduledPostContextInterface): Promise<void> {
-    let caption = '';
-    if (publishContext.mode === PublicationModesEnum.NIGHT_CRINGE) {
-      const channelHtmlLink = await this.settingsService.cringeChannelHtmlLink();
-      caption += [publishContext.caption, channelHtmlLink].filter((item) => !!item).join('\n');
-    } else {
-      const channelHtmlLink = await this.settingsService.channelHtmlLinkIfPrivate();
-      caption += [publishContext.caption, channelHtmlLink].filter((item) => !!item).join('\n');
-    }
+    const channelHtmlLink =
+      publishContext.mode === PublicationModesEnum.NIGHT_CRINGE
+        ? await this.settingsService.cringeChannelHtmlLink()
+        : await this.settingsService.channelHtmlLinkIfPrivate();
+    const caption = this.formatter.composeCaption(publishContext.caption, channelHtmlLink);
 
     const publishedMessage = await this.bot.api.copyMessage(
       this.baseConfigService.memeChanelId,
@@ -222,7 +250,7 @@ export class ObservatoryService implements OnModuleInit {
     });
 
     const url = await this.settingsService.channelLinkUrl();
-    const inlineKeyboard = new InlineKeyboard().url(`🤖 Опубликован (${user.username})`, url).row();
+    const inlineKeyboard = this.formatter.publishedKeyboard(user.username, url);
 
     await this.bot.api.editMessageReplyMarkup(
       this.baseConfigService.userRequestMemeChannel,
@@ -313,9 +341,7 @@ export class ObservatoryService implements OnModuleInit {
       'dd.LL.yy в ~HH:mm'
     );
 
-    const inlineKeyboard = new InlineKeyboard()
-      .text(`⏰ ${dateFormatted} (${user.username})`)
-      .row();
+    const inlineKeyboard = this.formatter.scheduledKeyboard(dateFormatted, user.username);
 
     await this.bot.api.editMessageReplyMarkup(
       this.baseConfigService.userRequestMemeChannel,
@@ -335,12 +361,7 @@ export class ObservatoryService implements OnModuleInit {
       }
     );
 
-    const inlineKeyboard = new InlineKeyboard()
-      .text(
-        `🤖 Отклонен ❌ (${ctx.callbackQuery.from.username})`,
-        ObservatoryPostMenusEnum.DELETE_OBSERVER_POST
-      )
-      .row();
+    const inlineKeyboard = this.formatter.rejectedKeyboard(ctx.callbackQuery.from.username);
     await ctx.editMessageReplyMarkup({ reply_markup: inlineKeyboard });
   }
 
@@ -365,7 +386,7 @@ export class ObservatoryService implements OnModuleInit {
     };
 
     const count = await this.userModeratedPostService.moderateViaUsers(ctx, publishContext);
-    const inlineKeyboard = new InlineKeyboard().text(`👷 Модерируют пользователи (${count})`).row();
+    const inlineKeyboard = this.formatter.moderatingUsersKeyboard(count);
 
     await this.bot.api.editMessageReplyMarkup(
       this.baseConfigService.userRequestMemeChannel,

@@ -14,6 +14,7 @@ import {UserEntity} from '../../bot/entities/user.entity';
 import {add} from 'date-fns';
 import {firstValueFrom, Observable, Subject, timer} from 'rxjs';
 import {Interval} from '@nestjs/schedule';
+import {ModerationRoundPolicy} from './moderation-round-policy';
 
 @Injectable()
 export class UserModeratedPostService {
@@ -39,6 +40,9 @@ export class UserModeratedPostService {
   private moderatePostMenu: Menu<BotContext>;
 
   private endModerateKeyboard = new InlineKeyboard().text('Спасибо! 😌').row();
+
+  /** Чистая политика решения раунда пользовательской модерации. */
+  private readonly moderationRoundPolicy = new ModerationRoundPolicy();
 
   private userModeratedPostSubject = new Subject<ScheduledPostContextInterface>();
 
@@ -189,10 +193,12 @@ export class UserModeratedPostService {
       return;
     }
 
-    let isApprovedPost: boolean;
+    const round = this.moderationRoundPolicy.decide({
+      likes: post.likes,
+      dislikes: post.dislikes,
+    });
 
-    if (+post.likes >= +post.dislikes || +post.dislikes === 0) {
-      isApprovedPost = true;
+    if (round.isApproved) {
       await this.userModeratedPostEntity.update({id: post.id}, {isApproved: true});
       this.userModeratedPostSubject.next({
         mode: post.mode,
@@ -203,7 +209,6 @@ export class UserModeratedPostService {
         hash: post.hash,
       });
     } else {
-      isApprovedPost = false;
       await this.userModeratedPostEntity.update({id: post.id}, {isRejected: true});
     }
 
@@ -211,19 +216,9 @@ export class UserModeratedPostService {
       where: {requestChannelMessageId: post.requestChannelMessageId},
     });
 
-    let text = '';
-    if (post.likes) {
-      text += ` 👍 ${post.likes}`;
-    }
-    if (post.dislikes) {
-      text += `   👎 ${post.dislikes}`;
-    }
-
     for (const user of userMessages) {
       try {
-        const menu = new InlineKeyboard().text(
-          (isApprovedPost ? 'Пост будет опубликован' : 'Пост не будет опубликован') + text
-        );
+        const menu = this.moderationRoundPolicy.buildUserResultKeyboard(round);
         await this.bot.api.editMessageReplyMarkup(user.userId, user.userMessageId, {
           reply_markup: menu,
         });
