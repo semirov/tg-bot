@@ -479,6 +479,29 @@ CI/CD — GitHub Actions на **self-hosted раннере в Docker** (на э�
 - **Скорость**: базовые образы зависимостей `telegram-bot-deps:node20` / `:node22` (тег = хэш `package-lock.json`) собираются отдельным job'ом только при изменении пакетов; приложение и тесты собираются `FROM` них. Прод-образ собирается один раз в test-job (тег `sha-<commit>`) и переиспользуется деплоем. `nx`-кэш — через BuildKit.
 - **Секреты**: не хранятся в репозитории — SSH/registry-доступы лежат на хосте раннера и монтируются read-only в `/deploy-secrets`.
 
+### Self-hosted раннер
+
+Раннер запущен в Docker на этой машине (`memes-bot-runner`) рядом с остальными контейнерами:
+
+```
+docker run -d --name memes-bot-runner --restart unless-stopped --cpus=2 --memory=4g \
+  -e REPO_URL=https://github.com/semirov/tg-bot \
+  -e ACCESS_TOKEN=<PAT/OAuth с доступом к репозиторию> \
+  -e RUNNER_NAME=memes-bot-runner -e LABELS=memes-bot -e RUNNER_SCOPE=repo \
+  -e DISABLE_AUTOMATIC_DEREGISTRATION=true \
+  -e CONFIGURED_ACTIONS_RUNNER_FILES_DIR=/runner-config \
+  -e DISABLE_AUTO_UPDATE=true -e RUN_AS_ROOT=true \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v /home/filipp/.deploy-secrets:/deploy-secrets:ro \
+  -v memes-runner-config2:/runner-config -v memes-runner-work:/_work \
+  myoung34/github-runner:latest
+```
+
+Ключевое: `CONFIGURED_ACTIONS_RUNNER_FILES_DIR` + `DISABLE_AUTOMATIC_DEREGISTRATION=true` дают
+переиспользование регистрации (раннер не дерегистрируется и не падает после каждой job), а
+`ACCESS_TOKEN` позволяет перерегистрироваться, если конфиг потерян. **Не задавайте `EPHEMERAL`** —
+в образе это флаг: любое непустое значение (включая `false`) включает режим «одна job на контейнер».
+
 Скрипты: `tools/ci/build-base.sh`, `tools/ci/release.sh`, `tools/deploy/deploy.sh`.
 
 ## 🤝 Вклад в проект
