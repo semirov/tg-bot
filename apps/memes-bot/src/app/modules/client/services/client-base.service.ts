@@ -346,6 +346,10 @@ export class ClientBaseService implements OnModuleInit {
             );
             return undefined;
           }
+          Logger.log(
+            `Parser: forward target resolved to @${me.username}`,
+            ClientBaseService.name
+          );
           return `@${me.username}`;
         })
         .catch((error) => {
