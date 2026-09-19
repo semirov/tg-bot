@@ -992,6 +992,27 @@ describe('ClientBaseService', () => {
         url: 'https://example.com/x',
       });
     });
+
+    it('резолвит invite-ссылку через invoke CheckChatInvite', async () => {
+      const { service } = setup();
+      const invoke = jest.fn().mockResolvedValue({ chat: { id: bigInt(9) } });
+      (service as any).telegramClient = { getEntity: jest.fn(), invoke };
+
+      await expect((service as any).resolveUrl('https://t.me/+hash')).resolves.toEqual({
+        id: bigInt(9),
+      });
+      expect(invoke).toHaveBeenCalledTimes(1);
+    });
+
+    it('возвращает undefined из checkInvite при ошибке', async () => {
+      const { service } = setup();
+      (service as any).telegramClient = {
+        getEntity: jest.fn(),
+        invoke: jest.fn().mockRejectedValue(new Error('x')),
+      };
+
+      await expect((service as any).checkInvite('h')).resolves.toBeUndefined();
+    });
   });
 
   describe('isSameChannel', () => {

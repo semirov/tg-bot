@@ -215,6 +215,66 @@ describe('E2E: MTProto-клиент и парсер обсерватории', (
       });
     });
 
+    it('переносит источник из forward_origin в служебную подпись и в ObservatoryPost', async () => {
+      const config = h.moduleRef.get(BaseConfigService);
+      const observerChannel = config.observerChannel;
+      const userRequestChannel = config.userRequestMemeChannel;
+
+      await h.sendUpdate({
+        update_id: 9003,
+        channel_post: {
+          message_id: 601,
+          date: Math.floor(Date.now() / 1000),
+          chat: { id: observerChannel, type: 'channel', title: 'Observer' },
+          sender_chat: { id: observerChannel, type: 'channel', title: 'Observer' },
+          caption: 'исходный текст',
+          photo: [
+            { file_id: 'f3', file_unique_id: 'u3', width: 400, height: 400, file_size: 1000 },
+          ],
+          forward_origin: {
+            type: 'channel',
+            date: Math.floor(Date.now() / 1000),
+            message_id: 501,
+            chat: {
+              id: -1001234567890,
+              type: 'channel',
+              title: 'Source',
+              username: 'source',
+            },
+          },
+        },
+      });
+
+      await waitFor(() => {
+        expect(
+          findCall(
+            h.calls,
+            'copyMessage',
+            (payload) => payload.chat_id === userRequestChannel
+          )
+        ).toBeDefined();
+      });
+
+      const copy = findCall(
+        h.calls,
+        'copyMessage',
+        (payload) => payload.chat_id === userRequestChannel
+      );
+      expect(copy!.payload.caption).toBe(
+        '🔎 Источник: <a href="https://t.me/source/501">Source</a>'
+      );
+      expect(copy!.payload.parse_mode).toBe('HTML');
+
+      await waitFor(async () => {
+        const rows = await h.dataSource.getRepository(ObservatoryPostEntity).find();
+        expect(rows).toHaveLength(1);
+        expect(Number(rows[0].sourceMessageId)).toBe(501);
+        expect(rows[0].sourceUsername).toBe('source');
+        expect(rows[0].sourceUrl).toBe('https://t.me/source/501');
+        expect(rows[0].originalCaption).toBe('исходный текст');
+      });
+    });
+
     it('observerChannelPost$ пишет ObservatoryPost с точным message_id после копирования', async () => {
       const service = h.moduleRef.get(ClientBaseService);
       const config = h.moduleRef.get(BaseConfigService);
@@ -371,6 +431,31 @@ describe('E2E: MTProto-клиент и парсер обсерватории', (
       await flushMicro();
 
       expect(forwardTo).not.toHaveBeenCalled();
+    });
+
+    it('пересылает пост со ссылкой на собственный канал', async () => {
+      const config = h.moduleRef.get(BaseConfigService);
+      const { client } = await startedService();
+      jest.useFakeTimers();
+      jest.spyOn(Math, 'random').mockReturnValue(0);
+      client.getEntity = jest.fn().mockResolvedValue({ id: bigInt(1) });
+      const forwardTo = jest.fn().mockResolvedValue(undefined);
+      const event = {
+        isChannel: true,
+        chatId: bigInt(EXTERNAL_CHANNEL),
+        message: {
+          message: 't.me/own',
+          entities: [new Api.MessageEntityUrl({ offset: 0, length: 7 })],
+          forwardTo,
+        },
+      };
+
+      await client.handlers[0](event);
+      jest.advanceTimersByTime(10000);
+      await flushMicro();
+
+      expect(forwardTo).toHaveBeenCalledTimes(1);
+      expect(forwardTo.mock.calls[0][0].equals(bigInt(config.observerChannel))).toBe(true);
     });
 
     it('пересылает альбом после дебаунса', async () => {

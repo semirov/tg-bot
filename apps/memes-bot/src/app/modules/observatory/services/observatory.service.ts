@@ -24,6 +24,7 @@ import { UserModeratedPostService } from './user-moderated-post.service';
 import { MattermostService } from '../../mattermost/mattermost.service';
 import { TrollService } from '../../troll/services/troll.service';
 import { buildTelegramFileUrl, extractTelegramFileId } from '../../../shared/publication/media-url';
+import { buildPostUrl, TelegramPostSource } from '../../../shared/publication/telegram-link';
 import { sendPostToMattermost } from '../../../shared/publication/mattermost-post';
 import { hasSimilarDistance } from '../../post-management/services/duplicate-policy';
 import { ObservatoryPostFormatter } from './observatory-post-formatter';
@@ -86,18 +87,85 @@ export class ObservatoryService implements OnModuleInit {
       if (hasSimilarDistance(duplicates)) {
         return;
       }
+
+      // Служебная подпись со ссылкой на исходный пост исходного канала.
+      const source = this.resolveSource(ctx?.channelPost ?? null);
+      const caption = this.formatter.sourceCaption(source);
+
       const message = await ctx.api.copyMessage(
         this.baseConfigService.userRequestMemeChannel,
         ctx.channelPost.sender_chat.id,
         ctx.channelPost.message_id,
-        { disable_notification: true, caption: '', reply_markup: this.observatoryPostMenu }
+        {
+          disable_notification: true,
+          caption,
+          ...(caption ? { parse_mode: 'HTML' as const } : {}),
+          reply_markup: this.observatoryPostMenu,
+        }
       );
 
       const post = await this.observatoryPostRepository.create({
         requestChannelMessageId: message.message_id,
+        sourceChatId: source?.chatId ?? null,
+        sourceMessageId: source?.messageId ?? null,
+        sourceUsername: source?.username ?? null,
+        sourceTitle: source?.title ?? null,
+        sourceUrl: source?.url ?? null,
+        originalCaption: ctx?.channelPost?.caption ?? null,
       });
       await this.observatoryPostRepository.save(post);
     });
+  }
+
+  /**
+   * Извлекает источник поста из forward-заголовка поста канала-обсерватории.
+   *
+   * Сначала смотрит `forward_origin` (Bot API 7+), затем legacy-поля
+   * `forward_from_chat` / `forward_from_message_id`.
+   *
+   * @param channelPost пост в канале-обсерватории
+   * @returns источник поста или `null`, если заголовок недоступен
+   */
+  private resolveSource(channelPost: {
+    forward_origin?: { type?: string; chat?: unknown; message_id?: number };
+    forward_from_chat?: unknown;
+    forward_from_message_id?: number;
+  } | null): TelegramPostSource | null {
+    if (!channelPost) {
+      return null;
+    }
+
+    const origin = channelPost.forward_origin;
+    if (origin?.chat && (origin.type === 'channel' || origin.type === 'chat')) {
+      return this.buildSource(origin.chat, origin.message_id ?? null);
+    }
+
+    if (channelPost.forward_from_chat) {
+      return this.buildSource(
+        channelPost.forward_from_chat,
+        channelPost.forward_from_message_id ?? null
+      );
+    }
+
+    return null;
+  }
+
+  /**
+   * Собирает описание источника: id/username/title и ссылку на пост.
+   *
+   * @param chat исходный канал (Bot API `Chat`)
+   * @param messageId id исходного поста
+   * @returns источник поста
+   */
+  private buildSource(chat: unknown, messageId: number | null): TelegramPostSource {
+    const typed = chat as { id?: number; username?: string; title?: string };
+    return {
+      chatId: typeof typed?.id === 'number' ? typed.id : null,
+      messageId,
+      username: typed?.username ?? null,
+      title: typed?.title ?? null,
+      url: buildPostUrl({ id: typed?.id, username: typed?.username }, messageId),
+    };
   }
 
   private buildObservatoryPostMenu(): void {
@@ -197,11 +265,12 @@ export class ObservatoryService implements OnModuleInit {
     const imageHash = await this.deduplicationService.getPostImageHash(
       ctx?.callbackQuery?.message?.photo
     );
+    // Caption в предложке занят служебной подписью источника — в публикацию
+    // он не переносится (к публикуемому посту добавляется только ссылка на канал).
     const publishContext: ScheduledPostContextInterface = {
       mode,
       requestChannelMessageId: ctx.callbackQuery.message.message_id,
       processedByModerator: ctx.callbackQuery.from.id,
-      caption: ctx.callbackQuery?.message?.caption,
       isUserPost: false,
       hash: imageHash,
     };

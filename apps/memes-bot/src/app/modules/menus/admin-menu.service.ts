@@ -15,6 +15,7 @@ import { SchedulerCommonService } from '../common/scheduler-common.service';
 import { BaseConfigService } from '../config/base-config.service';
 import { ConversationsEnum } from '../post-management/constants/conversations.enum';
 import { PublicationModesEnum } from '../post-management/constants/publication-modes.enum';
+import { channelInternalId } from '../../shared/publication/telegram-link';
 import { formatUsd } from '../troll/constants/deepseek-pricing';
 import { DeepSeekService } from '../troll/services/deepseek.service';
 import { TrollSettingsService } from '../troll/services/troll-settings.service';
@@ -766,7 +767,7 @@ export class AdminMenuService implements OnModuleInit {
     const interval = SchedulerCommonService.timeIntervalByMode(mode);
 
     // чтобы ссылка работала
-    const channelLinkId = this.baseConfigService.userRequestMemeChannel * -1 - 1000000000000;
+    const channelLinkId = channelInternalId(this.baseConfigService.userRequestMemeChannel);
 
     const nowTimeStamp = new Date();
 
