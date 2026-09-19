@@ -33,7 +33,6 @@ import {
   TROLL_MEME_COOLDOWN_SEC,
   TROLL_MEME_MAX_ATTEMPTS,
   TROLL_MEME_POOL_SIZE,
-  TROLL_MIRROR_MAX_CHARS,
   TROLL_MIRROR_MIN_WORD_LEN,
   TROLL_SELF_CHECK_CONTEXT_CHARS,
   TROLL_SELF_CHECK_MAX_ATTEMPTS,
@@ -95,15 +94,14 @@ import {
   sanitizeModelText,
   sanitizeTranscript,
   sanitizeUserInput,
-  stripLinks,
   toChatStyle,
   wrapUserContent,
 } from '../utils/troll-sanitizer';
 import { DeepSeekService } from './deepseek.service';
+import { TrollCooldownRegistry } from './troll-cooldown-registry';
+import { TrollNameRegistry } from './troll-name-registry';
+import { MIN_TEXT_LENGTH, TrollReplyFormatter } from './troll-reply-formatter';
 import { TrollSettingsService } from './troll-settings.service';
-
-/** Сообщения короче этого не анализируем (мусор, «+», «ок» и т.п.). */
-const MIN_TEXT_LENGTH = 3;
 
 /** Как часто обновлять «печатает…», пока идёт накопление. */
 const TYPING_REFRESH_MS = 4500;
@@ -137,26 +135,52 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
 
   /** Чаты, по которым уже идёт анализ — чтобы не плодить запросы к DeepSeek. */
   private readonly analyzingChats = new Set<number>();
-  /** Время последней проверки по УК РФ в чате (мс) — для кулдауна. */
-  private readonly lastAnalysisAt = new Map<number, number>();
-  /** Время последнего случайного подкола в чате (мс) — для кулдауна. */
-  private readonly lastSarcasmAt = new Map<number, number>();
-  /** Время последнего кривляния в чате (мс) — для кулдауна. */
-  private readonly lastMirrorAt = new Map<number, number>();
-  /** Время последней реакции-эмодзи в чате (мс) — для кулдауна. */
-  private readonly lastReactionAt = new Map<number, number>();
-  /** Время последнего /stat в чате (мс) — для кулдауна (ключ chatId:userId). */
-  private readonly lastStatAt = new Map<string, number>();
-  /** Время последнего ответа на кличку/мат в чате (мс) — чтобы бот не сыпал репликами. */
-  private readonly lastJerkAnswerAt = new Map<number, number>();
   /** Последняя поставленная реакция по чату — чтобы эмодзи чередовались. */
   private readonly lastReactionEmoji = new Map<number, (typeof REACTION_EMOJIS)[number]>();
-  /** Время последнего /meme (мс) — кулдаун на каждого участника (ключ chatId:userId). */
-  private readonly lastMemeAt = new Map<string, number>();
   /** Накопители обращений к боту по чатам. */
   private readonly jerkBatches = new Map<number, JerkBatch>();
-  /** Имена участников по чатам (chatId -> userId -> имя) — для возврата регистра. */
-  private readonly chatNames = new Map<number, Map<number, string>>();
+
+  /** Реестр кулдаунов (карты `last*At`) — состояние и проверки вынесены. */
+  private readonly cooldowns = new TrollCooldownRegistry();
+  /** Реестр имён участников — восстановление регистра в ответах. */
+  private readonly names = new TrollNameRegistry();
+  /** Чистый форматтер текстов тролля. */
+  private readonly formatter = new TrollReplyFormatter();
+
+  /** Время последней проверки по УК РФ в чате (мс) — совместимое представление реестра. */
+  private get lastAnalysisAt(): Map<number, number> {
+    return this.cooldowns.lastAnalysisAt;
+  }
+
+  /** Время последнего случайного подкола в чате (мс) — совместимое представление реестра. */
+  private get lastSarcasmAt(): Map<number, number> {
+    return this.cooldowns.lastSarcasmAt;
+  }
+
+  /** Время последнего кривляния в чате (мс) — совместимое представление реестра. */
+  private get lastMirrorAt(): Map<number, number> {
+    return this.cooldowns.lastMirrorAt;
+  }
+
+  /** Время последней реакции-эмодзи в чате (мс) — совместимое представление реестра. */
+  private get lastReactionAt(): Map<number, number> {
+    return this.cooldowns.lastReactionAt;
+  }
+
+  /** Время последнего /stat (мс; ключ chatId:userId) — совместимое представление реестра. */
+  private get lastStatAt(): Map<string, number> {
+    return this.cooldowns.lastStatAt;
+  }
+
+  /** Время последнего ответа на кличку/мат (мс) — совместимое представление реестра. */
+  private get lastJerkAnswerAt(): Map<number, number> {
+    return this.cooldowns.lastJerkAnswerAt;
+  }
+
+  /** Время последнего /meme (мс; ключ chatId:userId) — совместимое представление реестра. */
+  private get lastMemeAt(): Map<string, number> {
+    return this.cooldowns.lastMemeAt;
+  }
 
   constructor(
     @Inject(BOT) private readonly bot: Bot<BotContext>,
@@ -1294,8 +1318,7 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
 
   /** Приводит ответ модели к одному слову (буквы и дефис). */
   private normalizeMirrorWord(raw: string): string {
-    const first = sanitizeModelText(raw, TROLL_MIRROR_MAX_CHARS).split(/\s+/)[0] ?? '';
-    return first.replace(/[^а-яёА-ЯЁ-]/g, '').slice(0, TROLL_MIRROR_MAX_CHARS);
+    return this.formatter.normalizeMirrorWord(raw);
   }
 
   private async replyWithSarcasm(ctx: BotContext, s: TrollRuntimeSettings): Promise<void> {
@@ -1371,46 +1394,7 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
     probability: number,
     s: TrollRuntimeSettings
   ): string {
-    const percent = Math.round(probability * 100);
-    const articles = Array.isArray(assessment.articles)
-      ? assessment.articles.filter((article) => article && article.code)
-      : [];
-
-    const head =
-      probability >= s.criminalHighThreshold
-        ? `⚖️ <b>Почти наверняка состав преступления</b> — ${percent}%`
-        : `⚖️ <b>Похоже на статью</b> — ${percent}%`;
-
-    const lines = [head];
-
-    let hasArticleReason = false;
-    if (articles.length) {
-      lines.push('', 'Возможные статьи:');
-      for (const article of articles.slice(0, 3)) {
-        const code = sanitizeModelField(article.code, TROLL_MAX_CRIMINAL_TITLE_CHARS);
-        const title = sanitizeModelField(article.title, TROLL_MAX_CRIMINAL_TITLE_CHARS);
-        const why = sanitizeModelField(article.reason, TROLL_MAX_CRIMINAL_REASON_CHARS);
-        if (!code) {
-          continue;
-        }
-        if (why) {
-          hasArticleReason = true;
-        }
-        lines.push(
-          `• <b>${this.escapeHtml(code)}</b>${title ? ` — ${this.escapeHtml(title)}` : ''}${
-            why ? `: ${this.escapeHtml(why)}` : ''
-          }`
-        );
-      }
-    }
-
-    // Общий вывод показываем только если у статей нет пояснения «за что».
-    const reason = sanitizeModelField(assessment.reason, TROLL_MAX_CRIMINAL_REASON_CHARS);
-    if (reason && !hasArticleReason) {
-      lines.push('', `Почему: ${this.escapeHtml(reason)}`);
-    }
-
-    return lines.join('\n');
+    return this.formatter.buildCriminalReply(assessment, probability, s);
   }
 
   private async onMyChatMember(ctx: BotContext): Promise<void> {
@@ -1622,11 +1606,7 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
 
   /** Текст сообщения или подписи к нему. */
   private messageText(ctx: BotContext): string {
-    const message = ctx.message;
-    if (!message) {
-      return '';
-    }
-    return (message.text ?? message.caption ?? '').trim();
+    return this.formatter.messageText(ctx);
   }
 
   /**
@@ -1800,35 +1780,12 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
     replyTo: TrollMessageEntity | null,
     diagnosis: { severity: string; summary: string; problems: string[]; fixes: string[] }
   ): string {
-    const lines = [
-      `Дефект #${defect.id}, серьёзность ${diagnosis.severity}`,
-      `чат: ${defect.sourceChatTitle ?? 'без названия'} (${defect.sourceChatId ?? '?'})`,
-      replyTo
-        ? `бот отвечал: ${this.cleanName(replyTo.userName) ?? 'участник'} (${
-            replyTo.userId ?? '?'
-          }), реплика: «${this.cut(replyTo.content, 300)}»`
-        : 'бот отвечал не реплаем',
-      `ответ бота: «${this.cut(answer.content, 300)}»`,
-    ];
-
-    if (diagnosis.summary) {
-      lines.push(`диагностика: ${diagnosis.summary}`);
-    }
-    if (diagnosis.problems.length) {
-      lines.push('что не так:', ...diagnosis.problems.map((problem) => `• ${problem}`));
-    }
-    if (diagnosis.fixes.length) {
-      lines.push('как надо было:', ...diagnosis.fixes.map((fix) => `• ${fix}`));
-    }
-    lines.push(`контекст на момент ответа сохранён в troll_defect_entity #${defect.id}`);
-
-    return lines.join('\n');
+    return this.formatter.formatDefectReport(defect, answer, replyTo, diagnosis);
   }
 
   /** Обрезка длинного текста для сообщения в чат. */
   private cut(text: string, limit: number): string {
-    const flat = (text ?? '').replace(/\s+/g, ' ').trim();
-    return flat.length > limit ? `${flat.slice(0, limit)}…` : flat;
+    return this.formatter.cut(text, limit);
   }
 
   private async isChatActive(chatId: number): Promise<boolean> {
@@ -1852,30 +1809,12 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
 
   /** Пометка типа нетекстового сообщения (сам контент не храним). */
   private describeMediaKind(message: NonNullable<BotContext['message']>): string | null {
-    const m = message as unknown as Record<string, unknown>;
-    if (m['photo']) return 'картинка';
-    if (m['video']) return 'видео';
-    if (m['animation']) return 'гифка';
-    if (m['sticker']) return 'стикер';
-    if (m['voice']) return 'голосовое';
-    if (m['audio']) return 'аудио';
-    if (m['video_note']) return 'видеосообщение';
-    if (m['document']) return 'файл';
-    if (m['location'] || m['venue']) return 'геолокация';
-    if (m['contact']) return 'контакт';
-    if (m['poll']) return 'опрос';
-    if (m['dice']) return 'кубик';
-    return null;
+    return this.formatter.describeMediaKind(message);
   }
 
   /** true, если в сообщении есть ссылка (по сущностям url/text_link). */
   private messageHasLink(message: NonNullable<BotContext['message']>): boolean {
-    const m = message as unknown as {
-      entities?: { type?: string }[];
-      caption_entities?: { type?: string }[];
-    };
-    const entities = [...(m.entities ?? []), ...(m.caption_entities ?? [])];
-    return entities.some((entity) => entity.type === 'url' || entity.type === 'text_link');
+    return this.formatter.messageHasLink(message);
   }
 
   /**
@@ -1888,14 +1827,7 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
     hasLink: boolean,
     maxInputChars: number
   ): string | null {
-    const plain = hasLink ? stripLinks(text) : text;
-    const cleanedText =
-      plain.length >= MIN_TEXT_LENGTH ? sanitizeUserInput(plain, maxInputChars) : '';
-    const marks = [mediaKind ? `[${mediaKind}]` : '', hasLink ? '[ссылка]' : ''].filter(
-      (mark) => !!mark
-    );
-    const parts = [...marks, cleanedText].filter((part) => !!part);
-    return parts.length ? parts.join(' ') : null;
+    return this.formatter.buildHistoryEntry(text, mediaKind, hasLink, maxInputChars);
   }
 
   /**
@@ -2131,8 +2063,7 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
    * и с ограничением длины.
    */
   private logText(text: string, limit = 1500): string {
-    const flat = text.replace(/\s*\n+\s*/g, ' ⏎ ').trim();
-    return flat.length > limit ? `«${flat.slice(0, limit)}…»` : `«${flat}»`;
+    return this.formatter.logText(text, limit);
   }
 
   /**
@@ -2141,14 +2072,7 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
    * Если номеров нет (старые записи), метка пустая.
    */
   private describeMessageRefs(messageId?: number | null, replyToMessageId?: number | null): string {
-    if (messageId === null || messageId === undefined) {
-      return '';
-    }
-    const reply =
-      replyToMessageId !== null && replyToMessageId !== undefined
-        ? `, replyTo ${replyToMessageId}`
-        : '';
-    return ` [msg ${messageId}${reply}]`;
+    return this.formatter.describeMessageRefs(messageId, replyToMessageId);
   }
 
   /**
@@ -2156,49 +2080,17 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
    * в нижний регистр, поэтому имена восстанавливаем по карте имён чата.
    */
   private restoreNames(chatId: number, text: string): string {
-    const users = this.chatNames.get(chatId);
-    if (!users || !text) {
-      return text;
-    }
-
-    const candidates = new Set<string>();
-    for (const display of users.values()) {
-      const withoutUsername = display.replace(/\s*\(@[^)]*\)\s*$/, '').trim();
-      if (withoutUsername) {
-        candidates.add(withoutUsername);
-      }
-      const short = withoutUsername.split(/\s+/)[0];
-      if (short && short.length >= 2) {
-        candidates.add(short);
-      }
-    }
-
-    let result = text;
-    for (const name of candidates) {
-      const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      const re = new RegExp(`(^|[^a-zа-яё0-9])(${escaped})(?=[^a-zа-яё0-9]|$)`, 'gi');
-      result = result.replace(re, (_match, prefix: string) => `${prefix}${name}`);
-    }
-    return result;
+    return this.names.restoreNames(chatId, text);
   }
 
   /** Запоминает отображаемое имя участника для возврата регистра в ответах. */
   private trackName(chatId: number, userId?: number | null, userName?: string | null): void {
-    if (userId === undefined || userId === null || !userName) {
-      return;
-    }
-    const perChat = this.chatNames.get(chatId) ?? new Map<number, string>();
-    perChat.set(Number(userId), userName);
-    this.chatNames.set(chatId, perChat);
+    this.names.trackName(chatId, userId, userName);
   }
 
   /** Имя автора для контекста: одна строка, без делимитеров. */
   private cleanName(name?: string | null): string | null {
-    if (!name) {
-      return null;
-    }
-    const cleaned = sanitizeUserInput(name, 64).replace(/\n+/g, ' ').trim();
-    return cleaned || null;
+    return this.names.cleanName(name);
   }
 
   /** Сохраняет реплику в историю переписки (с ограничением длины). */
@@ -2268,28 +2160,17 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
     chatId: number,
     cooldownSec: number
   ): boolean {
-    if (cooldownSec <= 0) {
-      return false;
-    }
-    const last = store.get(chatId);
-    if (last === undefined) {
-      return false;
-    }
-    return Date.now() - last < cooldownSec * 1000;
+    return this.cooldowns.withinCooldown(store, chatId, cooldownSec);
   }
 
   /** Короткий префикс для логов: chat=... user=... (без текста сообщений). */
   private tag(chatId: number | undefined, userId?: number): string {
-    const parts = [`chat=${chatId ?? '-'}`];
-    if (userId !== undefined) {
-      parts.push(`user=${userId}`);
-    }
-    return parts.join(' ');
+    return this.formatter.tag(chatId, userId);
   }
 
   /** Вероятность в процентах для логов. */
   private pct(value: number): string {
-    return `${Math.round(value * 100)}%`;
+    return this.formatter.pct(value);
   }
 
   /** Приводит текст к одной строке в чатовом стиле (для предсказаний). */
@@ -2369,22 +2250,14 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
   }
 
   private describeUser(from: User | undefined): string {
-    if (!from) {
-      return 'Аноним';
-    }
-    const parts = [from.first_name, from.last_name].filter((value) => !!value);
-    const name = parts.join(' ') || 'Аноним';
-    return from.username ? `${name} (@${from.username})` : name;
+    return this.formatter.describeUser(from);
   }
 
   private escapeHtml(value: string): string {
-    return value
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;');
+    return this.formatter.escapeHtml(value);
   }
 
   private describeError(error: unknown): string {
-    return error instanceof Error ? error.message : String(error);
+    return this.formatter.describeError(error);
   }
 }
