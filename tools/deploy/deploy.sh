@@ -82,6 +82,8 @@ docker rename "${DEPLOY_CONTAINER}" "${DEPLOY_CONTAINER}-prev"
 docker run -d --name "${DEPLOY_CONTAINER}" --restart unless-stopped \
   --network "${DEPLOY_NETWORK}" --env-file "${DEPLOY_ENV_FILE}" \
   -e APP_VERSION="${VERSION}" \
+  -e METRICS_PORT=9464 \
+  -p 127.0.0.1:9464:9464 \
   "${DEPLOY_IMAGE}:${VERSION}" >/dev/null
 sleep 20
 echo "--- status ---"

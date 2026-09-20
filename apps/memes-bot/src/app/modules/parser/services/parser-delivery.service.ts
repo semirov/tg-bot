@@ -11,6 +11,7 @@ import { BOT } from '../../bot/providers/bot.provider';
 import { BotContext } from '../../bot/interfaces/bot-context.interface';
 import { BaseConfigService } from '../../config/base-config.service';
 import { DeduplicationService } from '../../bot/services/deduplication.service';
+import { metrics, sourceLabel } from '../../../shared/metrics';
 import { channelInternalId, buildPostUrl, escapeHtml } from '../../../shared/publication/telegram-link';
 import { CLOCK, Clock } from '../../../shared/clock';
 import { CANDIDATE_CB_PREFIX, CARD_CB_PREFIX, MAX_PHOTO_BYTES, MAX_VIDEO_BYTES, ObservedStatus } from '../constants/parser.constants';
@@ -71,6 +72,7 @@ export class ParserDeliveryService {
           candidate.status = ObservedStatus.DUPLICATE;
           candidate.rejectReason = 'published-duplicate';
           await this.observedRepository.save(candidate);
+          metrics.parser.deliveryFailures.inc({ reason: 'published-duplicate' });
           this.logger.debug(`Parser delivery: дубликат опубликованного (${candidate.id})`);
           return { ok: false, status: ObservedStatus.DUPLICATE };
         }
@@ -90,6 +92,7 @@ export class ParserDeliveryService {
 
     source.selectedTotal += 1;
     await this.registry.repository.save(source);
+    metrics.parser.delivered.inc({ source: sourceLabel(source), category: source.category });
 
     this.logger.log(
       `Parser delivery: кандидат ${candidate.id} → предложка (msg=${messageId}, score=${candidate.score?.toFixed(2)})`
@@ -274,6 +277,7 @@ export class ParserDeliveryService {
     candidate.status = ObservedStatus.FAILED;
     candidate.rejectReason = reason;
     await this.observedRepository.save(candidate);
+    metrics.parser.deliveryFailures.inc({ reason });
     this.logger.warn(`Parser delivery: кандидат ${candidate.id} не доставлен (${reason})`);
     return { ok: false, status: ObservedStatus.FAILED };
   }

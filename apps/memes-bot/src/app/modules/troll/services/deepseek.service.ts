@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import axios, { AxiosInstance } from 'axios';
+import { metrics } from '../../../shared/metrics';
 import { BaseConfigService } from '../../config/base-config.service';
 import {
   TROLL_HARD_MAX_TOKENS,
@@ -81,7 +82,9 @@ export class DeepSeekService {
     // Модель можно переопределить для отдельного вызова: диагностика дефекта
     // идёт на старшей модели, вся остальная работа — на рабочей.
     const useModel = model ?? this.config.deepseekModel;
+    const llmLabel = label ?? 'default';
     if (!this.enabled) {
+      metrics.llm.requests.inc({ model: useModel, label: llmLabel, result: 'disabled' });
       return '';
     }
     const tag = label ? `[${label}] ` : '';
@@ -92,6 +95,7 @@ export class DeepSeekService {
 
     if (!this.tryAcquire()) {
       this.logger.debug('DeepSeek: запрос не отправлен (лимит или перегрузка)');
+      metrics.llm.requests.inc({ model: useModel, label: llmLabel, result: 'skipped' });
       return '';
     }
 
@@ -101,11 +105,39 @@ export class DeepSeekService {
 
     this.logPrompt(messages, tag);
 
+    const startedAt = Date.now();
     try {
-      return await this.requestWithRetry(messages, temperature, cappedMaxTokens, json, tag, useModel);
+      const content = await this.requestWithRetry(messages, temperature, cappedMaxTokens, json, tag, useModel);
+      this.observeLlmRequest(useModel, llmLabel, 'ok', startedAt);
+      return content;
+    } catch (error) {
+      this.observeLlmRequest(useModel, llmLabel, this.llmErrorResult(error), startedAt);
+      throw error;
     } finally {
       this.release();
     }
+  }
+
+  /** Пишет в реестр исход и длительность одного запроса к модели. */
+  private observeLlmRequest(
+    model: string,
+    label: string,
+    result: string,
+    startedAt: number
+  ): void {
+    metrics.llm.requests.inc({ model, label, result });
+    metrics.llm.duration.observe({ model, label }, (Date.now() - startedAt) / 1000);
+  }
+
+  /** Различает таймаут и прочие ошибки модели для метки результата. */
+  private llmErrorResult(error: unknown): string {
+    if (
+      axios.isAxiosError(error) &&
+      (error.code === 'ECONNABORTED' || /abort|timeout/i.test(error.message))
+    ) {
+      return 'timeout';
+    }
+    return 'error';
   }
 
   /**
@@ -255,12 +287,21 @@ export class DeepSeekService {
   /** Текущее потребление DeepSeek за сутки (для админки). */
   public get usage(): { requests: number; tokens: number; costUsd: number; peak: boolean } {
     this.rolloverCounters();
+    this.syncDailyGauges();
     return {
       requests: this.dailyRequests,
       tokens: this.dailyTokens,
       costUsd: this.dailyCostUsd,
       peak: isDeepSeekPeak(),
     };
+  }
+
+  /** Проставляет дневные гейджи (лимит берётся из настроек). */
+  private syncDailyGauges(): void {
+    metrics.llm.dailyRequests.set(this.dailyRequests);
+    metrics.llm.dailyTokens.set(this.dailyTokens);
+    metrics.llm.dailyCostUsd.set(this.dailyCostUsd);
+    metrics.llm.dailyLimit.set(this.settings.current.dailyRequestLimit);
   }
 
   /**
@@ -272,11 +313,13 @@ export class DeepSeekService {
 
     const limit = this.settings.current.dailyRequestLimit;
     if (limit > 0 && this.dailyRequests >= limit) {
+      metrics.llm.limitHits.inc({ reason: 'daily' });
       this.warnBudgetOnce(`DeepSeek daily request limit reached (${this.dailyRequests}/${limit})`);
       return false;
     }
 
     if (this.activeRequests >= TROLL_MAX_CONCURRENT_REQUESTS) {
+      metrics.llm.limitHits.inc({ reason: 'concurrency' });
       this.warnBudgetOnce(
         `DeepSeek concurrency limit reached (${this.activeRequests}/${TROLL_MAX_CONCURRENT_REQUESTS})`
       );
@@ -285,6 +328,8 @@ export class DeepSeekService {
 
     this.activeRequests += 1;
     this.dailyRequests += 1;
+    metrics.llm.activeRequests.set(this.activeRequests);
+    this.syncDailyGauges();
     return true;
   }
 
@@ -314,6 +359,7 @@ export class DeepSeekService {
 
   private release(): void {
     this.activeRequests = Math.max(0, this.activeRequests - 1);
+    metrics.llm.activeRequests.set(this.activeRequests);
   }
 
   /**
@@ -333,6 +379,8 @@ export class DeepSeekService {
     const total = Number(usage.total_tokens);
     if (Number.isFinite(total) && total > 0) {
       this.dailyTokens += total;
+      metrics.llm.tokens.inc({ model, type: 'total' }, total);
+      metrics.llm.dailyTokens.set(this.dailyTokens);
     }
 
     const promptTokens = this.toCount(usage.prompt_tokens);
@@ -340,15 +388,31 @@ export class DeepSeekService {
     const cacheHitTokens = this.toCount(usage.prompt_cache_hit_tokens);
     const cacheMissTokens = this.toCount(usage.prompt_cache_miss_tokens);
 
+    if (promptTokens) {
+      metrics.llm.tokens.inc({ model, type: 'prompt' }, promptTokens);
+    }
+    if (completionTokens) {
+      metrics.llm.tokens.inc({ model, type: 'completion' }, completionTokens);
+    }
+    if (cacheHitTokens) {
+      metrics.llm.tokens.inc({ model, type: 'cache_hit' }, cacheHitTokens);
+    }
+    if (cacheMissTokens) {
+      metrics.llm.tokens.inc({ model, type: 'cache_miss' }, cacheMissTokens);
+    }
+
     if (!promptTokens && !completionTokens) {
       return;
     }
 
-    this.dailyCostUsd += estimateCostUsd(
+    const cost = estimateCostUsd(
       model,
       { promptTokens, completionTokens, cacheHitTokens, cacheMissTokens },
       { tariff: this.priceOverride }
     );
+    this.dailyCostUsd += cost;
+    metrics.llm.costUsd.inc({ model }, cost);
+    metrics.llm.dailyCostUsd.set(this.dailyCostUsd);
   }
 
   /** Значение токенов из ответа API, отсекает мусор и отрицательные числа. */
@@ -381,6 +445,7 @@ export class DeepSeekService {
       this.dailyRequests = 0;
       this.dailyTokens = 0;
       this.dailyCostUsd = 0;
+      this.syncDailyGauges();
     }
   }
 

@@ -2,6 +2,7 @@ import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { TelegramClient } from 'telegram';
 import { NewMessage, NewMessageEvent } from 'telegram/events';
+import { metrics } from '../../../shared/metrics';
 import { ClientBaseService } from '../../client/services/client-base.service';
 import { ParserClientService } from './parser-client.service';
 import { ParserSettingsService } from './parser-settings.service';
@@ -81,7 +82,7 @@ export class ParserService implements OnModuleInit {
     if (!this.enabled || this.busy.sweep) return;
     this.busy.sweep = true;
     try {
-      await this.collector.sweepAll();
+      await this.runJob('sweep', () => this.collector.sweepAll());
     } finally {
       this.busy.sweep = false;
     }
@@ -93,7 +94,7 @@ export class ParserService implements OnModuleInit {
     if (!this.enabled || this.busy.evaluate) return;
     this.busy.evaluate = true;
     try {
-      await this.evaluator.evaluateDue();
+      await this.runJob('evaluate', () => this.evaluator.evaluateDue());
     } finally {
       this.busy.evaluate = false;
     }
@@ -105,7 +106,7 @@ export class ParserService implements OnModuleInit {
     if (!this.enabled || this.busy.select) return;
     this.busy.select = true;
     try {
-      await this.selector.selectAndDeliver();
+      await this.runJob('select', () => this.selector.selectAndDeliver());
     } finally {
       this.busy.select = false;
     }
@@ -117,7 +118,7 @@ export class ParserService implements OnModuleInit {
     if (!this.enabled || this.busy.discovery) return;
     this.busy.discovery = true;
     try {
-      await this.discovery.runWebCheck();
+      await this.runJob('discovery', () => this.discovery.runWebCheck());
     } finally {
       this.busy.discovery = false;
     }
@@ -129,21 +130,41 @@ export class ParserService implements OnModuleInit {
     if (!this.enabled || this.busy.stats) return;
     this.busy.stats = true;
     try {
-      const client = this.parserClient.client();
-      if (!client) return;
+      await this.runJob('stats', async () => {
+        const client = this.parserClient.client();
+        if (!client) return;
 
-      const sources = await this.registry.listCollectible();
-      for (const source of sources) {
-        try {
-          await this.registry.refreshSourceStats(source, client);
-        } catch (error) {
-          this.logger.warn(`Parser stats: источник ${source.chatId}: ${error}`);
+        const sources = await this.registry.listCollectible();
+        for (const source of sources) {
+          try {
+            await this.registry.refreshSourceStats(source, client);
+          } catch (error) {
+            this.logger.warn(`Parser stats: источник ${source.chatId}: ${error}`);
+          }
         }
-      }
-      const disabled = await this.registry.pruneWeakSources();
-      if (disabled) this.logger.log(`Parser stats: прунинг отключил ${disabled} источников`);
+        const disabled = await this.registry.pruneWeakSources();
+        if (disabled) this.logger.log(`Parser stats: прунинг отключил ${disabled} источников`);
+      });
     } finally {
       this.busy.stats = false;
+    }
+  }
+
+  /**
+   * Общая обёртка cron-задач: длительность, исход и время последнего успеха.
+   * Ошибку не пробрасывает — расписание не должно падать от одного сбоя.
+   */
+  private async runJob(job: string, fn: () => Promise<unknown>): Promise<void> {
+    const stopTimer = metrics.parser.jobDuration.startTimer({ job });
+    try {
+      await fn();
+      metrics.parser.jobRuns.inc({ job, result: 'ok' });
+      metrics.parser.jobLastSuccess.set({ job }, Date.now() / 1000);
+    } catch (error) {
+      metrics.parser.jobRuns.inc({ job, result: 'error' });
+      this.logger.warn(`Parser job ${job}: ошибка: ${error}`);
+    } finally {
+      stopTimer();
     }
   }
 }

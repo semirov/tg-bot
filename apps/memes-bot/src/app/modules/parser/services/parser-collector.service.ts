@@ -6,6 +6,7 @@ import * as bigInt from 'big-integer';
 import { Api, TelegramClient } from 'telegram';
 import { TotalList } from 'telegram/Helpers';
 import { NewMessageEvent } from 'telegram/events';
+import { metrics, sourceLabel } from '../../../shared/metrics';
 import { CLOCK, Clock } from '../../../shared/clock';
 import { BaseConfigService } from '../../config/base-config.service';
 import { ObservedStatus } from '../constants/parser.constants';
@@ -66,7 +67,7 @@ export class ParserCollectorService {
       return;
     }
 
-    await this.upsertCandidate(message, String(chatId), null, media);
+    await this.upsertCandidate(message, source, null, media);
   }
 
   /** Дебаунс альбома: копим id элементов группы, затем создаём кандидата. */
@@ -119,7 +120,8 @@ export class ParserCollectorService {
     if (!message) return;
     const media = extractMediaInfo(message);
     if (!media) return;
-    await this.upsertCandidate(message, String(chatId), group.ids, media);
+    metrics.parser.albums.inc({ source: sourceLabel(source) });
+    await this.upsertCandidate(message, source, group.ids, media);
   }
 
   /** History sweep: добираем посты за окно по каждому источнику (cron). */
@@ -175,7 +177,7 @@ export class ParserCollectorService {
         continue;
       }
 
-      collected += await this.upsertCandidate(message, source.chatId, null, media);
+      collected += await this.upsertCandidate(message, source, null, media);
     }
 
     for (const ids of albums.values()) {
@@ -185,7 +187,8 @@ export class ParserCollectorService {
       if (!message) continue;
       const media = extractMediaInfo(message);
       if (!media) continue;
-      collected += await this.upsertCandidate(message, source.chatId, ids, media);
+      metrics.parser.albums.inc({ source: sourceLabel(source) });
+      collected += await this.upsertCandidate(message, source, ids, media);
       await this.guard.pace(400);
     }
 
@@ -195,15 +198,19 @@ export class ParserCollectorService {
   /** Идемпотентная запись кандидата + выгрузка кросс-ссылок в discovery. */
   private async upsertCandidate(
     message: Api.Message,
-    sourceChatId: string,
+    source: SourceChannelEntity,
     groupIds: number[] | null,
     media: { kind: 'photo' | 'video'; uniqueId: string }
   ): Promise<number> {
+    const sourceChatId = source.chatId;
     const sourceMessageId = message.id;
     const exists = await this.observedRepository.findOne({
       where: { sourceChatId, sourceMessageId },
     });
-    if (exists) return 0;
+    if (exists) {
+      metrics.parser.skipped.inc({ source: sourceLabel(source), reason: 'exists' });
+      return 0;
+    }
 
     const crossLinks = collectPostCrossLinks(message, [this.config.memeChanelId, this.config.userRequestMemeChannel, this.config.cringeMemeChannelId, this.config.bestMemeChanelId, Number(sourceChatId)]);
     const fwdChatId = crossLinks.find((hit) => hit.origin === 'fwd')?.chatId ?? null;
@@ -228,6 +235,7 @@ export class ParserCollectorService {
     candidate.reactions = this.reactionsTotal(message);
 
     await this.observedRepository.save(candidate);
+    metrics.parser.collected.inc({ source: sourceLabel(source), kind: media.kind });
 
     if (crossLinks.length) {
       await this.discovery.registerCrossLinks(crossLinks);

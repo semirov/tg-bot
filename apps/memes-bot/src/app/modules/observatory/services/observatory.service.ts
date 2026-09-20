@@ -22,6 +22,7 @@ import { DeduplicationService } from '../../bot/services/deduplication.service';
 import { UserModeratedPostService } from './user-moderated-post.service';
 import { MattermostService } from '../../mattermost/mattermost.service';
 import { TrollService } from '../../troll/services/troll.service';
+import { metrics } from '../../../shared/metrics';
 import { buildTelegramFileUrl, extractTelegramFileId } from '../../../shared/publication/media-url';
 import { buildPostUrl, TelegramPostSource } from '../../../shared/publication/telegram-link';
 import { sendPostToMattermost } from '../../../shared/publication/mattermost-post';
@@ -114,6 +115,7 @@ export class ObservatoryService implements OnModuleInit {
     const duplicates = await this.deduplicationService.checkDuplicate(imageHash);
     // если есть дубликат с похожестью больше 0.5 - выкидываем пост
     if (hasSimilarDistance(duplicates)) {
+      metrics.observatory.deduplicated.inc();
       return;
     }
 
@@ -143,6 +145,7 @@ export class ObservatoryService implements OnModuleInit {
       originalCaption: message.caption ?? null,
     });
     await this.observatoryPostRepository.save(post);
+    metrics.observatory.received.inc();
   }
 
   /**
@@ -338,6 +341,7 @@ export class ObservatoryService implements OnModuleInit {
         processedByModerator: { id: publishContext.processedByModerator },
       }
     );
+    metrics.observatory.published.inc({ mode: publishContext.mode });
 
     const user = await this.userService.repository.findOne({
       where: { id: publishContext.processedByModerator },
@@ -447,6 +451,7 @@ export class ObservatoryService implements OnModuleInit {
   }
 
   private async rejectObserverPost(ctx: BotContext): Promise<void> {
+    metrics.observatory.rejected.inc();
     await this.observatoryPostRepository.update(
       { requestChannelMessageId: ctx.callbackQuery.message.message_id },
       {

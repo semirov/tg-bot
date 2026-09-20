@@ -15,6 +15,7 @@ import { BaseConfigService } from '../../config/base-config.service';
 import { ClientSessionEntity } from '../entities/client-session.entity';
 import { BestMemePostEntity } from '../entities/best-meme-post.entity';
 import { AdDetector, ResolvedChannelEntity } from '../domain/ad-detector';
+import { metrics } from '../../../shared/metrics';
 
 export type BestMemeContext = {
   byViewPostMemeId?: number;
@@ -80,6 +81,7 @@ export class ClientBaseService implements OnModuleInit {
       await this.telegramClient.destroy();
     }
     await this.changeObserverState(false);
+    metrics.mtproto.connected.set(0);
   }
 
   private async startChannelObserver() {
@@ -113,6 +115,7 @@ export class ClientBaseService implements OnModuleInit {
         Logger.log('Observer station started', ClientBaseService.name);
       });
     await this.changeObserverState(true);
+    metrics.mtproto.connected.set(1);
 
     this.telegramClient.addEventHandler(async (event) => {
       this.onMessageEvent(event);
@@ -301,6 +304,7 @@ export class ClientBaseService implements OnModuleInit {
 
     // Парсер интересуют только медиапосты (фото/видео, в т.ч. альбомы).
     if (!hasMedia) return;
+    metrics.mtproto.channelMessages.inc();
 
     // Пытаемся обработать как альбом
     if (await this.handleAlbum(event)) return;
@@ -329,11 +333,13 @@ export class ClientBaseService implements OnModuleInit {
         return;
       }
       await event.message.forwardTo(target);
+      metrics.mtproto.forwarded.inc({ result: 'ok' });
       Logger.log(
         `Parser: post forwarded to bot (chat=${event.chatId}, msg=${event.message?.id})`,
         ClientBaseService.name
       );
     } catch (error) {
+      metrics.mtproto.forwarded.inc({ result: 'error' });
       Logger.error(`Cannot forward parsed post to bot: ${error}`, ClientBaseService.name);
     }
   }

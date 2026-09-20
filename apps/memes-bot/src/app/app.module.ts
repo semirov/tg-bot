@@ -21,6 +21,7 @@ import { AppConfigModule } from './modules/config/app-config.module';
 import { BaseConfigService } from './modules/config/base-config.service';
 import { CronModule } from './modules/cron/cron.module';
 import { MenuModule } from './modules/menus/menu.module';
+import { MetricsModule } from './modules/metrics/metrics.module';
 import { ObservatoryPostEntity } from './modules/observatory/entities/observatory-post.entity';
 import { UserMessageModeratedPostEntity } from './modules/observatory/entities/user-message-moderated-post.entity';
 import { UserModeratedPostEntity } from './modules/observatory/entities/user-moderated-post.entity';
@@ -109,6 +110,7 @@ import { SharedModule } from './shared/shared.module';
     MattermostModule,
     TrollModule,
     ParserModule,
+    MetricsModule,
   ],
   controllers: [],
   providers: [AppService],
