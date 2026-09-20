@@ -1,3 +1,10 @@
+# [0.19.0](https://github.com/semirov/tg-bot/compare/v0.18.1...v0.19.0) (2026-09-20)
+
+
+### Features
+
+* **best:** постоянный дедуп канала «Лучшее» ([#72](https://github.com/semirov/tg-bot/issues/72)) ([5a9d87a](https://github.com/semirov/tg-bot/commit/5a9d87a3d203e7337bc08a14db8dd1fd7fd68d1d))
+
 ## [0.18.1](https://github.com/semirov/tg-bot/compare/v0.18.0...v0.18.1) (2026-09-20)
 
 
