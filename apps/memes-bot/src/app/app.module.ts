@@ -16,6 +16,7 @@ import { ChannelMonitorModule } from './modules/channel-monitor/channel-monitor.
 import { ChannelMemeEntity } from './modules/channel-monitor/entities/channel-meme.entity';
 import { ClientModule } from './modules/client/client.module';
 import { ClientSessionEntity } from './modules/client/entities/client-session.entity';
+import { BestMemePostEntity } from './modules/client/entities/best-meme-post.entity';
 import { AppConfigModule } from './modules/config/app-config.module';
 import { BaseConfigService } from './modules/config/base-config.service';
 import { CronModule } from './modules/cron/cron.module';
@@ -69,6 +70,7 @@ import { SharedModule } from './shared/shared.module';
           UserRequestEntity,
           UserEntity,
           ClientSessionEntity,
+          BestMemePostEntity,
           ObservatoryPostEntity,
           PostSchedulerEntity,
           SettingsEntity,

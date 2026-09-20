@@ -13,6 +13,7 @@ import { BotContext } from '../../bot/interfaces/bot-context.interface';
 import { BOT } from '../../bot/providers/bot.provider';
 import { BaseConfigService } from '../../config/base-config.service';
 import { ClientSessionEntity } from '../entities/client-session.entity';
+import { BestMemePostEntity } from '../entities/best-meme-post.entity';
 import { AdDetector, ResolvedChannelEntity } from '../domain/ad-detector';
 
 export type BestMemeContext = {
@@ -28,7 +29,9 @@ export class ClientBaseService implements OnModuleInit {
     private baseConfigService: BaseConfigService,
     @Inject(BOT) private bot: Bot<BotContext>,
     @InjectRepository(ClientSessionEntity)
-    private userRequestRepository: Repository<ClientSessionEntity>
+    private userRequestRepository: Repository<ClientSessionEntity>,
+    @InjectRepository(BestMemePostEntity)
+    private bestMemeRepository: Repository<BestMemePostEntity>
   ) {}
 
   /** Чистая детекция рекламы (вынесена из god-class). */
@@ -477,6 +480,32 @@ export class ClientBaseService implements OnModuleInit {
         return;
       }
 
+      // Дедуп «Лучшего»: не отправляем пост, который уже был в этом канале.
+      const alreadyPosted = new Set(
+        (await this.bestMemeRepository.find()).map((row) => row.sourceMessageId)
+      );
+      if (bestByViews && alreadyPosted.has(bestByViews.id)) {
+        Logger.log(
+          `Best by views already posted to best channel (msg=${bestByViews.id}), skip`,
+          ClientBaseService.name
+        );
+        bestByViews = null;
+      }
+      if (bestByReactions && alreadyPosted.has(bestByReactions.id)) {
+        Logger.log(
+          `Best by reactions already posted to best channel (msg=${bestByReactions.id}), skip`,
+          ClientBaseService.name
+        );
+        bestByReactions = null;
+      }
+      if (!bestByViews && !bestByReactions) {
+        Logger.log('All best posts already sent to best channel', ClientBaseService.name);
+        if (!alternateChatId) {
+          this.bestMemesDailytSubject.next({});
+        }
+        return;
+      }
+
       // Проверяем, один ли это пост
       if (bestByViews?.id === bestByReactions?.id) {
         Logger.log(
@@ -488,10 +517,12 @@ export class ClientBaseService implements OnModuleInit {
           false,
           alternateChatId
         );
+        await this.rememberBestPost(bestByViews.id, context.byViewPostBestMemeId);
       } else {
         if (bestByViews) {
           Logger.log(`Posting best by views: ${maxViews} views`, ClientBaseService.name);
-          await this.copyMessage(bestByViews.id, true, alternateChatId);
+          const viewsCopyId = await this.copyMessage(bestByViews.id, true, alternateChatId);
+          await this.rememberBestPost(bestByViews.id, viewsCopyId);
         }
         if (bestByReactions) {
           Logger.log(
@@ -503,6 +534,7 @@ export class ClientBaseService implements OnModuleInit {
             false,
             alternateChatId
           );
+          await this.rememberBestPost(bestByReactions.id, context.byLikePostBestMemeId);
         }
       }
       if (!alternateChatId) {
@@ -514,6 +546,23 @@ export class ClientBaseService implements OnModuleInit {
       // пользователям не было смысла. Сообщаем «лучших нет».
       this.bestMemesDailytSubject.next({});
       throw error;
+    }
+  }
+
+  /** Запоминает отправленный в «Лучшее» пост (дедуп на будущие дни). */
+  private async rememberBestPost(sourceMessageId: number, bestChannelMessageId?: number): Promise<void> {
+    try {
+      await this.bestMemeRepository.save(
+        this.bestMemeRepository.create({
+          sourceMessageId,
+          bestChannelMessageId: bestChannelMessageId ?? null,
+        })
+      );
+    } catch (error) {
+      Logger.error(
+        `Cannot remember best post ${sourceMessageId}: ${error}`,
+        ClientBaseService.name
+      );
     }
   }
 
