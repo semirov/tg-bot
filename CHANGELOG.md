@@ -1,3 +1,10 @@
+# [0.21.0](https://github.com/semirov/tg-bot/compare/v0.20.0...v0.21.0) (2026-09-20)
+
+
+### Features
+
+* **parser:** режим по требованию, авто-discovery, интерес из модерации, blacklist и форс ([a1aeac4](https://github.com/semirov/tg-bot/commit/a1aeac4c62281bbe8aec662b5592a9e71821ae41))
+
 # [0.20.0](https://github.com/semirov/tg-bot/compare/v0.19.0...v0.20.0) (2026-09-20)
 
 
