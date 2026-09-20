@@ -264,7 +264,9 @@ describe('parser services branch backfill', () => {
 
     const result = await service.checkCandidate(candidate({}));
     expect(result.errEstimate).toBeNull();
-    expect(result.verdict).toBe('rejected');
+    // Нет данных для ERR — не вердикт, кандидат остаётся в очереди проверки.
+    expect(result.verdict).toBe('pending');
+    expect(result.reason).toBe('err-unavailable');
   });
 
   it('discovery: postsPerDay null не мешает гейту; ai nsfw отбрасывает', async () => {

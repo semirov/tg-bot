@@ -227,6 +227,45 @@ describe('ParserDiscoveryService', () => {
     });
   });
 
+  describe('listForReview / checkCandidateById / resetToPending', () => {
+    it('listForReview берёт ready и pending', async () => {
+      const { service, candidateRepo } = setup();
+      candidateRepo.find.mockResolvedValue([candidate({})]);
+
+      await service.listForReview(8);
+
+      expect(candidateRepo.find).toHaveBeenCalledWith({
+        where: expect.arrayContaining([
+          { verdict: CandidateVerdict.READY },
+          { verdict: CandidateVerdict.PENDING },
+        ]),
+        order: { mentions: 'DESC' },
+        take: 8,
+      });
+    });
+
+    it('checkCandidateById: нет кандидата → null', async () => {
+      const { service } = setup();
+      expect(await service.checkCandidateById(99)).toBeNull();
+    });
+
+    it('resetToPending сбрасывает вердикт, причину и попытки', async () => {
+      const { service, candidateRepo } = setup();
+      candidateRepo.findOne.mockResolvedValue(
+        candidate({ verdict: CandidateVerdict.REJECTED, reason: 'err<0.1', attempts: 3 })
+      );
+
+      const result = await service.resetToPending(1);
+
+      expect(result).toMatchObject({ verdict: CandidateVerdict.PENDING, reason: null, attempts: 0 });
+    });
+
+    it('resetToPending: нет кандидата → null', async () => {
+      const { service } = setup();
+      expect(await service.resetToPending(99)).toBeNull();
+    });
+  });
+
   describe('approve', () => {
     it('web_only: добавляет источник и помечает кандидата', async () => {
       const { service, registry, candidateRepo, client } = setup({

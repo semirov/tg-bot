@@ -222,12 +222,16 @@ describe('parser branches round 2', () => {
     const service = new ParserModerationService(
       bot,
       observedRepo,
-      { buildCandidateKeyboard: jest.fn() } as never,
+      { buildCandidateKeyboard: jest.fn(), buildCandidateCaption: jest.fn(() => 'card') } as never,
       { checkPermission: jest.fn(() => true) } as never,
       scheduler,
       cringe,
       { createPublishedPostHash: jest.fn() } as never,
-      { approve: jest.fn().mockResolvedValue({ id: 1 }), reject: jest.fn().mockResolvedValue({ id: 1 }) } as never,
+      {
+        approve: jest.fn().mockResolvedValue({ id: 1 }),
+        reject: jest.fn().mockResolvedValue({ id: 1 }),
+        repository: { findOne: jest.fn().mockResolvedValue({ id: 1, reason: null }) },
+      } as never,
       makeConfig(),
       { repository: { findOne: jest.fn().mockResolvedValue(null), save: jest.fn() } } as never
     );

@@ -12,6 +12,7 @@ import {
   CandidateVerdict,
   DISCOVERY_CROSS_LIMIT_PER_RUN,
   DISCOVERY_WEB_CHECK_PER_RUN,
+  DISCOVERY_REVIEW_LIMIT,
   SourceCategory,
   SourceStatus,
 } from '../constants/parser.constants';
@@ -265,6 +266,24 @@ export class ParserDiscoveryService {
     return candidate;
   }
 
+  /** Ручная перепроверка кандидата (кнопка «🔎 Перепроверить»). */
+  public async checkCandidateById(candidateId: number): Promise<SourceCandidateEntity | null> {
+    const candidate = await this.candidateRepository.findOne({ where: { id: candidateId } });
+    if (!candidate) return null;
+    return this.checkCandidate(candidate);
+  }
+
+  /** Вернуть кандидата в очередь проверки (сброс вердикта). */
+  public async resetToPending(candidateId: number): Promise<SourceCandidateEntity | null> {
+    const candidate = await this.candidateRepository.findOne({ where: { id: candidateId } });
+    if (!candidate) return null;
+    candidate.verdict = CandidateVerdict.PENDING;
+    candidate.reason = null;
+    candidate.attempts = 0;
+    await this.candidateRepository.save(candidate);
+    return candidate;
+  }
+
   public async reject(candidateId: number, reason = 'owner-rejected'): Promise<SourceCandidateEntity | null> {
     const candidate = await this.candidateRepository.findOne({ where: { id: candidateId } });
     if (!candidate) return null;
@@ -283,13 +302,29 @@ export class ParserDiscoveryService {
     });
   }
 
+  /**
+   * Кандидаты для просмотра владельцем: проверенные (ready) и ещё не
+   * проверенные (pending) — по убыванию упоминаний.
+   */
+  public listForReview(limit = DISCOVERY_REVIEW_LIMIT): Promise<SourceCandidateEntity[]> {
+    return this.candidateRepository.find({
+      where: [{ verdict: CandidateVerdict.READY }, { verdict: CandidateVerdict.PENDING }],
+      order: { mentions: 'DESC' },
+      take: limit,
+    });
+  }
+
   private evaluateGate(
     candidate: SourceCandidateEntity,
     errMin: number,
     aiRelevanceMin: number,
     aiEnabled: boolean
   ): { passed: boolean; reason?: string } {
-    if ((candidate.errEstimate ?? 0) < errMin) {
+    if (candidate.errEstimate == null) {
+      // Нет данных о просмотрах/подписчиках — не вердикт, дождёмся следующей проверки.
+      return { passed: false, reason: 'err-unavailable' };
+    }
+    if (candidate.errEstimate < errMin) {
       return { passed: false, reason: `err<${errMin}` };
     }
     if (candidate.postsPerDay != null && (candidate.postsPerDay < 1 || candidate.postsPerDay > 60)) {
@@ -320,7 +355,8 @@ export class ParserDiscoveryService {
     return (
       reason === 'subscriber-check-failed' ||
       reason === 'web-preview-empty' ||
-      reason === 'username-unresolved'
+      reason === 'username-unresolved' ||
+      reason === 'err-unavailable'
     );
   }
 

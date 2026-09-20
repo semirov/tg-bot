@@ -212,7 +212,59 @@ export class ParserDeliveryService {
     return new InlineKeyboard()
       .text('🌐 Web-only', `${CANDIDATE_CB_PREFIX}:wo:${candidateId}`)
       .text('➕ Джойнить', `${CANDIDATE_CB_PREFIX}:jo:${candidateId}`)
+      .row()
+      .text('🔎 Перепроверить', `${CANDIDATE_CB_PREFIX}:chk:${candidateId}`)
+      .text('↩️ В проверку', `${CANDIDATE_CB_PREFIX}:rst:${candidateId}`)
+      .row()
       .text('❌ Отклонить', `${CANDIDATE_CB_PREFIX}:rj:${candidateId}`);
+  }
+
+  /**
+   * Карточка кандидата для админ-меню: кликабельная ссылка на канал +
+   * метрики (упоминания, подписчики, ERR, частота постов, вердикт/причина).
+   */
+  public buildCandidateCaption(candidate: {
+    id: number;
+    username: string | null;
+    chatId: string | number | null;
+    title: string | null;
+    mentions: number;
+    subscribers: number | null;
+    errEstimate: number | null;
+    postsPerDay: number | null;
+    verdict: string;
+    reason?: string | null;
+  }): string {
+    const name = escapeHtml(candidate.title ?? candidate.username ?? `кандидат #${candidate.id}`);
+    const link = this.buildCandidateLink(candidate);
+    const verdictIcon: Record<string, string> = {
+      ready: '🟡 готов',
+      pending: '⏳ ждёт проверки',
+      approved: '✅ принят',
+      rejected: '⛔️ отклонён',
+    };
+    const rows = [
+      `${verdictIcon[candidate.verdict] ?? candidate.verdict} · ${link ? `<a href="${link}">${name}</a>` : name}`,
+      `упоминаний: ${candidate.mentions}`,
+      candidate.subscribers != null ? `👥 ${candidate.subscribers}` : '',
+      candidate.errEstimate != null ? `ERR ${(candidate.errEstimate * 100).toFixed(1)}%` : '',
+      candidate.postsPerDay != null ? `${candidate.postsPerDay.toFixed(1)} постов/сутки` : '',
+      candidate.reason ? `причина: ${candidate.reason}` : '',
+    ];
+    return rows.filter(Boolean).join(' · ');
+  }
+
+  /** Публичная ссылка на канал-кандидат (то, что можно открыть в Telegram). */
+  public buildCandidateLink(candidate: {
+    username: string | null;
+    chatId: string | number | null;
+  }): string | null {
+    if (candidate.username) return `https://t.me/${candidate.username}`;
+    if (candidate.chatId != null) {
+      const internal = channelInternalId(Number(candidate.chatId));
+      if (internal) return `https://t.me/c/${internal}`;
+    }
+    return null;
   }
 
   private async fail(

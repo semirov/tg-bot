@@ -234,6 +234,66 @@ describe('ParserDeliveryService', () => {
     expect(result).toMatchObject({ ok: false, status: ObservedStatus.FAILED });
   });
 
+  it('карточка кандидата: ссылка, метрики, вердикт и причина', () => {
+    const { service } = setup({});
+
+    const full = service.buildCandidateCaption({
+      id: 7,
+      username: 'electropulth',
+      chatId: '-100123',
+      title: 'Мемы <b>',
+      mentions: 13,
+      subscribers: 10000,
+      errEstimate: 0.2,
+      postsPerDay: 5.5,
+      verdict: 'ready',
+      reason: null,
+    });
+    expect(full).toContain('https://t.me/electropulth');
+    expect(full).toContain('🟡 готов');
+    expect(full).toContain('13');
+    expect(full).toContain('20.0%');
+    expect(full).toContain('Мемы &lt;b&gt;');
+
+    const minimal = service.buildCandidateCaption({
+      id: 8,
+      username: null,
+      chatId: null,
+      title: null,
+      mentions: 1,
+      subscribers: null,
+      errEstimate: null,
+      postsPerDay: null,
+      verdict: 'rejected',
+      reason: 'err<0.1',
+    });
+    expect(minimal).toContain('⛔️ отклонён');
+    expect(minimal).toContain('кандидат #8');
+    expect(minimal).toContain('причина: err<0.1');
+  });
+
+  it('ссылка кандидата: username → t.me, chatId → t.me/c, иначе null', () => {
+    const { service } = setup({});
+    expect(service.buildCandidateLink({ username: 'x', chatId: null })).toBe('https://t.me/x');
+    expect(
+      service.buildCandidateLink({ username: null, chatId: '-1001234567890' })
+    ).toBe('https://t.me/c/1234567890');
+    expect(service.buildCandidateLink({ username: null, chatId: null })).toBeNull();
+  });
+
+  it('клавиатура кандидата содержит перепроверку и возврат в очередь', () => {
+    const { service } = setup({});
+    const keyboard = service.buildCandidateKeyboard(7) as unknown as {
+      inline_keyboard: Array<Array<{ callback_data: string }>>;
+    };
+    const data = keyboard.inline_keyboard.flat().map((b) => b.callback_data);
+    expect(data).toContain('prsc:wo:7');
+    expect(data).toContain('prsc:jo:7');
+    expect(data).toContain('prsc:chk:7');
+    expect(data).toContain('prsc:rst:7');
+    expect(data).toContain('prsc:rj:7');
+  });
+
   it('клавиатура карточки — raw inline keyboard', () => {
     const { service } = setup({});
     const keyboard = service.buildKeyboard(7) as unknown as {

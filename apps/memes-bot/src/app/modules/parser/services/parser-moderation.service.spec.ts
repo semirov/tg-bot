@@ -74,11 +74,14 @@ const setup = (overrides: { candidate?: Record<string, unknown>; allowed?: boole
   const discovery = {
     approve: jest.fn().mockResolvedValue({ id: 1, verdict: 'approved' }),
     reject: jest.fn().mockResolvedValue({ id: 1, verdict: 'rejected' }),
+    resetToPending: jest.fn().mockResolvedValue({ id: 1, verdict: 'pending' }),
+    checkCandidateById: jest.fn().mockResolvedValue({ id: 1, verdict: 'ready' }),
+    repository: { findOne: jest.fn().mockResolvedValue({ id: 1, verdict: 'ready', reason: null }) },
   };
   const service = new ParserModerationService(
     makeBot(),
     observedRepo,
-    { buildCandidateKeyboard: jest.fn() } as never,
+    { buildCandidateKeyboard: jest.fn(), buildCandidateCaption: jest.fn(() => 'card') } as never,
     makeUserService(overrides.allowed ?? true),
     scheduler,
     cringe,
@@ -106,12 +109,12 @@ describe('ParserModerationService', () => {
     const service = new ParserModerationService(
       bot,
       observedRepo,
-      { buildCandidateKeyboard: jest.fn() } as never,
+      { buildCandidateKeyboard: jest.fn(), buildCandidateCaption: jest.fn(() => 'card') } as never,
       makeUserService(),
       makeScheduler(),
       makeCringe(),
       makeDedup(),
-      { approve: jest.fn(), reject: jest.fn() } as never,
+      { approve: jest.fn(), reject: jest.fn(), repository: { findOne: jest.fn() } } as never,
       makeConfig(),
       { repository: { findOne: jest.fn().mockResolvedValue(null), save: jest.fn() } } as never
     );
@@ -290,19 +293,60 @@ describe('ParserModerationService', () => {
       await service.handleCandidate(ctx, 'wo', 1);
 
       expect(discovery.approve).toHaveBeenCalledWith(1, 'web_only');
-      expect(ctx.editMessageText).toHaveBeenCalledWith(expect.stringContaining('добавлен'));
+      expect(ctx.editMessageText).toHaveBeenCalledWith(
+        expect.stringContaining('добавлен'),
+        expect.objectContaining({ parse_mode: 'HTML' })
+      );
     });
 
     it('approve не удался → предупреждение', async () => {
       const { service } = setup();
       const discovery = (service as never as { discovery: any }).discovery;
       discovery.approve.mockResolvedValue(null);
+      discovery.repository.findOne.mockResolvedValue({ id: 1, reason: 'approve-blocked:pending' });
       const ctx = makeCtx();
 
       await service.handleCandidate(ctx, 'jo', 1);
 
       expect(discovery.approve).toHaveBeenCalledWith(1, 'join');
-      expect(ctx.answerCallbackQuery).toHaveBeenCalledWith('Не удалось добавить (см. лог)');
+      expect(ctx.answerCallbackQuery).toHaveBeenCalledWith(
+        expect.stringContaining('Кандидат не подтверждён')
+      );
+    });
+
+    it('chk: ручная перепроверка и правка карточки', async () => {
+      const { service } = setup();
+      const discovery = (service as never as { discovery: any }).discovery;
+      const ctx = makeCtx();
+
+      await service.handleCandidate(ctx, 'chk', 1);
+
+      expect(discovery.checkCandidateById).toHaveBeenCalledWith(1);
+      expect(ctx.answerCallbackQuery).toHaveBeenCalledWith('Проверяю…');
+      expect(ctx.editMessageText).toHaveBeenCalled();
+    });
+
+    it('rst: возврат в очередь проверки', async () => {
+      const { service } = setup();
+      const discovery = (service as never as { discovery: any }).discovery;
+      const ctx = makeCtx();
+
+      await service.handleCandidate(ctx, 'rst', 1);
+
+      expect(discovery.resetToPending).toHaveBeenCalledWith(1);
+      expect(ctx.answerCallbackQuery).toHaveBeenCalledWith('Вернул в проверку');
+    });
+
+    it('approve отклонён по обычной причине → показываем причину', async () => {
+      const { service } = setup();
+      const discovery = (service as never as { discovery: any }).discovery;
+      discovery.approve.mockResolvedValue(null);
+      discovery.repository.findOne.mockResolvedValue({ id: 1, reason: 'join-failed' });
+      const ctx = makeCtx();
+
+      await service.handleCandidate(ctx, 'wo', 1);
+
+      expect(ctx.answerCallbackQuery).toHaveBeenCalledWith('Не получилось: join-failed');
     });
 
     it('edit падает → не роняем', async () => {

@@ -9,6 +9,7 @@ import { AdminMenusEnum } from '../../menus/constants/bot-menus.enum';
 import { MenuPresenter } from '../../menus/menu-presenter';
 import {
   CandidateVerdict,
+  DISCOVERY_REVIEW_LIMIT,
   ObservedStatus,
   SourceCategory,
   SourceStatus,
@@ -172,25 +173,18 @@ export class ParserMenuService implements OnModuleInit {
 
     menu.text(
       async () =>
-        `Кандидаты: ${await this.discovery.repository.count({ where: { verdict: CandidateVerdict.READY } })}`,
+        `Кандидаты: ${await this.discovery.repository.count({
+          where: [{ verdict: CandidateVerdict.READY }, { verdict: CandidateVerdict.PENDING }],
+        })}`,
       guard(async (ctx) => {
-        const candidates = await this.discovery.listReady(5);
+        const candidates = await this.discovery.listForReview(DISCOVERY_REVIEW_LIMIT);
         if (!candidates.length) {
-          await ctx.answerCallbackQuery('Готовых кандидатов нет');
+          await ctx.answerCallbackQuery('Кандидатов нет');
           return;
         }
         for (const candidate of candidates) {
-          const caption = [
-            `🧭 Кандидат: ${candidate.title ?? candidate.username ?? candidate.key}`,
-            `· упоминаний: ${candidate.mentions}`,
-            candidate.subscribers ? `· 👥 ${candidate.subscribers}` : '',
-            candidate.errEstimate != null ? `· ERR ~${Math.round(candidate.errEstimate * 100)}%` : '',
-            candidate.postsPerDay != null ? `· ${candidate.postsPerDay.toFixed(1)} постов/сутки` : '',
-            candidate.aiVerdict ? `· AI: ${candidate.aiVerdict.category} (${candidate.aiVerdict.relevance.toFixed(2)})` : '',
-          ]
-            .filter(Boolean)
-            .join(' ');
-          await this.bot.api.sendMessage(this.ownerId(ctx), caption, {
+          await this.bot.api.sendMessage(this.ownerId(ctx), this.delivery.buildCandidateCaption(candidate), {
+            parse_mode: 'HTML',
             reply_markup: this.delivery.buildCandidateKeyboard(candidate.id),
           });
         }
