@@ -63,8 +63,13 @@ function setup() {
   const repo = makeRepo();
   const bot = makeBot();
   const config = makeConfig();
-  const service = new ClientBaseService(config as any, bot as any, repo as any);
-  return { service, repo, bot, config };
+  const bestMemeRepo: any = {
+    find: jest.fn().mockResolvedValue([]),
+    create: jest.fn((value) => value),
+    save: jest.fn().mockResolvedValue(undefined),
+  };
+  const service = new ClientBaseService(config as any, bot as any, repo as any, bestMemeRepo as any);
+  return { service, repo, bot, config, bestMemeRepo };
 }
 
 function urlEntity(offset: number, length: number) {
@@ -896,6 +901,44 @@ describe('ClientBaseService', () => {
       await service.postDailyBestMeme();
 
       expect(bot.api.copyMessage).toHaveBeenCalledTimes(2);
+    });
+
+    it('дедуп: уже отправленный в «Лучшее» пост не публикуется повторно', async () => {
+      const { service, bestMemeRepo } = setup();
+      bestMemeRepo.find.mockResolvedValue([{ sourceMessageId: 11 }]);
+      (service as any).telegramClient = {
+        getEntity: jest.fn().mockResolvedValue({}),
+        getMessages: jest.fn().mockResolvedValue([
+          { id: 11, date: Math.floor(Date.now() / 1000), views: 100, reactions: undefined, photo: {} },
+        ]),
+      };
+      const received: any[] = [];
+      service.bestMemesDaily$.subscribe((v) => received.push(v));
+
+      const copySpy = jest.spyOn(service as any, 'copyMessage').mockResolvedValue(1);
+
+      await service.postDailyBestMeme();
+
+      expect(copySpy).not.toHaveBeenCalled();
+      expect(received).toEqual([{}]);
+    });
+
+    it('дедуп: новый лучший пост публикуется и запоминается', async () => {
+      const { service, bestMemeRepo } = setup();
+      bestMemeRepo.find.mockResolvedValue([]);
+      jest.spyOn(service as any, 'copyMessage').mockResolvedValue(123);
+      (service as any).telegramClient = {
+        getEntity: jest.fn().mockResolvedValue({}),
+        getMessages: jest.fn().mockResolvedValue([
+          { id: 21, date: Math.floor(Date.now() / 1000), views: 500, reactions: undefined, photo: {} },
+        ]),
+      };
+
+      await service.postDailyBestMeme();
+
+      expect(bestMemeRepo.save).toHaveBeenCalledWith(
+        expect.objectContaining({ sourceMessageId: 21, bestChannelMessageId: 123 })
+      );
     });
 
     it('в случае ошибки шлёт запасное событие и пробрасывает ошибку', async () => {
