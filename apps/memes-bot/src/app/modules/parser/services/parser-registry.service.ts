@@ -4,12 +4,14 @@ import { Inject } from '@nestjs/common';
 import { LessThan, MoreThan, Repository } from 'typeorm';
 import * as bigInt from 'big-integer';
 import { Api, TelegramClient } from 'telegram';
+import { TotalList } from 'telegram/Helpers';
 import { CLOCK, Clock } from '../../../shared/clock';
 import { BaseConfigService } from '../../config/base-config.service';
 import { SourceCategory, SourceStatus } from '../constants/parser.constants';
 import { ObservedPostEntity } from '../entities/observed-post.entity';
 import { SourceChannelEntity, StoredBaseline } from '../entities/source-channel.entity';
-import { computeBaseline } from '../domain/parser-scoring';
+import { computeBaseline, ChannelBaseline } from '../domain/parser-scoring';
+import { POSITIVE_REACTIONS } from '../constants/parser.constants';
 import { ParserMtprotoGuard } from './parser-mtproto-guard.service';
 import { ParserClientService } from './parser-client.service';
 import { ParserSettingsService } from './parser-settings.service';
@@ -172,6 +174,62 @@ export class ParserRegistryService {
     }
 
     return this.sourceRepository.save(source);
+  }
+
+  /**
+   * Первичный базлайн из истории канала (getHistory): нужен, когда
+   * базлайн ещё не накопился из оценённых кандидатов — иначе оценки
+   * никогда не стартуют (круг: baseline ← metrics ← evaluation ← baseline).
+   */
+  public async seedBaselineFromHistory(
+    source: SourceChannelEntity,
+    client: TelegramClient
+  ): Promise<ChannelBaseline | null> {
+    if (!source.rawChatId && !source.username) return null;
+    const peer = source.rawChatId ? bigInt(source.rawChatId) : source.username;
+
+    const messages = await this.guard.run<TotalList<Api.Message>>('getHistory:seed', () =>
+      client.getMessages(peer, { limit: 50 })
+    );
+    if (!messages?.length) return null;
+
+    const posts = messages
+      .filter((message) => message && this.hasMedia(message) && Number(message.views ?? 0) > 0)
+      .slice(0, 30)
+      .map((message) => ({
+        views: Number(message.views ?? 0),
+        reactions: (message.reactions?.results ?? []).reduce(
+          (sum, item) => sum + Number(item.count ?? 0),
+          0
+        ),
+        posShare: this.posShareOf(message),
+      }));
+    if (posts.length < 5) return null;
+
+    const baseline = computeBaseline(posts, this.clock.now());
+    source.baseline = baseline;
+    source.statsUpdatedAt = this.clock.now();
+    await this.sourceRepository.save(source);
+    this.logger.log(`Parser: seeded baseline для ${source.title ?? source.chatId} (n=${posts.length})`);
+    return baseline;
+  }
+
+  private hasMedia(message: Api.Message): boolean {
+    return Boolean(message.photo || message.video);
+  }
+
+  private posShareOf(message: Api.Message): number {
+    const results = message.reactions?.results ?? [];
+    let total = 0;
+    let positive = 0;
+    for (const item of results) {
+      const count = Number(item.count ?? 0);
+      total += count;
+      if (POSITIVE_REACTIONS.includes((item.reaction as { emoticon?: string })?.emoticon ?? '')) {
+        positive += count;
+      }
+    }
+    return total > 0 ? positive / total : 0;
   }
 
   /** Базлайн по последним собранным постам источника (с просмотрами). */

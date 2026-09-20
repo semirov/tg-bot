@@ -69,6 +69,7 @@ const makeRegistry = (overrides: Record<string, unknown> = {}): any => ({
     save: jest.fn().mockImplementation(async (value) => value),
   },
   computeBaselineFor: jest.fn().mockResolvedValue(baseline),
+  seedBaselineFromHistory: jest.fn().mockResolvedValue(null),
 });
 
 const makeParserClient = (): any => {
