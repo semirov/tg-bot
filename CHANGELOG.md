@@ -1,3 +1,10 @@
+## [0.17.2](https://github.com/semirov/tg-bot/compare/v0.17.1...v0.17.2) (2026-09-20)
+
+
+### Bug Fixes
+
+* **parser:** gramJS peer — marked id вместо raw ([#66](https://github.com/semirov/tg-bot/issues/66)) ([be16c76](https://github.com/semirov/tg-bot/commit/be16c7655b8ae890ea6500b5164c9b8dd81a9a03))
+
 ## [0.17.1](https://github.com/semirov/tg-bot/compare/v0.17.0...v0.17.1) (2026-09-20)
 
 
