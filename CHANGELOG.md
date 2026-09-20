@@ -1,3 +1,10 @@
+# [0.18.0](https://github.com/semirov/tg-bot/compare/v0.17.3...v0.18.0) (2026-09-20)
+
+
+### Features
+
+* **parser:** карточки кандидатов со ссылками/метриками + перепроверка ([#70](https://github.com/semirov/tg-bot/issues/70)) ([b3c4015](https://github.com/semirov/tg-bot/commit/b3c4015204f7ec29d6b2991577b20fbf5c544bf7))
+
 ## [0.17.3](https://github.com/semirov/tg-bot/compare/v0.17.2...v0.17.3) (2026-09-20)
 
 
