@@ -1,3 +1,10 @@
+## [0.17.1](https://github.com/semirov/tg-bot/compare/v0.17.0...v0.17.1) (2026-09-20)
+
+
+### Bug Fixes
+
+* **parser:** разорвать круг базлайна — seed из истории + views при сборе ([#65](https://github.com/semirov/tg-bot/issues/65)) ([7dd0beb](https://github.com/semirov/tg-bot/commit/7dd0beb2079b777d5662c690db6510a441987616))
+
 # [0.17.0](https://github.com/semirov/tg-bot/compare/v0.16.1...v0.17.0) (2026-09-20)
 
 
