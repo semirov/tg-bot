@@ -31,6 +31,11 @@ import { YearResultsModule } from './modules/year-results/year-results.module';
 import { MattermostModule } from './modules/mattermost/mattermost.module';
 import { TrollChatEntity } from './modules/troll/entities/troll-chat.entity';
 import { TrollDefectEntity } from './modules/troll/entities/troll-defect.entity';
+import { ParserModule } from './modules/parser/parser.module';
+import { ObservedPostEntity } from './modules/parser/entities/observed-post.entity';
+import { ParserSettingsEntity } from './modules/parser/entities/parser-settings.entity';
+import { SourceCandidateEntity } from './modules/parser/entities/source-candidate.entity';
+import { SourceChannelEntity } from './modules/parser/entities/source-channel.entity';
 import { TrollMessageEntity } from './modules/troll/entities/troll-message.entity';
 import { TrollPredictionEntity } from './modules/troll/entities/troll-prediction.entity';
 import { TrollSettingsEntity } from './modules/troll/entities/troll-settings.entity';
@@ -79,6 +84,10 @@ import { SharedModule } from './shared/shared.module';
           TrollMessageEntity,
           TrollPredictionEntity,
           TrollDefectEntity,
+          SourceChannelEntity,
+          ObservedPostEntity,
+          SourceCandidateEntity,
+          ParserSettingsEntity,
         ],
         synchronize: true,
         extra: configService.useSSL
@@ -99,6 +108,7 @@ import { SharedModule } from './shared/shared.module';
     S3Module,
     MattermostModule,
     TrollModule,
+    ParserModule,
   ],
   controllers: [],
   providers: [AppService],

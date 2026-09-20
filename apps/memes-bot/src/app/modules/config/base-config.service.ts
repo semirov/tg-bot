@@ -44,6 +44,16 @@ export class BaseConfigService {
     return Number.isFinite(parsed) ? parsed : undefined;
   }
 
+  /**
+   * Мастер-выключатель парсера (env). По умолчанию включён: конвейер живёт
+   * параллельно обсерватории, пока владелец не отключит старый путь.
+   */
+  get parserEnabled(): boolean {
+    const raw = this.configService.get<string>('PARSER_ENABLED');
+    if (raw === undefined || raw === null || `${raw}`.trim() === '') return true;
+    return `${raw}`.toLowerCase() !== 'false';
+  }
+
   get databaseHost(): string {
     return this.configService.getOrThrow<string>('DATABASE_HOST');
   }

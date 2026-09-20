@@ -1,0 +1,89 @@
+import { Column, Entity, UpdateDateColumn } from 'typeorm';
+
+/**
+ * Настройки парсера (singleton, id=1, как у тролля). Значения колонок —
+ * дефолты, рантайм читает кэш через ParserSettingsService.
+ */
+@Entity()
+export class ParserSettingsEntity {
+  @Column('int', { primary: true })
+  id: number;
+
+  /** Мастер-выключатель конвейера (кроны и live-сбор). */
+  @Column('bool', { default: true })
+  enabled: boolean;
+
+  /** Посты из парсера в предложку за сутки. */
+  @Column('int', { default: 12 })
+  dailyLimit: number;
+
+  /** Максимум постов с одного источника за сутки. */
+  @Column('int', { default: 2 })
+  sourceDailyCap: number;
+
+  /** Доля кринжа от дневного лимита (0..1). */
+  @Column('real', { default: 0.25 })
+  cringeShare: number;
+
+  /** Абсолютный пол по просмотрам. */
+  @Column('int', { default: 200 })
+  minViews: number;
+
+  /** Абсолютный пол по реакциям. */
+  @Column('int', { default: 3 })
+  minReactions: number;
+
+  /** Пост должен быть лучше медианы канала в nvMin раз (или nrMin/nr). */
+  @Column('real', { default: 1.5 })
+  nvMin: number;
+
+  @Column('real', { default: 2 })
+  nrMin: number;
+
+  /** Минимальная доля положительных реакций. */
+  @Column('real', { default: 0.25 })
+  posShareMin: number;
+
+  /** Скор раннего выхода (t+2ч): nv+nr >= hotScore. */
+  @Column('real', { default: 4 })
+  hotScore: number;
+
+  /** Минимальная доля 🤡/💩 для кринж-категории. */
+  @Column('real', { default: 0.12 })
+  cringeShareMin: number;
+
+  /** Абсолютный пол просмотров для кринжа. */
+  @Column('int', { default: 100 })
+  cringeMinViews: number;
+
+  /** Минимальный ERR канала (медиана просмотров / подписчики). */
+  @Column('real', { default: 0.15 })
+  errMin: number;
+
+  /** Максимум активных источников (бюджет каналов). */
+  @Column('int', { default: 20 })
+  maxSources: number;
+
+  /** Ранний отбор, часов после сбора. */
+  @Column('int', { default: 2 })
+  evalPreHours: number;
+
+  /** Финальный отбор, часов после сбора. */
+  @Column('int', { default: 12 })
+  evalFinalHours: number;
+
+  /** TTL кандидата, часов (истёк — expired). */
+  @Column('int', { default: 48 })
+  candidateTtlHours: number;
+
+  /** AI-классификация (DeepSeek, текст): канал-кандидаты и посты. */
+  @Column('bool', { default: false })
+  aiEnabled: boolean;
+
+  /** Минимальная релевантность канала-кандидата от AI. */
+  @Column('real', { default: 0.6 })
+  aiRelevanceMin: number;
+
+  @UpdateDateColumn({ type: 'timestamp' })
+  updatedAt: Date;
+}

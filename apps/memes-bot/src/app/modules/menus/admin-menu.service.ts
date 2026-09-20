@@ -18,6 +18,7 @@ import { PublicationModesEnum } from '../post-management/constants/publication-m
 import { channelInternalId } from '../../shared/publication/telegram-link';
 import { formatUsd } from '../troll/constants/deepseek-pricing';
 import { DeepSeekService } from '../troll/services/deepseek.service';
+import { ParserMenuService } from '../parser/services/parser-menu.service';
 import { TrollSettingsService } from '../troll/services/troll-settings.service';
 import { TrollService } from '../troll/services/troll.service';
 import {
@@ -46,7 +47,8 @@ export class AdminMenuService implements OnModuleInit {
     private yearResultsService: YearResultsService,
     private trollService: TrollService,
     private trollSettings: TrollSettingsService,
-    private deepSeek: DeepSeekService
+    private deepSeek: DeepSeekService,
+    private parserMenuService: ParserMenuService
   ) {}
 
   /** Пропускает действие только для владельца; остальным пишет отказ. */
@@ -109,6 +111,11 @@ export class AdminMenuService implements OnModuleInit {
       .text(
         '🤖 Тролль-бот',
         this.ownerGuard((ctx) => ctx.menu.nav(AdminMenusEnum.TROLL_SETTINGS_MENU))
+      )
+      .row()
+      .text(
+        '🧭 Парсер',
+        this.ownerGuard((ctx) => ctx.menu.nav(AdminMenusEnum.PARSER_SETTINGS_MENU))
       )
       .row()
       .text('Сетка публикаций', async (ctx) => this.showPublicationGrid(ctx))
@@ -651,6 +658,7 @@ export class AdminMenuService implements OnModuleInit {
     menu.register(memeLimitSelectUserMenu);
     menu.register(memeLimitOptionsMenu);
     menu.register(trollSettingsMenu);
+    menu.register(this.parserMenuService.getMenu());
 
     return menu;
   }

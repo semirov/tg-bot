@@ -101,6 +101,9 @@ function fakeTelegramResult(method: string, payload: Record<string, any>): unkno
     case 'sendMessage':
     case 'copyMessage':
     case 'forwardMessage':
+    case 'sendPhoto':
+    case 'sendVideo':
+    case 'sendMediaGroup':
     case 'editMessageText':
     case 'editMessageReplyMarkup':
       return message;
@@ -204,7 +207,6 @@ export async function createE2EHarness(options: E2EHarnessOptions = {}): Promise
   if (!bot.isInited()) {
     await bot.init();
   }
-
   await moduleRef.init();
 
   const startupCalls = [...calls];
