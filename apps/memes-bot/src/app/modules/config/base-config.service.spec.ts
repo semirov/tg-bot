@@ -31,9 +31,6 @@ describe('BaseConfigService', () => {
       ['s3Bucket', 'S3_BUCKET', 'memes-bucket'],
       ['s3AccessKeyId', 'S3_ACCESS_KEY_ID', 'access'],
       ['s3SecretAccessKey', 'S3_SECRET_ACCESS_KEY', 'secret-key'],
-      ['monitorBotToken', 'MONITOR_BOT_TOKEN', 'monitor-token'],
-      ['monitorMainChannel', 'MONITOR_MAIN_CHANNEL', '@main'],
-      ['monitorBestChannel', 'MONITOR_BEST_CHANNEL', '@best'],
     ];
 
     it.each(cases)('%s читает %s', (prop, key, value) => {

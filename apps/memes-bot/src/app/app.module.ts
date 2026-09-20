@@ -25,7 +25,6 @@ import { UserMessageModeratedPostEntity } from './modules/observatory/entities/u
 import { UserModeratedPostEntity } from './modules/observatory/entities/user-moderated-post.entity';
 import { ObservatoryModule } from './modules/observatory/observatory.module';
 import { PostManagementModule } from './modules/post-management/post-management.module';
-import { S3Module } from './modules/s3/s3.module';
 import { YearResultEntity } from './modules/year-results/entities/year-result.entity';
 import { YearResultsModule } from './modules/year-results/year-results.module';
 import { MattermostModule } from './modules/mattermost/mattermost.module';
@@ -105,7 +104,6 @@ import { SharedModule } from './shared/shared.module';
     ClientModule,
     CronModule,
     YearResultsModule,
-    S3Module,
     MattermostModule,
     TrollModule,
     ParserModule,
