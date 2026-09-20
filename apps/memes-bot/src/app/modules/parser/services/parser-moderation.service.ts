@@ -16,7 +16,10 @@ import {
 import { CringeManagementService } from '../../bot/services/cringe-management.service';
 import { DeduplicationService } from '../../bot/services/deduplication.service';
 import { BaseConfigService } from '../../config/base-config.service';
-import { CANDIDATE_CB_PREFIX, ObservedStatus, CARD_CB_PREFIX } from '../constants/parser.constants';
+import { ObservedStatus, CARD_CB_PREFIX } from '../constants/parser.constants';
+
+/** Действия карточки парсера в предложке. */
+export type CardAction = 'now' | 'q' | 'night' | 'rej' | 'excl' | 'exclok' | 'exclno';
 import { ObservedPostEntity } from '../entities/observed-post.entity';
 import { ParserDeliveryService } from './parser-delivery.service';
 import { ParserDiscoveryService } from './parser-discovery.service';
@@ -47,97 +50,20 @@ export class ParserModerationService {
 
   /** Регистрирует callback-обработчики карточек и кандидатов (один раз). */
   public registerCallbacks(): void {
-    this.bot.callbackQuery(new RegExp(`^${CARD_CB_PREFIX}:(now|q|night|rej):(\\d+)$`), async (ctx) => {
-      const action = ctx.match?.[1] as 'now' | 'q' | 'night' | 'rej';
-      const postId = Number(ctx.match?.[2]);
-      await this.handleAction(ctx, action, postId);
-    });
+    this.bot.callbackQuery(
+      new RegExp(`^${CARD_CB_PREFIX}:(now|q|night|rej|excl|exclok|exclno):(\\d+)$`),
+      async (ctx) => {
+        const action = ctx.match?.[1] as CardAction;
+        const postId = Number(ctx.match?.[2]);
+        await this.handleAction(ctx, action, postId);
+      }
+    );
 
-    this.bot.callbackQuery(new RegExp(`^${CANDIDATE_CB_PREFIX}:(wo|jo|rj|chk|rst):(\\d+)$`), async (ctx) => {
-      const action = ctx.match?.[1] as 'wo' | 'jo' | 'rj' | 'chk' | 'rst';
-      const candidateId = Number(ctx.match?.[2]);
-      await this.handleCandidate(ctx, action, candidateId);
-    });
-  }
-
-  /** Карточка кандидата discovery: web-only / джойн / перепроверка / отклонить. */
-  public async handleCandidate(
-    ctx: BotContext,
-    action: 'wo' | 'jo' | 'rj' | 'chk' | 'rst',
-    candidateId: number
-  ): Promise<void> {
-    if (!ctx.config?.isOwner) {
-      await ctx.answerCallbackQuery('Доступно только владельцу');
-      return;
-    }
-
-    if (action === 'rj') {
-      const rejected = await this.discovery.reject(candidateId);
-      await ctx.answerCallbackQuery(rejected ? 'Отклонён' : 'Не найден');
-      await this.editCandidateCard(ctx, candidateId, '❌ Кандидат отклонён');
-      return;
-    }
-
-    if (action === 'rst') {
-      const reset = await this.discovery.resetToPending(candidateId);
-      await ctx.answerCallbackQuery(reset ? 'Вернул в проверку' : 'Не найден');
-      if (reset) await this.editCandidateCard(ctx, candidateId);
-      return;
-    }
-
-    if (action === 'chk') {
-      await ctx.answerCallbackQuery('Проверяю…');
-      const checked = await this.discovery.checkCandidateById(candidateId);
-      await this.editCandidateCard(ctx, candidateId);
-      this.logger.log(
-        `Parser discovery: ручная проверка кандидата ${candidateId} → ${checked?.verdict} (${checked?.reason ?? 'ok'})`
-      );
-      return;
-    }
-
-    const approved = await this.discovery.approve(candidateId, action === 'jo' ? 'join' : 'web_only');
-    if (!approved) {
-      const candidate = await this.discovery.repository.findOne({ where: { id: candidateId } });
-      const why = candidate?.reason ?? 'неизвестно';
-      await ctx.answerCallbackQuery(
-        why.startsWith('approve-blocked')
-          ? 'Кандидат не подтверждён (не ready) — нажми 🔎 или ↩️'
-          : `Не получилось: ${why}`
-      );
-      this.logger.warn(`Parser discovery: approve ${candidateId} отклонён (${why})`);
-      await this.editCandidateCard(ctx, candidateId, `⚠️ Не добавлен: ${why}`);
-      return;
-    }
-
-    await ctx.answerCallbackQuery(action === 'jo' ? 'Добавлен (активный)' : 'Добавлен (web-only)');
-    await this.editCandidateCard(ctx, candidateId, `✅ Источник добавлен (${action === 'jo' ? 'активный' : 'web-only'})`);
-  }
-
-  /**
-   * Перерисовывает карточку кандидата: ссылка, метрики, вердикт и клавиатура.
-   * `prefix` — короткий заголовок-статус (если нужно подчеркнуть действие).
-   */
-  private async editCandidateCard(
-    ctx: BotContext,
-    candidateId: number,
-    prefix?: string
-  ): Promise<void> {
-    const candidate = await this.discovery.repository.findOne({ where: { id: candidateId } });
-    if (!candidate) return;
-    const text = [prefix, this.delivery.buildCandidateCaption(candidate)].filter(Boolean).join('\n');
-    try {
-      await ctx.editMessageText(text, {
-        parse_mode: 'HTML',
-        reply_markup: this.delivery.buildCandidateKeyboard(candidateId),
-      });
-    } catch (error) {
-      this.logger.warn(`Parser discovery: не удалось обновить карточку ${candidateId}: ${error}`);
-    }
   }
 
   public async handleAction(
     ctx: BotContext,
-    action: 'now' | 'q' | 'night' | 'rej',
+    action: CardAction,
     postId: number
   ): Promise<void> {
     const candidate = await this.observedRepository.findOne({ where: { id: postId } });
@@ -152,12 +78,36 @@ export class ParserModerationService {
       return;
     }
 
+    // Исключение источника — подтверждение и выполнение (источник меняется).
+    if (action === 'excl') {
+      const permission = this.userService.checkPermission(ctx, UserPermissionEnum.ALLOW_PUBLISH_TO_CHANNEL);
+      if (!permission) {
+        await ctx.answerCallbackQuery('Нет прав');
+        return;
+      }
+      await ctx.answerCallbackQuery('Исключить источник?');
+      await this.replaceKeyboard(ctx, this.delivery.buildExcludeConfirmKeyboard(candidate.id));
+      return;
+    }
+
+    if (action === 'exclno') {
+      await ctx.answerCallbackQuery('Отменено');
+      await this.replaceKeyboard(ctx, this.delivery.buildKeyboard(candidate.id));
+      return;
+    }
+
+    if (action === 'exclok') {
+      const permission = this.userService.checkPermission(ctx, UserPermissionEnum.ALLOW_PUBLISH_TO_CHANNEL);
+      if (!permission) {
+        await ctx.answerCallbackQuery('Нет прав');
+        return;
+      }
+      await this.excludeSourceOf(ctx, candidate);
+      return;
+    }
+
     // Карточка обрабатывается один раз: повторный клик по уже изменённой — отказ.
-    const actionable =
-      action === 'rej'
-        ? candidate.status === ObservedStatus.DELIVERED
-        : candidate.status === ObservedStatus.DELIVERED;
-    if (!actionable) {
+    if (candidate.status !== ObservedStatus.DELIVERED) {
       await ctx.answerCallbackQuery('Уже обработано');
       return;
     }
@@ -202,9 +152,8 @@ export class ParserModerationService {
       candidate.publishedMessageId = published.message_id;
       await this.observedRepository.save(candidate);
 
-      if (candidate.imageHash) {
-        await this.deduplication.createPublishedPostHash(candidate.imageHash, published.message_id);
-      }
+      await this.rememberPublishedHash(candidate, published.message_id);
+      await this.registry.markSourceTaken(candidate.sourceChatId);
 
       await this.replaceKeyboard(
         ctx,
@@ -240,6 +189,9 @@ export class ParserModerationService {
 
     candidate.status = ObservedStatus.QUEUED;
     await this.observedRepository.save(candidate);
+    // «В сетке» = опубликовано: хеш уходит в дедуп, повторно не предложим.
+    await this.rememberPublishedHash(candidate, Number(candidate.requestChannelMessageId));
+    await this.registry.markSourceTaken(candidate.sourceChatId);
 
     const date = PostSchedulerService.formatToMsk(publishDate);
     const formatted = `${String(date.getDate()).padStart(2, '0')}.${String(date.getMonth() + 1).padStart(2, '0')} ~${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
@@ -274,6 +226,8 @@ export class ParserModerationService {
 
     candidate.status = ObservedStatus.QUEUED;
     await this.observedRepository.save(candidate);
+    await this.rememberPublishedHash(candidate, Number(candidate.requestChannelMessageId));
+    await this.registry.markSourceTaken(candidate.sourceChatId);
 
     const date = PostSchedulerService.formatToMsk(publishDate);
     const formatted = `${String(date.getDate()).padStart(2, '0')}.${String(date.getMonth() + 1).padStart(2, '0')} ~${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
@@ -283,6 +237,21 @@ export class ParserModerationService {
       new InlineKeyboard().text(`🌙 Ночь: ${formatted}`, `${CARD_CB_PREFIX}:done:${candidate.id}`)
     );
     await ctx.answerCallbackQuery('В ночной кринж');
+  }
+
+  /** Исключение источника карточки в чёрный список (с подтверждением). */
+  public async excludeSourceOf(ctx: BotContext, candidate: ObservedPostEntity): Promise<void> {
+    const source = await this.registry.repository.findOne({ where: { chatId: candidate.sourceChatId } });
+    if (!source) {
+      await ctx.answerCallbackQuery('Источник не найден');
+      return;
+    }
+    await this.registry.excludeSource(source.id);
+    await this.replaceKeyboard(
+      ctx,
+      new InlineKeyboard().text('🚫 Источник исключён', `${CARD_CB_PREFIX}:done:${candidate.id}`)
+    );
+    await ctx.answerCallbackQuery('Источник исключён');
   }
 
   /** Отклонение карточки модератором. */
@@ -298,6 +267,7 @@ export class ParserModerationService {
       source.rejectedTotal += 1;
       await this.registry.repository.save(source);
     }
+    await this.registry.markSourceIgnored(candidate.sourceChatId);
 
     const username = ctx.callbackQuery?.from?.username ?? 'moderator';
     await this.replaceKeyboard(
@@ -305,6 +275,12 @@ export class ParserModerationService {
       new InlineKeyboard().text(`🗑 Отклонено (@${escapeHtml(username)})`, `${CARD_CB_PREFIX}:done:${candidate.id}`)
     );
     await ctx.answerCallbackQuery('Отклонено');
+  }
+
+  /** Запоминает хеш как опубликованный (фото 16-бит, видео — по обложке). */
+  private async rememberPublishedHash(candidate: ObservedPostEntity, messageId: number): Promise<void> {
+    const hash = candidate.imageHash ?? candidate.perceptualHash;
+    if (hash) await this.deduplication.createPublishedPostHash(hash, messageId);
   }
 
   /** Подпись публикуемого поста: только ссылка на источник (политика TGB-21). */

@@ -62,6 +62,45 @@ export const CANDIDATE_CB_PREFIX = 'prsc';
 
 /** Ограничения Bot API на multipart-загрузку медиа. */
 export const MAX_PHOTO_BYTES = 10 * 1024 * 1024;
+
+/** Темп доставки: сколько карточек селектор отправляет за один прогон (20 мин). */
+export const SELECT_LIMIT_PER_RUN = 15;
+
+/** Порог совпадения 64-битного перцептивного хеша для склейки карточек в предложке. */
+export const QUEUE_MERGE_SIMILARITY = 0.85;
+
+/** Во сколько раз «Насыпать ещё» увеличивает темп выдачи. */
+export const BOOST_MULTIPLIER = 4;
+
+/** Через сколько часов доставленная без реакции карточка считается игнором. */
+export const IGNORED_AFTER_HOURS = 48;
+
+/** Минимум разных каналов с одинаковым медиа для форс-публикации в предложку. */
+export const FORCE_MIN_SOURCES = 3;
+
+/** Окно (часы), в котором ищем разошедшийся по каналам пост. */
+export const FORCE_WINDOW_HOURS = 48;
+
+/** Глубина истории для нового источника, часов. */
+export const SCAN_WINDOW_HOURS = 48;
+
+/** Сколько постов накидывает «Насыпать ещё». */
+export const DUMP_SIZE = 20;
+
+/** Минимальная пауза между доборами, минут. */
+export const DUMP_COOLDOWN_MINUTES = 5;
+
+/** TTL карточки в предложке (бэклога), дней: старше — удаляем. */
+export const BACKLOG_TTL_DAYS = 7;
+
+/** TTL оценённого пула (SCORED), дней: старше — истекает, не выпрашивается. */
+export const POOL_TTL_DAYS = 14;
+
+/** Если карточек в предложке больше — оценку приостанавливаем. */
+export const EVAL_PAUSE_BACKLOG = 400;
+
+/** Порог совпадения обложек видео для склейки (строже фото). */
+export const VIDEO_MERGE_SIMILARITY = 0.92;
 export const MAX_VIDEO_BYTES = 45 * 1024 * 1024;
 
 /** Настройки анти-флуда MTProto. */

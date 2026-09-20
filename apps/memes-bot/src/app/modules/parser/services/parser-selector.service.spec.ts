@@ -1,4 +1,4 @@
-import { EvalStage, ObservedStatus } from '../constants/parser.constants';
+import { BACKLOG_TTL_DAYS, DUMP_COOLDOWN_MINUTES, ObservedStatus, POOL_TTL_DAYS } from '../constants/parser.constants';
 import { ParserSelectorService } from './parser-selector.service';
 
 jest.mock('axios', () => ({
@@ -7,15 +7,18 @@ jest.mock('axios', () => ({
 }));
 
 const NOW = new Date('2026-09-19T12:00:00Z');
+const daysAgo = (days: number): Date => new Date(NOW.getTime() - days * 86_400_000);
 
 const scoredRow = (overrides: Record<string, unknown> = {}): any => ({
   id: 1,
   sourceChatId: '-1008888888888',
   mediaUniqueId: 'media-1',
   score: 5,
-  evalStage: EvalStage.FINAL,
   status: ObservedStatus.SCORED,
+  rejectReason: null,
+  forced: false,
   createdAt: NOW,
+  requestChannelMessageId: null,
   ...overrides,
 });
 
@@ -24,164 +27,388 @@ const source = (overrides: Record<string, unknown> = {}): any => ({
   chatId: '-1008888888888',
   category: 'memes',
   status: 'active',
-  selectedTotal: 0,
+  excluded: false,
+  err: null,
+  weight: 1,
   ...overrides,
 });
 
-const makeObservedRepo = (): any => {
-  const builder: any = {
-    where: jest.fn().mockReturnThis(),
-    andWhere: jest.fn().mockReturnThis(),
-    take: jest.fn().mockReturnThis(),
-    getMany: jest.fn().mockResolvedValue([]),
-  };
-  return {
-    find: jest.fn().mockResolvedValue([]),
-    save: jest.fn().mockImplementation(async (value) => value),
-    createQueryBuilder: jest.fn(() => builder),
-  };
-};
+const makeObservedRepo = (): any => ({
+  find: jest.fn().mockResolvedValue([]),
+  count: jest.fn().mockResolvedValue(0),
+  save: jest.fn().mockImplementation(async (value) => value),
+});
 
 const makeRegistry = (): any => ({
   repository: {
     find: jest.fn().mockResolvedValue([source()]),
     save: jest.fn().mockResolvedValue(undefined),
   },
+  markSourceIgnored: jest.fn().mockResolvedValue(undefined),
 });
-
-const makeEvaluator = (): any => ({ isEligible: jest.fn(() => true) });
 
 const makeDelivery = (): any => ({
   deliver: jest.fn().mockResolvedValue({ ok: true, status: ObservedStatus.DELIVERED }),
+  attachMoreButton: jest.fn().mockResolvedValue(undefined),
+  detachMoreButton: jest.fn().mockResolvedValue(undefined),
 });
 
 const makeSettings = (overrides: Record<string, unknown> = {}): any => ({
-  current: { dailyLimit: 12, sourceDailyCap: 2, cringeShare: 0.25, hotScore: 4, ...overrides },
+  current: { errMin: 0.15, ...overrides },
   enabled: true,
+  boostActive: jest.fn(() => false),
 });
 
-const makeClock = (): any => ({ now: jest.fn(() => NOW) });
+const makeConfig = (): any => ({ userRequestMemeChannel: -1004444444444 });
 
-const setup = (overrides: { settings?: Record<string, unknown>; eligible?: boolean } = {}) => {
+const makeBot = (): any => ({
+  api: {
+    deleteMessage: jest.fn().mockResolvedValue(undefined),
+    editMessageCaption: jest.fn().mockResolvedValue(undefined),
+  },
+});
+
+let clockNow = NOW;
+const makeClock = (): any => ({ now: jest.fn(() => clockNow) });
+
+const setup = (overrides: { settings?: Record<string, unknown> } = {}) => {
   const observedRepo = makeObservedRepo();
   const registry = makeRegistry();
-  const evaluator = makeEvaluator();
-  evaluator.isEligible.mockReturnValue(overrides.eligible ?? true);
   const delivery = makeDelivery();
+  const clock = makeClock();
+  const bot = makeBot();
+  const settings = makeSettings(overrides.settings ?? {});
   const service = new ParserSelectorService(
     observedRepo,
     registry,
-    evaluator,
     delivery,
-    makeSettings(overrides.settings ?? {}),
-    makeClock()
+    settings,
+    makeConfig(),
+    bot,
+    clock
   );
-  const setDue = (rows: unknown[]): void => {
-    observedRepo.find.mockImplementation((options: { where?: Record<string, unknown> } = {}) => {
-      if (options.where?.mediaUniqueId !== undefined) return Promise.resolve([]);
-      return Promise.resolve(rows);
-    });
-  };
-  return { service, observedRepo, registry, delivery, evaluator, setDue };
+  (service as never as { pace: unknown }).pace = jest.fn().mockResolvedValue(undefined);
+  return { service, observedRepo, registry, delivery, bot, clock, settings };
 };
 
 describe('ParserSelectorService', () => {
-  it('нет кандидатов → 0 доставок', async () => {
+  beforeEach(() => {
+    clockNow = NOW;
+  });
+
+  describe('deliverForced', () => {
+    it('нет форс-постов → 0', async () => {
+      const { service, delivery } = setup();
+      expect(await service.deliverForced()).toBe(0);
+      expect(delivery.deliver).not.toHaveBeenCalled();
+    });
+
+    it('доставляет форс-пост и переводит в DELIVERED', async () => {
+      const { service, observedRepo, delivery } = setup();
+      const row = scoredRow({ forced: true });
+      observedRepo.find.mockResolvedValue([row]);
+
+      expect(await service.deliverForced()).toBe(1);
+      expect(delivery.deliver).toHaveBeenCalledWith(row);
+      expect(observedRepo.save).toHaveBeenCalledWith(
+        expect.objectContaining({ status: ObservedStatus.SELECTED })
+      );
+    });
+
+    it('исключённый источник пропускается', async () => {
+      const { service, observedRepo, registry, delivery } = setup();
+      observedRepo.find.mockResolvedValue([scoredRow({ forced: true })]);
+      registry.repository.find.mockResolvedValue([source({ excluded: true })]);
+
+      expect(await service.deliverForced()).toBe(0);
+      expect(delivery.deliver).not.toHaveBeenCalled();
+    });
+
+    it('низкий ERR источника пропускается', async () => {
+      const { service, observedRepo, registry, delivery } = setup();
+      observedRepo.find.mockResolvedValue([scoredRow({ forced: true })]);
+      registry.repository.find.mockResolvedValue([source({ err: 0.1 })]);
+
+      expect(await service.deliverForced()).toBe(0);
+      expect(delivery.deliver).not.toHaveBeenCalled();
+    });
+
+    it('транзиентный сбой доставки возвращает пост в SCORED', async () => {
+      const { service, observedRepo, delivery } = setup();
+      const row = scoredRow({ forced: true });
+      observedRepo.find.mockResolvedValue([row]);
+      delivery.deliver.mockImplementation(async (candidate: any) => {
+        candidate.rejectReason = 'send-failed';
+        return { ok: false, status: ObservedStatus.FAILED };
+      });
+
+      expect(await service.deliverForced()).toBe(0);
+      expect(observedRepo.save).toHaveBeenLastCalledWith(
+        expect.objectContaining({ status: ObservedStatus.SCORED, rejectReason: null })
+      );
+    });
+
+    it('FAILED без rejectReason считается транзиентным', async () => {
+      const { service, observedRepo, delivery } = setup();
+      const row = scoredRow({ forced: true });
+      observedRepo.find.mockResolvedValue([row]);
+      delivery.deliver.mockResolvedValue({ ok: false, status: ObservedStatus.FAILED });
+
+      await service.deliverForced();
+
+      expect(observedRepo.save).toHaveBeenLastCalledWith(
+        expect.objectContaining({ status: ObservedStatus.SCORED, rejectReason: null })
+      );
+    });
+
+    it('терминальный сбой доставки переводит в REJECTED', async () => {
+      const { service, observedRepo, delivery } = setup();
+      const row = scoredRow({ forced: true });
+      observedRepo.find.mockResolvedValue([row]);
+      delivery.deliver.mockImplementation(async (candidate: any) => {
+        candidate.rejectReason = 'media-too-large';
+        return { ok: false, status: ObservedStatus.FAILED };
+      });
+
+      await service.deliverForced();
+
+      expect(observedRepo.save).toHaveBeenLastCalledWith(
+        expect.objectContaining({ status: ObservedStatus.REJECTED })
+      );
+    });
+
+    it('занято общим мьютексом → 0', async () => {
+      const { service, observedRepo, delivery } = setup();
+      (service as never as { busy: boolean }).busy = true;
+      observedRepo.find.mockResolvedValue([scoredRow({ forced: true })]);
+
+      expect(await service.deliverForced()).toBe(0);
+      expect(delivery.deliver).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('dumpMore', () => {
+    it('без кандидатов → 0', async () => {
+      const { service, delivery } = setup();
+      expect(await service.dumpMore()).toBe(0);
+      expect(delivery.deliver).not.toHaveBeenCalled();
+    });
+
+    it('занят → 0', async () => {
+      const { service, observedRepo } = setup();
+      (service as never as { busy: boolean }).busy = true;
+      observedRepo.find.mockResolvedValue([scoredRow()]);
+      expect(await service.dumpMore()).toBe(0);
+    });
+
+    it('cooldown между доборами → 0', async () => {
+      const { service, observedRepo } = setup();
+      (service as never as { lastDumpAt: number }).lastDumpAt = NOW.getTime();
+      expect(await service.dumpMore()).toBe(0);
+      expect(observedRepo.find).not.toHaveBeenCalled();
+    });
+
+    it('boost увеличивает лимит добора', async () => {
+      const { service, observedRepo, settings } = setup();
+      settings.boostActive.mockReturnValue(true);
+
+      await service.dumpMore(5);
+
+      expect(observedRepo.find).toHaveBeenCalledWith(
+        expect.objectContaining({ take: 5 * 4 + 20 })
+      );
+    });
+
+    it('доставляет свежие первыми и ставит кнопку «Ещё 20»', async () => {
+      const { service, observedRepo, delivery } = setup();
+      const older = scoredRow({ id: 1, createdAt: daysAgo(2), score: 9, mediaUniqueId: 'older' });
+      const newer = scoredRow({ id: 2, createdAt: NOW, score: 1, mediaUniqueId: 'newer' });
+      observedRepo.find.mockResolvedValue([newer, older]);
+      delivery.deliver.mockImplementation(async (row: any) => {
+        row.requestChannelMessageId = 500 + row.id;
+        return { ok: true, status: ObservedStatus.DELIVERED };
+      });
+
+      expect(await service.dumpMore()).toBe(2);
+      expect(delivery.deliver.mock.calls[0][0].id).toBe(2);
+      expect(delivery.attachMoreButton).toHaveBeenCalledWith(501, 1);
+    });
+
+    it('снимает кнопку с прошлой последней карточки, найденной в БД', async () => {
+      const { service, observedRepo, delivery } = setup();
+      let deliveredRows: any[] = [scoredRow({ id: 1, createdAt: NOW })];
+      observedRepo.find.mockImplementation(async ({ where }: any) => {
+        if (where?.status === ObservedStatus.DELIVERED) {
+          return [{ id: 1, requestChannelMessageId: 501, status: ObservedStatus.DELIVERED }];
+        }
+        return deliveredRows;
+      });
+      delivery.deliver.mockImplementation(async (row: any) => {
+        row.requestChannelMessageId = 500 + row.id;
+        return { ok: true, status: ObservedStatus.DELIVERED };
+      });
+
+      await service.dumpMore();
+
+      clockNow = new Date(NOW.getTime() + (DUMP_COOLDOWN_MINUTES + 1) * 60_000);
+      deliveredRows = [scoredRow({ id: 2, createdAt: clockNow })];
+      await service.dumpMore();
+
+      expect(delivery.detachMoreButton).toHaveBeenCalledWith(501, 1);
+      expect(delivery.attachMoreButton).toHaveBeenLastCalledWith(502, 2);
+    });
+
+    it('кандидат без источника в мапе пропускается', async () => {
+      const { service, observedRepo, registry, delivery } = setup();
+      observedRepo.find.mockResolvedValue([scoredRow({ sourceChatId: '-100none' })]);
+      registry.repository.find.mockResolvedValue([source({ chatId: '-1008888888888' })]);
+
+      expect(await service.dumpMore()).toBe(0);
+      expect(delivery.deliver).not.toHaveBeenCalled();
+    });
+
+    it('без message_id кнопка «Ещё 20» не ставится', async () => {
+      const { service, observedRepo, delivery } = setup();
+      observedRepo.find.mockResolvedValue([scoredRow()]);
+      delivery.deliver.mockResolvedValue({ ok: true, status: ObservedStatus.DELIVERED });
+
+      expect(await service.dumpMore()).toBe(1);
+      expect(delivery.attachMoreButton).not.toHaveBeenCalled();
+    });
+
+    it('исключённые источники и дубли медиа не доставляются', async () => {
+      const { service, observedRepo, registry, delivery } = setup();
+      observedRepo.find.mockResolvedValue([
+        scoredRow({ id: 1, sourceChatId: '-100aaa', mediaUniqueId: 'dup', score: 3 }),
+        scoredRow({ id: 2, sourceChatId: '-100bbb', mediaUniqueId: 'dup', score: 7 }),
+        scoredRow({ id: 3, sourceChatId: '-100ccc', mediaUniqueId: 'unique' }),
+      ]);
+      registry.repository.find.mockResolvedValue([
+        source({ chatId: '-100aaa' }),
+        source({ chatId: '-100bbb', excluded: true }),
+        source({ chatId: '-100ccc' }),
+      ]);
+
+      await service.dumpMore();
+
+      expect(delivery.deliver).toHaveBeenCalledTimes(1);
+      expect(delivery.deliver).toHaveBeenCalledWith(expect.objectContaining({ id: 3 }));
+    });
+  });
+
+  describe('ageBacklog', () => {
+    it('карточки старше 7д удаляются и мягко игнорируются', async () => {
+      const { service, observedRepo, registry, bot } = setup();
+      const card = scoredRow({
+        id: 1,
+        status: ObservedStatus.DELIVERED,
+        deliveredAt: daysAgo(BACKLOG_TTL_DAYS + 1),
+        requestChannelMessageId: 321,
+      });
+      observedRepo.find.mockImplementation(async ({ where }: any) => {
+        if (where.status === ObservedStatus.DELIVERED) return [card];
+        return [];
+      });
+
+      expect(await service.ageBacklog()).toBe(1);
+      expect(bot.api.deleteMessage).toHaveBeenCalledWith(-1004444444444, 321);
+      expect(observedRepo.save).toHaveBeenCalledWith(
+        expect.objectContaining({ status: ObservedStatus.EXPIRED, rejectReason: `backlog-${BACKLOG_TTL_DAYS}d` })
+      );
+      expect(registry.markSourceIgnored).toHaveBeenCalledWith('-1008888888888', false);
+    });
+
+    it('оценённый пул старше 14д истекает', async () => {
+      const { service, observedRepo } = setup();
+      const poolRow = scoredRow({ id: 2, createdAt: daysAgo(POOL_TTL_DAYS + 1) });
+      observedRepo.find.mockImplementation(async ({ where }: any) => {
+        if (where.status === ObservedStatus.SCORED) return [poolRow];
+        return [];
+      });
+
+      expect(await service.ageBacklog()).toBe(1);
+      expect(observedRepo.save).toHaveBeenCalledWith(
+        expect.objectContaining({ status: ObservedStatus.EXPIRED, rejectReason: `pool-${POOL_TTL_DAYS}d` })
+      );
+    });
+
+    it('карточка без сообщения удаляется без вызова deleteMessage', async () => {
+      const { service, observedRepo, bot } = setup();
+      const card = scoredRow({
+        status: ObservedStatus.DELIVERED,
+        deliveredAt: daysAgo(BACKLOG_TTL_DAYS + 1),
+        requestChannelMessageId: null,
+      });
+      observedRepo.find.mockImplementation(async ({ where }: any) =>
+        where.status === ObservedStatus.DELIVERED ? [card] : []
+      );
+
+      await service.ageBacklog();
+      expect(bot.api.deleteMessage).not.toHaveBeenCalled();
+    });
+
+    it('ошибка удаления сообщения не роняет старение', async () => {
+      const { service, observedRepo, bot } = setup();
+      const card = scoredRow({
+        status: ObservedStatus.DELIVERED,
+        deliveredAt: daysAgo(BACKLOG_TTL_DAYS + 1),
+        requestChannelMessageId: 321,
+      });
+      observedRepo.find.mockImplementation(async ({ where }: any) =>
+        where.status === ObservedStatus.DELIVERED ? [card] : []
+      );
+      bot.api.deleteMessage.mockRejectedValue(new Error('gone'));
+
+      await expect(service.ageBacklog()).resolves.toBe(1);
+      expect(bot.api.editMessageCaption).toHaveBeenCalledWith(
+        -1004444444444,
+        321,
+        expect.objectContaining({ caption: expect.stringContaining('Состарилось') })
+      );
+    });
+
+    it('зависшие SELECTED без message_id возвращаются в SCORED', async () => {
+      const { service, observedRepo } = setup();
+      const stuck = scoredRow({
+        id: 7,
+        status: ObservedStatus.SELECTED,
+        requestChannelMessageId: null,
+        updatedAt: new Date(NOW.getTime() - 2 * 3_600_000),
+      });
+      observedRepo.find.mockImplementation(async ({ where }: any) =>
+        where.status === ObservedStatus.SELECTED ? [stuck] : []
+      );
+
+      expect(await service.ageBacklog()).toBe(0);
+      expect(observedRepo.save).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 7, status: ObservedStatus.SCORED })
+      );
+    });
+
+  });
+
+  it('pace реально ждёт (без подмены)', async () => {
+    const { service } = setup();
+    delete (service as never as { pace?: unknown }).pace;
+    await expect((service as never as { pace: (ms: number) => Promise<void> }).pace(0)).resolves.toBeUndefined();
+  });
+
+  it('countBacklog считает DELIVERED', async () => {
     const { service, observedRepo } = setup();
-    observedRepo.find.mockResolvedValue([]);
-
-    expect(await service.selectAndDeliver()).toBe(0);
+    observedRepo.count.mockResolvedValue(4);
+    expect(await service.countBacklog()).toBe(4);
+    expect(observedRepo.count).toHaveBeenCalledWith({ where: { status: ObservedStatus.DELIVERED } });
   });
 
-  it('выключен конвейер → 0', async () => {
-    const { service, delivery } = setup({ settings: { enabled: false } as never });
-    (service as never as { settings: { enabled: boolean } }).settings.enabled = false;
+  it('deliverRows: источник отсутствует → кандидат отклоняется', async () => {
+    const { service, observedRepo, delivery } = setup();
+    const row = scoredRow();
 
-    expect(await service.selectAndDeliver()).toBe(0);
+    await (service as never as { deliverRows: (...args: unknown[]) => Promise<number> }).deliverRows([row], new Map(), false);
+
     expect(delivery.deliver).not.toHaveBeenCalled();
-  });
-
-  it('доставляет отобранного и переводит в DELIVERED', async () => {
-    const { service, delivery, setDue } = setup();
-    setDue([scoredRow()]);
-
-    const delivered = await service.selectAndDeliver();
-
-    expect(delivered).toBe(1);
-    expect(delivery.deliver).toHaveBeenCalledWith(expect.objectContaining({ id: 1 }));
-  });
-
-  it('невозможно доставить из-за сбоя → возврат в SCORED', async () => {
-    const { service, observedRepo, delivery, setDue } = setup();
-    setDue([scoredRow()]);
-    delivery.deliver.mockResolvedValue({ ok: false, status: ObservedStatus.FAILED });
-
-    expect(await service.selectAndDeliver()).toBe(0);
-    expect(observedRepo.save).toHaveBeenCalledWith(
-      expect.objectContaining({ id: 1, status: ObservedStatus.SCORED })
-    );
-  });
-
-  it('источник не найден → REJECTED source-missing', async () => {
-    const { service, registry, observedRepo, setDue } = setup();
-    registry.repository.find.mockResolvedValue([]);
-    setDue([scoredRow()]);
-
-    await service.selectAndDeliver();
-
     expect(observedRepo.save).toHaveBeenCalledWith(
       expect.objectContaining({ status: ObservedStatus.REJECTED, rejectReason: 'source-missing' })
     );
-  });
-
-  it('дневной лимит исчерпан → доставки нет', async () => {
-    const { service, delivery, observedRepo, setDue } = setup({ settings: { dailyLimit: 1 } });
-    setDue([scoredRow()]);
-    observedRepo.createQueryBuilder().getMany.mockResolvedValue([
-      { sourceChatId: '-1008888888888', deliveredAt: NOW, status: ObservedStatus.DELIVERED },
-    ]);
-
-    expect(await service.selectAndDeliver()).toBe(0);
-    expect(delivery.deliver).not.toHaveBeenCalled();
-  });
-
-  it('квота источника за сегодня: второй пост того же канала пропускается', async () => {
-    const { service, delivery, setDue } = setup({ settings: { sourceDailyCap: 1 } });
-    setDue([
-      scoredRow({ id: 1, mediaUniqueId: 'm1', score: 9 }),
-      scoredRow({ id: 2, mediaUniqueId: 'm2', score: 8 }),
-    ]);
-
-    await service.selectAndDeliver();
-
-    expect(delivery.deliver).toHaveBeenCalledTimes(1);
-    expect(delivery.deliver).toHaveBeenCalledWith(expect.objectContaining({ id: 1 }));
-  });
-
-  it('дедуп внутри батча: одинаковые mediaUniqueId → один лучший', async () => {
-    const { service, delivery, setDue } = setup();
-    setDue([
-      scoredRow({ id: 1, mediaUniqueId: 'dup', score: 3 }),
-      scoredRow({ id: 2, mediaUniqueId: 'dup', score: 7 }),
-    ]);
-
-    await service.selectAndDeliver();
-
-    expect(delivery.deliver).toHaveBeenCalledTimes(1);
-    expect(delivery.deliver).toHaveBeenCalledWith(expect.objectContaining({ id: 2 }));
-  });
-
-  it('кросс-прогонный дедуп: уже доставленное медиа пропускается', async () => {
-    const { service, delivery, observedRepo } = setup();
-    observedRepo.find.mockImplementation((options: { where?: Record<string, unknown> } = {}) => {
-      if (options.where?.mediaUniqueId !== undefined) {
-        return Promise.resolve([{ mediaUniqueId: 'media-1', status: ObservedStatus.PUBLISHED }]);
-      }
-      return Promise.resolve([scoredRow()]);
-    });
-
-    await service.selectAndDeliver();
-
-    expect(delivery.deliver).not.toHaveBeenCalled();
   });
 });

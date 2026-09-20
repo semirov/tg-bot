@@ -1,4 +1,5 @@
 import { SourceCategory } from '../constants/parser.constants';
+import { rankScore } from './parser-source-weight';
 
 /** Кандидат на выбор селектором. */
 export interface SelectCandidate {
@@ -9,11 +10,17 @@ export interface SelectCandidate {
   stage: string;
 }
 
-/** Настройки квот. */
+/** Настройки квот и ранжирования. */
 export interface QuotaRules {
+  /** Постов в сутки (0 = безлимит). */
   dailyLimit: number;
+  /** Максимум постов с источника за сутки (0 = безлимит). */
   sourceDailyCap: number;
   cringeShare: number;
+  /** Темп на один прогон селектора (0/undefined → DEFAULT_SELECT_LIMIT). */
+  selectLimit?: number;
+  /** Веса источников по chatId (из решений владельца). */
+  weights?: Record<string, number>;
 }
 
 /** Счётчики уже выбранных за сутки (по кандидатам). */
@@ -29,6 +36,9 @@ export interface TodayDelivered {
   category: SourceCategory | string;
   cringe: boolean;
 }
+
+/** Темп на прогон по умолчанию, если правила его не задали. */
+export const DEFAULT_SELECT_LIMIT = 15;
 
 /** Собирает счётчики за сегодня из списка доставленных постов. */
 export function buildDayCounters<T extends TodayDelivered>(
@@ -52,23 +62,32 @@ export function buildDayCounters<T extends TodayDelivered>(
 export const isCringeCategory = (category: SourceCategory | string): boolean =>
   category === SourceCategory.CRINGE;
 
-/** Свободная квота кринжа на сегодня. */
+const perRunLimit = (rules: QuotaRules): number =>
+  rules.selectLimit != null && rules.selectLimit > 0 ? Math.floor(rules.selectLimit) : DEFAULT_SELECT_LIMIT;
+
+/** Свободная квота кринжа на сегодня (безлимит → темп прогона). */
 export function cringeQuotaLeft(rules: QuotaRules, counters: DayCounters): number {
+  if (rules.dailyLimit <= 0) return perRunLimit(rules);
   const cringeLimit = Math.floor(rules.dailyLimit * rules.cringeShare);
   return Math.max(0, cringeLimit - counters.cringe);
 }
 
-/** Свободный общий остаток дня. */
+/**
+ * Сколько кандидатов можно отобрать в этом прогоне. При безлимите
+ * (dailyLimit<=0) ограничение — только темп прогона.
+ */
 export function dailyLeft(rules: QuotaRules, counters: DayCounters): number {
-  return Math.max(0, rules.dailyLimit - counters.total);
+  const perRun = perRunLimit(rules);
+  if (rules.dailyLimit <= 0) return perRun;
+  return Math.min(Math.max(0, rules.dailyLimit - counters.total), perRun);
 }
 
 /**
- * Взвешенный round-robin по источникам: кандидаты сортируются по score,
- * но источник не может занимать больше sourceDailyCap слотов; за один проход
- * выбирается максимум dailyLeft постов. Кринж-квота жёстко резервируется:
- * мемы не могут занять кринжовые слоты, пока есть кринжовые кандидаты
- * (при их отсутствии мемы могут занять остаток). Возвращает выбранные id.
+ * Отбор кандидатов: сортировка по скору с учётом веса источника
+ * (score × weight — каналы, посты которых владелец чаще берёт, идут выше),
+ * затем квоты. При dailyLimit=0 общий лимит отсутствует — за прогон
+ * выбирается не больше selectLimit, чтобы не флудить Telegram. Кринж-резерв
+ * работает только при конечной дневной квоте.
  */
 export function pickByFairness(
   candidates: ReadonlyArray<SelectCandidate>,
@@ -78,13 +97,23 @@ export function pickByFairness(
   const remainingTotal = dailyLeft(rules, counters);
   if (remainingTotal === 0) return [];
 
-  const remainingCringe = cringeQuotaLeft(rules, counters);
+  const remainingCringe =
+    rules.dailyLimit <= 0 ? Number.POSITIVE_INFINITY : cringeQuotaLeft(rules, counters);
   const cringeEligible = candidates.filter((candidate) => isCringeCategory(candidate.category)).length;
-  const memesLimit = cringeEligible > 0 ? remainingTotal - remainingCringe : remainingTotal;
+  const memesLimit =
+    rules.dailyLimit > 0 && cringeEligible > 0 ? remainingTotal - remainingCringe : remainingTotal;
   const sourceCap = new Map<string, number>();
   const perCategoryCount = { memes: 0, cringe: 0 };
 
-  const sorted = [...candidates].sort((a, b) => b.score - a.score);
+  const sorted = [...candidates].sort((a, b) => {
+    const weightA = rules.weights?.[String(a.sourceChatId)];
+    const weightB = rules.weights?.[String(b.sourceChatId)];
+    const rankA = rankScore(a.score, weightA);
+    const rankB = rankScore(b.score, weightB);
+    if (rankB !== rankA) return rankB - rankA;
+    if (b.score !== a.score) return b.score - a.score;
+    return a.id - b.id;
+  });
   const picked: number[] = [];
 
   for (const candidate of sorted) {
@@ -92,7 +121,7 @@ export function pickByFairness(
 
     const perSourceKey = String(candidate.sourceChatId);
     const usedSource = (counters.perSource[perSourceKey] ?? 0) + (sourceCap.get(perSourceKey) ?? 0);
-    if (usedSource >= Math.max(1, rules.sourceDailyCap)) continue;
+    if (rules.sourceDailyCap > 0 && usedSource >= rules.sourceDailyCap) continue;
 
     const cringe = isCringeCategory(candidate.category);
     if (cringe) {

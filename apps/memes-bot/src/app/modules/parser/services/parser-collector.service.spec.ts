@@ -277,5 +277,80 @@ describe('ParserCollectorService', () => {
 
       expect(await service.sweepAll()).toBe(0);
     });
+
+    it('источник без rawChatId и username пропускается до MTProto', async () => {
+      registry.listCollectible.mockResolvedValue([source({ rawChatId: null, username: null })]);
+      parserClient.client().getMessages.mockResolvedValue([]);
+
+      expect(await service.sweepAll()).toBe(0);
+      expect(parserClient.client().getMessages).not.toHaveBeenCalled();
+    });
+
+    it('альбом: перечитывание вернуло undefined → continue', async () => {
+      registry.listCollectible.mockResolvedValue([source()]);
+      const albumA = mediaMessage({ id: 10, groupedId: bigInt('700') });
+      parserClient
+        .client()
+        .getMessages.mockImplementation(async (_p: unknown, params: { ids?: number[] }) =>
+          params?.ids?.length ? [] : [albumA]
+        );
+
+      expect(await service.sweepAll()).toBe(0);
+    });
+
+    it('реакция без count трактуется как 0', async () => {
+      await service.onLiveEvent(event(mediaMessage({ reactions: { results: [{ count: undefined }] } })));
+
+      expect(observedRepo.save).toHaveBeenCalledWith(
+        expect.objectContaining({ sourceMessageId: 42, reactions: 0 })
+      );
+    });
+
+    it('альбом без peerId берёт chatId как rawChatId', async () => {
+      parserClient.client().getMessages.mockResolvedValue([mediaMessage({ id: 42, groupedId: bigInt('950') })]);
+      await service.onLiveEvent(event(mediaMessage({ id: 42, groupedId: bigInt('950'), peerId: undefined })));
+      jest.advanceTimersByTime(1600);
+      for (let i = 0; i < 25; i += 1) await Promise.resolve();
+
+      expect(observedRepo.create).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('граничные ветки flushAlbum', () => {
+    it('сообщение не найдено → пропуск', async () => {
+      parserClient.client().getMessages.mockResolvedValue([]);
+      await (service as never as { flushAlbum: (...args: unknown[]) => Promise<unknown> }).flushAlbum({
+        ids: [1],
+        rawChatId: '8888888888',
+        kind: 'photo',
+      });
+      expect(observedRepo.create).not.toHaveBeenCalled();
+    });
+
+    it('свой канал в flushAlbum → пропуск', async () => {
+      await (service as never as { flushAlbum: (...args: unknown[]) => Promise<unknown> }).flushAlbum({
+        ids: [1],
+        rawChatId: '1111111111',
+        kind: 'photo',
+      });
+      expect(observedRepo.create).not.toHaveBeenCalled();
+    });
+
+    it('fetchMessage: null в списке → undefined', async () => {
+      parserClient.client().getMessages.mockResolvedValue([null]);
+      const result = await (
+        service as never as { fetchMessage: (id: unknown, msg: number) => Promise<unknown> }
+      ).fetchMessage(bigInt('1'), 5);
+      expect(result).toBeUndefined();
+    });
+
+    it('markSourceError: объект без message', async () => {
+      registry.listCollectible.mockResolvedValue([source()]);
+      parserClient.client().getMessages.mockRejectedValue({ code: 42 });
+      expect(await service.sweepAll()).toBe(0);
+      expect(registry.repository.save).toHaveBeenCalledWith(
+        expect.objectContaining({ lastError: '[object Object]' })
+      );
+    });
   });
 });

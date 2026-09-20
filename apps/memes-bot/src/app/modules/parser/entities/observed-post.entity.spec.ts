@@ -31,6 +31,19 @@ describe('ObservedPostEntity', () => {
     expect(column('crossLinks')?.options).toMatchObject({ type: 'jsonb', nullable: true });
   });
 
+  it('поля склейки дублей и перцептивного хеша', () => {
+    expect(column('perceptualHash')?.options).toMatchObject({ nullable: true });
+    expect(column('duplicateOfId')?.options).toMatchObject({ type: 'int', nullable: true });
+    expect(column('extraSources')?.options).toMatchObject({ type: 'jsonb', nullable: true });
+    expect(column('rootSourceChatId')?.options).toMatchObject({ type: 'bigint', nullable: true });
+    expect(column('rootSourceTitle')?.options).toMatchObject({ nullable: true });
+    expect(column('rootSourceUsername')?.options).toMatchObject({ nullable: true });
+  });
+
+  it('forced по умолчанию false', () => {
+    expect(column('forced')?.options).toMatchObject({ default: false });
+  });
+
   it('экземпляр хранит значения', () => {
     const entity = new ObservedPostEntity();
     entity.sourceChatId = '-1001';

@@ -9,6 +9,7 @@ import { UserModeratedPostEntity } from './entities/user-moderated-post.entity';
 import { UserModeratedPostService } from './services/user-moderated-post.service';
 import { UserMessageModeratedPostEntity } from './entities/user-message-moderated-post.entity';
 import { TrollModule } from '../troll/troll.module';
+import { ParserModule } from '../parser/parser.module';
 
 @Module({
   imports: [
@@ -16,6 +17,7 @@ import { TrollModule } from '../troll/troll.module';
     AppConfigModule,
     MattermostModule,
     TrollModule,
+    ParserModule,
     TypeOrmModule.forFeature([
       ObservatoryPostEntity,
       UserModeratedPostEntity,

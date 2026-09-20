@@ -69,6 +69,7 @@ function setup() {
   };
   const mattermostService = { sendPostWithFile: jest.fn().mockResolvedValue(undefined) };
   const trollService = { maybeRepostMeme: jest.fn().mockResolvedValue(undefined) };
+  const parserSettings = { current: { legacyEnabled: true } };
 
   const service = new ObservatoryService(
     bot as any,
@@ -81,7 +82,8 @@ function setup() {
     deduplicationService as any,
     userModeratedPostService as any,
     mattermostService as any,
-    trollService as any
+    trollService as any,
+    parserSettings as any
   );
 
   return {

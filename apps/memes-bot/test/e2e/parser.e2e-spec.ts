@@ -26,7 +26,16 @@ jest.mock('axios', () => {
 });
 
 jest.mock('imghash', () => ({
-  hash: jest.fn().mockResolvedValue('e2ee2ee2ee2ee2e1'),
+  // Разные буферы → разные 64-битные хеши (важно для проверки дедупа предложки).
+  hash: jest.fn(async (buffer: Buffer) => {
+    let h1 = 0x811c9dc5;
+    let h2 = 0x1000193;
+    for (const byte of buffer) {
+      h1 = ((h1 ^ byte) * 16777619) >>> 0;
+      h2 = ((h2 + byte) * 2654435761) >>> 0;
+    }
+    return h1.toString(16).padStart(8, '0') + h2.toString(16).padStart(8, '0');
+  }),
 }));
 
 function callbackQueryUpdate(options: {
@@ -156,7 +165,7 @@ describe('Parser e2e (параллельный конвейер)', () => {
     client.downloadMedia.mockResolvedValue(Buffer.from([1, 2, 3, 4]));
 
     const selector = harness.moduleRef.get(ParserSelectorService, { strict: false });
-    const delivered = await selector.selectAndDeliver();
+    const delivered = await selector.dumpMore();
 
     expect(delivered).toBe(1);
 
@@ -236,7 +245,7 @@ describe('Parser e2e (параллельный конвейер)', () => {
     expect(rejected.rejectReason).toContain('views<');
   });
 
-  it('selector: дневной лимит закрывается — доставки нет', async () => {
+  it('selector: добор отдаёт все оценённые посты', async () => {
     const sources = harness.dataSource.getRepository(SourceChannelEntity);
     const observed = harness.dataSource.getRepository(ObservedPostEntity);
 
@@ -273,16 +282,19 @@ describe('Parser e2e (параллельный конвейер)', () => {
       { id: 101 } as never,
       { id: 102 } as never,
     ]);
+    // Разное медиа на каждый пост — иначе сработает склейка дублей.
+    client.downloadMedia.mockImplementation((message: { id?: number }) =>
+      Promise.resolve(Buffer.from(`img-${message?.id ?? 0}`))
+    );
 
     const selector = harness.moduleRef.get(ParserSelectorService, { strict: false });
-    const settings = harness.moduleRef.get(ParserSettingsService, { strict: false });
-    await settings.update({ dailyLimit: 2 });
+    (selector as unknown as { lastDumpAt: number }).lastDumpAt = 0;
 
-    const delivered = await selector.selectAndDeliver();
-    expect(delivered).toBe(2);
+    const delivered = await selector.dumpMore();
+    expect(delivered).toBe(3);
 
     const deliveredCount = await observed.countBy({ status: ObservedStatus.DELIVERED });
-    expect(deliveredCount).toBe(2);
+    expect(deliveredCount).toBe(3);
   });
 
   it('кринж-категория: пометка в подписи карточки', async () => {
@@ -318,7 +330,8 @@ describe('Parser e2e (параллельный конвейер)', () => {
     client.getMessages.mockResolvedValue([{ id: 9 } as never]);
 
     const selector = harness.moduleRef.get(ParserSelectorService, { strict: false });
-    const delivered = await selector.selectAndDeliver();
+    (selector as unknown as { lastDumpAt: number }).lastDumpAt = 0;
+    const delivered = await selector.dumpMore();
 
     expect(delivered).toBe(1);
     const sendPhoto = findCall(harness.calls, 'sendPhoto');
