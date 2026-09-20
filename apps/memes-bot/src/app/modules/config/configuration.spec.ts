@@ -22,9 +22,6 @@ describe('configuration', () => {
     'S3_BUCKET',
     'S3_ACCESS_KEY_ID',
     'S3_SECRET_ACCESS_KEY',
-    'MONITOR_BOT_TOKEN',
-    'MONITOR_MAIN_CHANNEL',
-    'MONITOR_BEST_CHANNEL',
     'MATTERMOST_BASE_URL',
     'MATTERMOST_TOKEN',
     'MATTERMOST_CHANNEL_ID',
@@ -83,13 +80,8 @@ describe('configuration', () => {
 
   it('PARSER_USER_ID и MONITOR_* берутся из переменных окружения', () => {
     process.env.PARSER_USER_ID = '4242';
-    process.env.MANAGED_CHANNEL = '-1002';
-    process.env.BEST_MANAGED_CHANNEL = '-1003';
-
     const config = configuration();
 
     expect(config.PARSER_USER_ID).toBe('4242');
-    expect(config.MONITOR_MAIN_CHANNEL).toBe('-1002');
-    expect(config.MONITOR_BEST_CHANNEL).toBe('-1003');
   });
 });

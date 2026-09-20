@@ -4,7 +4,7 @@ import { Throttle } from '@nestjs/throttler';
 import { Response } from 'express';
 import { Readable } from 'stream';
 import { BaseConfigService } from '../../config/base-config.service';
-import { ChannelMonitorBotService } from '../services/channel-monitor-bot.service';
+import { ChannelMemeService } from '../services/channel-meme.service';
 
 @Controller('memes')
 @Throttle({ default: { limit: 10, ttl: 60000 } })
@@ -13,7 +13,7 @@ export class MemesController {
   private readonly s3Client: S3Client;
 
   constructor(
-    private channelMonitorBotService: ChannelMonitorBotService,
+    private channelMemeService: ChannelMemeService,
     private configService: BaseConfigService
   ) {
     this.s3Client = new S3Client({
@@ -30,7 +30,7 @@ export class MemesController {
   async getLastMainMeme(@Res({ passthrough: true }) res: Response) {
     this.logger.log('GET /memes/main/last');
 
-    const meme = await this.channelMonitorBotService.getLastMeme();
+    const meme = await this.channelMemeService.getLastMeme();
 
     if (!meme) {
       return this.returnPlaceholder(res);
@@ -43,7 +43,7 @@ export class MemesController {
   async getRandomMainMeme(@Res({ passthrough: true }) res: Response) {
     this.logger.log('GET /memes/main/random');
 
-    const meme = await this.channelMonitorBotService.getRandomMemeByType('main');
+    const meme = await this.channelMemeService.getRandomMemeByType('main');
 
     if (!meme) {
       return this.returnPlaceholder(res);
@@ -56,12 +56,12 @@ export class MemesController {
   async getLastBestMeme(@Res({ passthrough: true }) res: Response) {
     this.logger.log('GET /memes/best/last');
 
-    let meme = await this.channelMonitorBotService.getLastBestMeme();
+    let meme = await this.channelMemeService.getLastBestMeme();
 
     // Fallback на основной канал
     if (!meme) {
       this.logger.log('No best meme found, falling back to main channel');
-      meme = await this.channelMonitorBotService.getLastMeme();
+      meme = await this.channelMemeService.getLastMeme();
     }
 
     if (!meme) {
@@ -75,12 +75,12 @@ export class MemesController {
   async getRandomBestMeme(@Res({ passthrough: true }) res: Response) {
     this.logger.log('GET /memes/best/random');
 
-    let meme = await this.channelMonitorBotService.getRandomMemeByType('best');
+    let meme = await this.channelMemeService.getRandomMemeByType('best');
 
     // Fallback на основной канал
     if (!meme) {
       this.logger.log('No best meme found, falling back to main channel');
-      meme = await this.channelMonitorBotService.getRandomMemeByType('main');
+      meme = await this.channelMemeService.getRandomMemeByType('main');
     }
 
     if (!meme) {

@@ -214,6 +214,35 @@ describe('ParserMenuService (кнопки)', () => {
     expect(delivery.buildCandidateKeyboard).toHaveBeenCalledWith(5);
   });
 
+  it('источники: иконки статусов/категорий и лейблы при выключенном конвейере', async () => {
+    const { service, settings, registry } = makeDeps();
+    settings.current.enabled = false;
+    settings.current.aiEnabled = true;
+    registry.listAll.mockResolvedValue([
+      { id: 1, chatId: '-1001', title: 'Cringe', category: SourceCategory.CRINGE, status: SourceStatus.DISABLED },
+      { id: 2, chatId: '-1002', username: 'webb', title: null, category: SourceCategory.MEMES, status: SourceStatus.WEB_ONLY },
+      { id: 3, chatId: '-1003', title: 'Active', category: SourceCategory.MEMES, status: SourceStatus.ACTIVE },
+    ]);
+    service.onModuleInit();
+    service.getMenu();
+
+    // заголовок и лейблы пресетов (выключенный конвейер, включённый AI)
+    for (const button of buttons()) {
+      if (typeof button.label === 'function') {
+        const label = await (button.label as () => Promise<string>)();
+        expect(typeof label).toBe('string');
+      }
+    }
+
+    const range = await dynamicFns[0]();
+    const sourceButtons = rangeButtons(range);
+    expect(sourceButtons.length).toBe(6);
+    const texts = sourceButtons.map((button) => String(button.text));
+    expect(texts.some((text) => text.includes('⚪️'))).toBe(true);
+    expect(texts.some((text) => text.includes('🌐'))).toBe(true);
+    expect(texts.some((text) => text.includes('🤡'))).toBe(true);
+  });
+
   it('сброс настроек', async () => {
     const { service, settings } = makeDeps();
     service.onModuleInit();

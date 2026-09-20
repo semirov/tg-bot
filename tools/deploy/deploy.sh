@@ -88,6 +88,12 @@ echo "--- status ---"
 docker ps --format '{{.Names}} | {{.Image}} | {{.Status}}' | grep "${DEPLOY_CONTAINER}" || true
 echo "--- logs ---"
 docker logs --tail 60 "${DEPLOY_CONTAINER}" 2>&1
+# Диск сервера маленький (20 ГБ): старые теги образов копятся и однажды
+# переполняют раздел (инцидент 2026-09-20 — Postgres не смог писать).
+# Чистим образы старше 72 часов (текущий и предыдущий релиз остаются).
+echo "--- prune старых образов ---"
+docker image prune -af --filter "until=72h" | tail -2
+df -h / | tail -1
 REMOTE
 
 echo "==> Проверка здоровья и уведомления о старте"

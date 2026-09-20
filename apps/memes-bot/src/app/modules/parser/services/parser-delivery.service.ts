@@ -19,7 +19,6 @@ import { SourceChannelEntity } from '../entities/source-channel.entity';
 import { ParserMtprotoGuard } from './parser-mtproto-guard.service';
 import { ParserClientService } from './parser-client.service';
 import { ParserRegistryService } from './parser-registry.service';
-import { rawIdOf } from '../domain/parser-media';
 import { formatViews } from '../domain/parser-scoring';
 
 /**

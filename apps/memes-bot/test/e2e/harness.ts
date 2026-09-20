@@ -5,7 +5,6 @@ import { DataSource } from 'typeorm';
 import { AppModule } from '../../src/app/app.module';
 import { BotContext } from '../../src/app/modules/bot/interfaces/bot-context.interface';
 import { BOT } from '../../src/app/modules/bot/providers/bot.provider';
-import { ChannelMonitorBotService } from '../../src/app/modules/channel-monitor/services/channel-monitor-bot.service';
 import { ClientBaseService } from '../../src/app/modules/client/services/client-base.service';
 
 /**
@@ -124,16 +123,6 @@ function createClientBaseStub() {
   };
 }
 
-function createChannelMonitorStub() {
-  return {
-    onModuleInit: async () => undefined,
-    onApplicationBootstrap: async () => undefined,
-    getLastMeme: async () => null,
-    getLastBestMeme: async () => null,
-    getRandomMemeByType: async () => null,
-  };
-}
-
 /** Тестовый стенд: приложение, бот, БД и перехваченные вызовы Telegram. */
 export interface E2EHarness {
   moduleRef: TestingModule;
@@ -164,8 +153,7 @@ export async function createE2EHarness(options: E2EHarnessOptions = {}): Promise
   const calls: TelegramApiCall[] = [];
 
   let builder = Test.createTestingModule({ imports: [AppModule] })
-    .overrideProvider(ChannelMonitorBotService)
-    .useValue(createChannelMonitorStub());
+
 
   if (!options.realClientBaseService) {
     builder = builder.overrideProvider(ClientBaseService).useValue(createClientBaseStub());

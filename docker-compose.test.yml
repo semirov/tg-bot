@@ -31,7 +31,6 @@ services:
       NODE_ENV: test
       TG_ENV: test
       BOT_TOKEN: '111111:TEST_TOKEN'
-      MONITOR_BOT_TOKEN: '222222:TEST_MONITOR_TOKEN'
       BOT_OWNER_ID: '424242'
       APP_API_ID: '123456'
       APP_API_HASH: 'test-api-hash'
