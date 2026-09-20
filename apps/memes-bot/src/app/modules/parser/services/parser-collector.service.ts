@@ -220,6 +220,13 @@ export class ParserCollectorService {
       crossLinks: crossLinks.length ? crossLinks.map((hit) => ({ username: hit.username, chatId: hit.chatId })) : null,
       status: ObservedStatus.PENDING,
     });
+    // Первичные цифры из истории: сразу строят базлайн канала, не дожидаясь
+    // переоценки (live-посты обычно приходят с views≈0).
+    if (message.views != null) {
+      candidate.views = Number(message.views);
+    }
+    candidate.reactions = this.reactionsTotal(message);
+
     await this.observedRepository.save(candidate);
 
     if (crossLinks.length) {
@@ -228,6 +235,12 @@ export class ParserCollectorService {
 
     this.logger.debug(`Parser collector: кандидат ${sourceChatId}/${sourceMessageId} (${media.kind})`);
     return 1;
+  }
+
+  /** Сумма реакций сообщения (0, если реакций нет). */
+  private reactionsTotal(message: Api.Message): number {
+    const results = message.reactions?.results ?? [];
+    return results.reduce((sum, item) => sum + Number(item.count ?? 0), 0);
   }
 
   private async fetchMessage(rawChatId: bigInt.BigInteger, messageId: number): Promise<Api.Message | undefined> {

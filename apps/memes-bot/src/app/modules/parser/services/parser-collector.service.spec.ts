@@ -149,6 +149,23 @@ describe('ParserCollectorService', () => {
       expect(observedRepo.create).not.toHaveBeenCalled();
     });
 
+    it('сохраняет views/reactions при сборе; пост без реакций → 0', async () => {
+      registry.repository.findOne
+        .mockResolvedValueOnce(source())
+        .mockResolvedValueOnce(source());
+      await service.onLiveEvent(
+        event(mediaMessage({ views: 5000, reactions: { results: [{ count: 12 }] } }))
+      );
+      await service.onLiveEvent(event(mediaMessage({ id: 43, views: undefined, reactions: undefined })));
+
+      expect(observedRepo.save).toHaveBeenCalledWith(
+        expect.objectContaining({ sourceMessageId: 42, views: 5000, reactions: 12 })
+      );
+      expect(observedRepo.save).toHaveBeenCalledWith(
+        expect.objectContaining({ sourceMessageId: 43, reactions: 0 })
+      );
+    });
+
     it('источник не из реестра → ничего', async () => {
       registry.repository.findOne.mockResolvedValue(null);
       await service.onLiveEvent(event(mediaMessage()));

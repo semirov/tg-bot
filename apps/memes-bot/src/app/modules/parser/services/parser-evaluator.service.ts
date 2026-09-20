@@ -101,10 +101,15 @@ export class ParserEvaluatorService {
       return true;
     }
 
-    const baseline = this.freshBaseline(source) ?? (await this.registry.computeBaselineFor(source));
+    let baseline = this.freshBaseline(source) ?? (await this.registry.computeBaselineFor(source));
     if (!baseline) {
-      this.logger.debug(`Parser evaluate: нет базлайна у ${source.chatId} — кандидат ждёт`);
-      return false;
+      // Круг «baseline ← оценённые посты ← baseline» разрываем первичным
+      // базлайном из истории канала (getHistory, read-only).
+      baseline = await this.registry.seedBaselineFromHistory(source, client);
+      if (!baseline) {
+        this.logger.debug(`Parser evaluate: нет базлайна у ${source.chatId} — кандидат ждёт`);
+        return false;
+      }
     }
 
     const ids = [candidate.sourceMessageId, ...(candidate.groupIds ?? [])];

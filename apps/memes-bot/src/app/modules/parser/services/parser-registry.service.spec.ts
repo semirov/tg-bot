@@ -242,6 +242,92 @@ describe('ParserRegistryService', () => {
     });
   });
 
+  describe('seedBaselineFromHistory', () => {
+    const makeClient = (messages: unknown[]) => ({ getMessages: jest.fn().mockResolvedValue(messages) });
+
+    it('нет peer → null', async () => {
+      const service = new ParserRegistryService(
+        sourceRepo, observedRepo, makeConfig(), makeGuard(), makeParserClient({}), makeSettingsStub(), makeClock()
+      );
+      expect(
+        await service.seedBaselineFromHistory(source({ rawChatId: null, username: null }), { getMessages: jest.fn() } as never)
+      ).toBeNull();
+    });
+
+    it('guard вернул undefined → null', async () => {
+      const guard = makeGuard();
+      guard.run.mockResolvedValue(undefined);
+      const service = new ParserRegistryService(
+        sourceRepo, observedRepo, makeConfig(), guard, makeParserClient({}), makeSettingsStub(), makeClock()
+      );
+      expect(await service.seedBaselineFromHistory(source(), makeClient([]) as never)).toBeNull();
+    });
+
+    it('мало постов с просмотрами → null', async () => {
+      const service = new ParserRegistryService(
+        sourceRepo, observedRepo, makeConfig(), makeGuard(),
+        makeParserClient(makeClient([
+          { photo: {}, views: 100, reactions: { results: [] } },
+          { photo: {}, views: 200, reactions: { results: [] } },
+        ])),
+        makeSettingsStub(), makeClock()
+      );
+      expect(await service.seedBaselineFromHistory(source(), makeClient([]) as never)).toBeNull();
+    });
+
+    it('грязные данные: реакции без count/emoticon, results undefined', async () => {
+      const dirty = [
+        { photo: {}, views: 1000, reactions: {} },
+        { photo: {}, views: 2000, reactions: { results: [{}, { count: undefined, reaction: undefined }] } },
+        { photo: {}, views: 3000 },
+        { photo: {}, views: 4000, reactions: { results: [{ count: 5, reaction: { emoticon: '🔥' } }] } },
+        { photo: {}, views: 5000, reactions: { results: [{ count: 6, reaction: { emoticon: '🔥' } }] } },
+        { photo: {}, views: 6000, reactions: { results: [{ count: 7, reaction: { emoticon: '🔥' } }] } },
+        { photo: {}, views: null, reactions: { results: [] } },
+      ];
+      const service = new ParserRegistryService(
+        sourceRepo, observedRepo, makeConfig(), makeGuard(),
+        makeParserClient(makeClient(dirty)), makeSettingsStub(), makeClock()
+      );
+
+      expect(await service.seedBaselineFromHistory(source(), makeClient(dirty) as never)).toMatchObject({
+        sampleSize: 6,
+      });
+    });
+
+    it('успех: считает базлайн и сохраняет в источник', async () => {
+      const service = new ParserRegistryService(
+        sourceRepo, observedRepo, makeConfig(), makeGuard(),
+        makeParserClient(makeClient([
+          { photo: {}, views: 1000, reactions: { results: [{ count: 10, reaction: { emoticon: '🔥' } }] } },
+          { photo: {}, views: 2000, reactions: { results: [{ count: 20, reaction: { emoticon: '🔥' } }] } },
+          { photo: {}, views: 3000, reactions: { results: [{ count: 30, reaction: { emoticon: '💩' } }] } },
+          { video: {}, views: 4000, reactions: { results: [{ count: 40, reaction: { emoticon: '🔥' } }] } },
+          { photo: {}, views: 5000, reactions: { results: [] } },
+          { photo: {}, views: 0, reactions: { results: [] } },
+          { photo: {}, views: 9000, reactions: { results: [] } },
+        ])),
+        makeSettingsStub(), makeClock()
+      );
+
+      const freshMessages = [
+        { photo: {}, views: 1000, reactions: { results: [{ count: 10, reaction: { emoticon: '🔥' } }] } },
+        { photo: {}, views: 2000, reactions: { results: [{ count: 20, reaction: { emoticon: '🔥' } }] } },
+        { photo: {}, views: 3000, reactions: { results: [{ count: 30, reaction: { emoticon: '💩' } }] } },
+        { video: {}, views: 4000, reactions: { results: [{ count: 40, reaction: { emoticon: '🔥' } }] } },
+        { photo: {}, views: 5000, reactions: { results: [] } },
+        { photo: {}, views: 0, reactions: { results: [] } },
+        { photo: {}, views: 9000, reactions: { results: [] } },
+      ];
+      const baseline = await service.seedBaselineFromHistory(source(), makeClient(freshMessages) as never);
+
+      expect(baseline?.sampleSize).toBe(6);
+      expect(sourceRepo.save).toHaveBeenCalledWith(
+        expect.objectContaining({ baseline: expect.objectContaining({ sampleSize: 6 }) })
+      );
+    });
+  });
+
   describe('pruneWeakSources', () => {
     it('отключает источник без выбранных при полном reject-rate', async () => {
       sourceRepo.find.mockResolvedValue([source()]);
