@@ -4,6 +4,13 @@ on:
   pull_request:
   push:
     branches: [main]
+  # Ручной деплой текущего main без релиза (аварийное восстановление).
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Версия для деплоя (по умолчанию — текущий APP_VERSION с сервера)'
+        required: false
+        default: ''
 
 # Не запускать два деплоя одновременно.
 concurrency:
@@ -106,12 +113,14 @@ jobs:
 
   deploy:
     name: Deploy
-    needs: release
-    if: needs.release.outputs.released == 'true'
+    needs: [release, test, e2e]
+    # Обычный путь: после релиза. Аварийный: ручной запуск workflow.
+    if: |
+      always() && (needs.release.outputs.released == 'true' || github.event_name == 'workflow_dispatch')
     runs-on: [self-hosted, linux, x64, memes-bot]
     steps:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
-      - name: Deploy ${{ needs.release.outputs.version }}
-        run: bash tools/deploy/deploy.sh "${{ needs.release.outputs.version }}" "${GITHUB_SHA::7}"
+      - name: Deploy ${{ needs.release.outputs.version || inputs.version }}
+        run: bash tools/deploy/deploy.sh "${{ needs.release.outputs.version || inputs.version || '0.0.0-manual' }}" "${GITHUB_SHA::7}"
