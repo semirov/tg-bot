@@ -1,3 +1,10 @@
+# [0.20.0](https://github.com/semirov/tg-bot/compare/v0.19.0...v0.20.0) (2026-09-20)
+
+
+### Features
+
+* **observability:** Prometheus-метрики бота и /metrics endpoint ([9e471d1](https://github.com/semirov/tg-bot/commit/9e471d13f295a7c03d23120f6988ea113c23e24c))
+
 # [0.19.0](https://github.com/semirov/tg-bot/compare/v0.18.1...v0.19.0) (2026-09-20)
 
 
