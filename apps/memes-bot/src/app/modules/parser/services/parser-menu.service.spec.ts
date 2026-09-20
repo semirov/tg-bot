@@ -53,11 +53,15 @@ describe('ParserMenuService (кнопки)', () => {
     };
     const discovery = {
       repository: { count: jest.fn().mockResolvedValue(2) },
-      listReady: jest.fn().mockResolvedValue([
+      listReady: jest.fn().mockResolvedValue([]),
+      listForReview: jest.fn().mockResolvedValue([
         { id: 5, title: 'Cand', username: 'cand', mentions: 2, subscribers: 100, errEstimate: 0.2, postsPerDay: 5, aiVerdict: null },
       ]),
     };
-    const delivery = { buildCandidateKeyboard: jest.fn().mockReturnValue({}) };
+    const delivery = {
+      buildCandidateKeyboard: jest.fn().mockReturnValue({}),
+      buildCandidateCaption: jest.fn().mockReturnValue('card'),
+    };
     const repo = {
       count: jest.fn().mockResolvedValue(0),
       createQueryBuilder: jest.fn(() => ({

@@ -71,5 +71,7 @@ export const FLOOD_DEADLINE_MS = 10 * 60 * 1000;
 export const FLOOD_CUMULATIVE_CAP_SEC = 600;
 
 /** Лимиты discovery за один прогон. */
-export const DISCOVERY_WEB_CHECK_PER_RUN = 5;
+export const DISCOVERY_WEB_CHECK_PER_RUN = 10;
 export const DISCOVERY_CROSS_LIMIT_PER_RUN = 10;
+/** Сколько карточек кандидатов показывать за раз в меню. */
+export const DISCOVERY_REVIEW_LIMIT = 8;

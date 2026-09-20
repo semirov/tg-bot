@@ -53,17 +53,17 @@ export class ParserModerationService {
       await this.handleAction(ctx, action, postId);
     });
 
-    this.bot.callbackQuery(new RegExp(`^${CANDIDATE_CB_PREFIX}:(wo|jo|rj):(\\d+)$`), async (ctx) => {
-      const action = ctx.match?.[1] as 'wo' | 'jo' | 'rj';
+    this.bot.callbackQuery(new RegExp(`^${CANDIDATE_CB_PREFIX}:(wo|jo|rj|chk|rst):(\\d+)$`), async (ctx) => {
+      const action = ctx.match?.[1] as 'wo' | 'jo' | 'rj' | 'chk' | 'rst';
       const candidateId = Number(ctx.match?.[2]);
       await this.handleCandidate(ctx, action, candidateId);
     });
   }
 
-  /** Карточка кандидата discovery: web-only / джойн / отклонить. */
+  /** Карточка кандидата discovery: web-only / джойн / перепроверка / отклонить. */
   public async handleCandidate(
     ctx: BotContext,
-    action: 'wo' | 'jo' | 'rj',
+    action: 'wo' | 'jo' | 'rj' | 'chk' | 'rst',
     candidateId: number
   ): Promise<void> {
     if (!ctx.config?.isOwner) {
@@ -74,26 +74,64 @@ export class ParserModerationService {
     if (action === 'rj') {
       const rejected = await this.discovery.reject(candidateId);
       await ctx.answerCallbackQuery(rejected ? 'Отклонён' : 'Не найден');
-      await this.safeEdit(ctx, '❌ Кандидат отклонён');
+      await this.editCandidateCard(ctx, candidateId, '❌ Кандидат отклонён');
+      return;
+    }
+
+    if (action === 'rst') {
+      const reset = await this.discovery.resetToPending(candidateId);
+      await ctx.answerCallbackQuery(reset ? 'Вернул в проверку' : 'Не найден');
+      if (reset) await this.editCandidateCard(ctx, candidateId);
+      return;
+    }
+
+    if (action === 'chk') {
+      await ctx.answerCallbackQuery('Проверяю…');
+      const checked = await this.discovery.checkCandidateById(candidateId);
+      await this.editCandidateCard(ctx, candidateId);
+      this.logger.log(
+        `Parser discovery: ручная проверка кандидата ${candidateId} → ${checked?.verdict} (${checked?.reason ?? 'ok'})`
+      );
       return;
     }
 
     const approved = await this.discovery.approve(candidateId, action === 'jo' ? 'join' : 'web_only');
     if (!approved) {
-      await ctx.answerCallbackQuery('Не удалось добавить (см. лог)');
-      await this.safeEdit(ctx, '⚠️ Не удалось добавить кандидата');
+      const candidate = await this.discovery.repository.findOne({ where: { id: candidateId } });
+      const why = candidate?.reason ?? 'неизвестно';
+      await ctx.answerCallbackQuery(
+        why.startsWith('approve-blocked')
+          ? 'Кандидат не подтверждён (не ready) — нажми 🔎 или ↩️'
+          : `Не получилось: ${why}`
+      );
+      this.logger.warn(`Parser discovery: approve ${candidateId} отклонён (${why})`);
+      await this.editCandidateCard(ctx, candidateId, `⚠️ Не добавлен: ${why}`);
       return;
     }
 
     await ctx.answerCallbackQuery(action === 'jo' ? 'Добавлен (активный)' : 'Добавлен (web-only)');
-    await this.safeEdit(ctx, `✅ Источник добавлен (${action === 'jo' ? 'активный' : 'web-only'})`);
+    await this.editCandidateCard(ctx, candidateId, `✅ Источник добавлен (${action === 'jo' ? 'активный' : 'web-only'})`);
   }
 
-  private async safeEdit(ctx: BotContext, text: string): Promise<void> {
+  /**
+   * Перерисовывает карточку кандидата: ссылка, метрики, вердикт и клавиатура.
+   * `prefix` — короткий заголовок-статус (если нужно подчеркнуть действие).
+   */
+  private async editCandidateCard(
+    ctx: BotContext,
+    candidateId: number,
+    prefix?: string
+  ): Promise<void> {
+    const candidate = await this.discovery.repository.findOne({ where: { id: candidateId } });
+    if (!candidate) return;
+    const text = [prefix, this.delivery.buildCandidateCaption(candidate)].filter(Boolean).join('\n');
     try {
-      await ctx.editMessageText(text);
-    } catch {
-      // карточка могла быть удалена — не критично
+      await ctx.editMessageText(text, {
+        parse_mode: 'HTML',
+        reply_markup: this.delivery.buildCandidateKeyboard(candidateId),
+      });
+    } catch (error) {
+      this.logger.warn(`Parser discovery: не удалось обновить карточку ${candidateId}: ${error}`);
     }
   }
 
