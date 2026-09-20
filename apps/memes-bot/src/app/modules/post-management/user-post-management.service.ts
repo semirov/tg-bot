@@ -115,6 +115,12 @@ export class UserPostManagementService implements OnModuleInit {
         (id) => id !== undefined
       ) as number[];
 
+      // Лучших нет (ошибка сбора/пустой день) — уведомлять некого.
+      // Без этой проверки `IN ()` в SQL падает с syntax error.
+      if (!bestPostIds.length) {
+        return;
+      }
+
       // Находим посты в user-request.entity по publishedMessageId
       const bestUserPosts = await this.userRequestService.repository
         .createQueryBuilder('userRequest')

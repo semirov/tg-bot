@@ -136,7 +136,10 @@ export class AdminMenuService implements OnModuleInit {
       })
       .row()
       .text('Лучший пост в канал', async (ctx) => {
-        await this.clientBaseService.postDailyBestMeme(ctx.from.id);
+        // Публикуем в канал «Лучшее». Раньше сюда передавался ctx.from.id —
+        // пост уходил в личку владельцу, а не в канал.
+        await this.clientBaseService.postDailyBestMeme(this.baseConfigService.bestMemeChanelId);
+        await ctx.answerCallbackQuery('Лучший пост опубликован в «Лучшее»');
       })
       .row()
       .text('Меню модератора', this.menuPresenter.switchToMenu(moderatorStartMenu))

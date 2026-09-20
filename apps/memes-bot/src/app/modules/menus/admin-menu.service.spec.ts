@@ -236,7 +236,7 @@ describe('AdminMenuService', () => {
       findById: jest.fn(),
       disableMemeLimitForUser: jest.fn().mockResolvedValue(undefined),
     };
-    baseConfigService = { userRequestMemeChannel: -1001234567890, memeChanelId: -1009876543210 };
+    baseConfigService = { userRequestMemeChannel: -1001234567890, memeChanelId: -1009876543210, bestMemeChanelId: -1002222222222 };
     clientBaseService = {
       lastObserverStatus: jest.fn().mockResolvedValue(false),
       toggleChannelObserver: jest.fn().mockResolvedValue(undefined),
@@ -458,7 +458,7 @@ describe('AdminMenuService', () => {
       const ctx = makeCtx();
       const btn = await findByText(menu, ctx, (t) => t === 'Лучший пост в канал');
       await btn.middleware[0](ctx, jest.fn());
-      expect(clientBaseService.postDailyBestMeme).toHaveBeenCalledWith(555);
+      expect(clientBaseService.postDailyBestMeme).toHaveBeenCalledWith(-1002222222222);
     });
 
     it('кнопки меню модератора и пользователя отдают соответствующие клавиатуры', async () => {

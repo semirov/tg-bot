@@ -48,6 +48,14 @@ export interface ThresholdVerdict {
   reasons: string[];
 }
 
+/** Границы нормировки: не даём одному каналу с «мелкими» медианами забить топ. */
+export const NV_CAP = 10;
+export const NR_CAP = 10;
+export const RMED_FLOOR = 3;
+
+const clampRatio = (value: number, cap: number): number =>
+  Number.isFinite(value) ? Math.min(Math.max(0, value), cap) : 0;
+
 const percentile = (sorted: number[], p: number): number => {
   if (!sorted.length) return 0;
   const idx = Math.min(sorted.length - 1, Math.ceil((p / 100) * sorted.length) - 1);
@@ -114,11 +122,18 @@ export function computePostMetrics(
   const rmed = Math.max(1, baseline.rmed);
   const v = Math.max(0, views ?? 0);
 
+  const classified = reactionCounts.positive + reactionCounts.negative;
+
   return {
-    nv: v / vmed,
-    nr: reactionCounts.total / rmed,
+    // nv/nr ограничены сверху (NV_CAP/NR_CAP), иначе канал с медианой
+    // реакций ~2 делает nr=20+ и монополизирует топ по всем источникам.
+    nv: clampRatio(v / vmed, NV_CAP),
+    // Пол по медиане реакций (RMED_FLOOR) защищает от деления на почти ноль.
+    nr: clampRatio(reactionCounts.total / Math.max(RMED_FLOOR, rmed), NR_CAP),
     rr: reactionCounts.total / Math.max(1, v),
-    posShare: reactionCounts.total > 0 ? reactionCounts.positive / reactionCounts.total : 0,
+    // posShare считаем по распознанным реакциям: кастомные эмодзи нейтральны.
+    // Если распознать нечего — негатива нет, не штрафуем.
+    posShare: classified > 0 ? reactionCounts.positive / classified : 1,
     cringeShare: reactionCounts.total > 0 ? reactionCounts.cringe / reactionCounts.total : 0,
   };
 }
@@ -135,13 +150,14 @@ export function computeScore(metrics: PostMetrics): number {
  */
 export function passesThresholds(
   views: number,
+  reactions: number,
   metrics: PostMetrics,
   rules: SelectionRules,
   baseline: ChannelBaseline
 ): ThresholdVerdict {
   const reasons: string[] = [];
   if ((views ?? 0) < rules.minViews) reasons.push(`views<${rules.minViews}`);
-  if ((metrics.nr * Math.max(1, baseline.rmed)) < rules.minReactions) {
+  if ((reactions ?? 0) < rules.minReactions) {
     reasons.push(`reactions<${rules.minReactions}`);
   }
   const atP90 = baseline.p90 > 0 && (views ?? 0) >= baseline.p90 * 0.9;

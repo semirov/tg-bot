@@ -412,7 +412,9 @@ export class ClientBaseService implements OnModuleInit {
 
       // Получаем сообщения с конца (новые сначала)
       const messages = await this.telegramClient.getMessages(memeChannel, {
-        limit: 100, // Достаточно для покрытия 24 часов в активном канале
+        // Активный канал легко даёт >100 постов в сутки — берём с запасом,
+        // иначе часть суточного окна не попадает в выбор лучшего.
+        limit: 200,
       });
 
       if (messages.length === 0) {
@@ -508,7 +510,9 @@ export class ClientBaseService implements OnModuleInit {
       }
     } catch (error) {
       Logger.error(`Error posting daily best meme: ${error}`, ClientBaseService.name);
-      this.bestMemesDailytSubject.next({ byLikePostMemeId: 37, byViewPostMemeId: 37 });
+      // Раньше здесь уходили фиктивные id 37/37 — от них в уведомлениях
+      // пользователям не было смысла. Сообщаем «лучших нет».
+      this.bestMemesDailytSubject.next({});
       throw error;
     }
   }
