@@ -1,3 +1,10 @@
+## [0.17.3](https://github.com/semirov/tg-bot/compare/v0.17.2...v0.17.3) (2026-09-20)
+
+
+### Bug Fixes
+
+* **ci:** ручной деплой через workflow_dispatch ([#69](https://github.com/semirov/tg-bot/issues/69)) ([cbd3908](https://github.com/semirov/tg-bot/commit/cbd3908400f72982a22701445eebc9e80d27f2a0))
+
 ## [0.17.2](https://github.com/semirov/tg-bot/compare/v0.17.1...v0.17.2) (2026-09-20)
 
 
