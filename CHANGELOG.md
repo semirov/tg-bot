@@ -1,3 +1,10 @@
+## [0.18.1](https://github.com/semirov/tg-bot/compare/v0.18.0...v0.18.1) (2026-09-20)
+
+
+### Bug Fixes
+
+* **scoring:** аудит «лучших» — score, реакции, пустой список, кнопка канала ([#71](https://github.com/semirov/tg-bot/issues/71)) ([1e18dde](https://github.com/semirov/tg-bot/commit/1e18ddeace3fa06376d64dc67d1033423fa98335))
+
 # [0.18.0](https://github.com/semirov/tg-bot/compare/v0.17.3...v0.18.0) (2026-09-20)
 
 
