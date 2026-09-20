@@ -1,3 +1,10 @@
+# [0.17.0](https://github.com/semirov/tg-bot/compare/v0.16.1...v0.17.0) (2026-09-20)
+
+
+### Features
+
+* **parser:** параллельный умный парсер — Source Registry, отбор, discovery, квоты, кринж ([#64](https://github.com/semirov/tg-bot/issues/64)) ([04030eb](https://github.com/semirov/tg-bot/commit/04030eb961407cf4809228c30a8dac91ab8ed7fc))
+
 ## [0.16.1](https://github.com/semirov/tg-bot/compare/v0.16.0...v0.16.1) (2026-09-19)
 
 
