@@ -114,8 +114,8 @@ export class ParserCollectorService {
     if (!source || source.status === 'disabled') return;
 
     const primaryId = Math.max(...group.ids);
-    const rawChatId = bigInt(group.rawChatId);
-    const message = await this.fetchMessage(rawChatId, primaryId);
+    const peer = bigInt(chatId);
+    const message = await this.fetchMessage(peer, primaryId);
     if (!message) return;
     const media = extractMediaInfo(message);
     if (!media) return;
@@ -148,7 +148,7 @@ export class ParserCollectorService {
       this.logger.warn(`Parser sweep: у источника ${source.chatId} нет rawChatId и username — пропуск`);
       return 0;
     }
-    const peer = source.rawChatId ? bigInt(source.rawChatId) : source.username;
+    const peer = source.chatId; // marked id (-100...): резолвится из кэша диалогов сессии
     const since = Math.floor((this.clock.now().getTime() - 26 * 3_600_000) / 1000);
 
     const messages = await this.guard.run<TotalList<Api.Message>>('getHistory', () =>
@@ -180,7 +180,7 @@ export class ParserCollectorService {
 
     for (const ids of albums.values()) {
       const primaryId = Math.max(...ids);
-      const rawId = source.rawChatId ? bigInt(source.rawChatId) : bigInt(rawIdOf(Number(source.chatId)));
+      const rawId = bigInt(source.chatId);
       const message = await this.fetchMessage(rawId, primaryId);
       if (!message) continue;
       const media = extractMediaInfo(message);
