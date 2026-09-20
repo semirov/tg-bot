@@ -1,4 +1,5 @@
 import { Menu, MenuRange } from '@grammyjs/menu';
+import { BotContext } from '../bot/interfaces/bot-context.interface';
 import { Logger } from '@nestjs/common';
 import { InlineKeyboard } from 'grammy';
 
@@ -270,7 +271,10 @@ describe('AdminMenuService', () => {
       yearResultsService,
       trollService,
       trollSettings,
-      deepSeek
+      deepSeek,
+      {
+        getMenu: jest.fn().mockReturnValue(new Menu<BotContext>('PARSER_SETTINGS_MENU')),
+      } as never
     );
   });
 

@@ -54,6 +54,15 @@ export class ClientBaseService implements OnModuleInit {
     return this.bestMemesDailytSubject.asObservable();
   }
 
+  /**
+   * Активный MTProto-клиент наблюдателя (для модулей-соиспользователей).
+   * Клиент не поднят — undefined; подписка и запуск остаются в ведении
+   * самого сервиса.
+   */
+  public get activeClient(): TelegramClient | undefined {
+    return this.telegramClient;
+  }
+
   public async toggleChannelObserver(): Promise<void> {
     const status = await this.lastObserverStatus();
     if (status) {

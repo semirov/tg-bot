@@ -66,7 +66,7 @@ export function channelInternalId(chatId: unknown): string {
  * @returns ссылка или `null`, если собрать её невозможно
  */
 export function buildPostUrl(chat: TelegramChatLike, messageId?: number | null): string | null {
-  const username = chat?.username?.replace(/^@/, '').trim();
+  const username = chat?.username?.trim().replace(/^@/, '');
 
   if (username) {
     return messageId ? `https://t.me/${username}/${messageId}` : `https://t.me/${username}`;
