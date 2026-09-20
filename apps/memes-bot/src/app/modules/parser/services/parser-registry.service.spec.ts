@@ -116,15 +116,16 @@ describe('ParserRegistryService', () => {
     expect(await service.importSubscriptions()).toBe(0);
   });
 
-  it('refreshSourceStats: без rawChatId и username не дёргает MTProto', async () => {
+  it('refreshSourceStats: резолвит канал по marked chatId', async () => {
     observedRepo.find.mockResolvedValue([]);
-    const invoke = jest.fn();
+    const invoke = jest.fn().mockResolvedValue({ fullChat: { participantsCount: 4200 } });
     const updated = await service.refreshSourceStats(
-      source({ rawChatId: null, username: null }),
+      source({ rawChatId: null, username: null, chatId: '-1008888888888' }),
       { invoke } as never
     );
-    expect(invoke).not.toHaveBeenCalled();
-    expect(updated?.subscribers).toBeNull();
+    const request = invoke.mock.calls[0]?.[0] as { channel?: unknown };
+    expect(String(request.channel)).toBe('-1008888888888');
+    expect(updated?.subscribers).toBe(4200);
   });
 
   it('refreshSourceStats: participants=0 → ERR не пишем', async () => {

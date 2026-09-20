@@ -20,7 +20,7 @@ import { ParserMtprotoGuard } from './parser-mtproto-guard.service';
 import { ParserRegistryService } from './parser-registry.service';
 import { ParserSettingsService } from './parser-settings.service';
 import { ParserAiService } from './parser-ai.service';
-import { CrossLinkHit } from '../domain/parser-cross-links';
+import { CrossLinkHit, normalizeChatId } from '../domain/parser-cross-links';
 import { estimatePostsPerDay, fetchTmePreview } from '../domain/tme-preview';
 import { median } from '../domain/parser-scoring';
 
@@ -240,7 +240,7 @@ export class ParserDiscoveryService {
     if (rawChatId == null && client) {
       const entity = await this.guard.run('getEntity', () => client.getEntity(candidate.username as string));
       const channelId = (entity as { id?: { toString(): string } })?.id;
-      rawChatId = channelId ? -1_000_000_000_000 - Number(channelId.toString()) : null;
+      rawChatId = channelId ? normalizeChatId(Number(channelId.toString())) : null;
     }
     if (rawChatId == null) {
       candidate.reason = 'chatId-unresolved';
@@ -335,8 +335,7 @@ export class ParserDiscoveryService {
     if (candidate.chatId == null) return null;
     const client = this.parserClient.client();
     if (!client) return null;
-    const rawId = -1_000_000_000_000 - Number(candidate.chatId);
-    const entity = await this.guard.run('getEntity', () => client.getEntity(bigInt(rawId)));
+    const entity = await this.guard.run('getEntity', () => client.getEntity(bigInt(candidate.chatId)));
     const username = (entity as { username?: string })?.username;
     return username ?? null;
   }

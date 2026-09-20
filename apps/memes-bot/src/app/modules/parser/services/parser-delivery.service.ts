@@ -106,7 +106,7 @@ export class ParserDeliveryService {
     const client = await this.activeClient();
     if (!client) return null;
 
-    const rawId = source.rawChatId ? bigInt(source.rawChatId) : bigInt(rawIdOf(Number(source.chatId)));
+    const rawId = bigInt(source.chatId); // marked id (-100...)
     const ids = [candidate.sourceMessageId];
     const messages = await this.guard.run<TotalList<Api.Message>>('getMessages:deliver', () =>
       client.getMessages(rawId, { ids })

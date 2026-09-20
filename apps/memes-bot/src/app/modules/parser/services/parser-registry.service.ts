@@ -158,10 +158,10 @@ export class ParserRegistryService {
     }
 
     if (stale) {
-      const rawId = source.rawChatId ? bigInt(source.rawChatId) : source.username;
-      if (rawId != null) {
+      const peer = source.username ?? bigInt(source.chatId); // marked id
+      if (peer != null) {
         const full = await this.guard.run('getFullChannel', () =>
-          client.invoke(new Api.channels.GetFullChannel({ channel: rawId as never }))
+          client.invoke(new Api.channels.GetFullChannel({ channel: peer as never }))
         );
         const participants = Number((full as { fullChat?: { participantsCount?: number } })?.fullChat
           ?.participantsCount ?? 0);
@@ -186,7 +186,7 @@ export class ParserRegistryService {
     client: TelegramClient
   ): Promise<ChannelBaseline | null> {
     if (!source.rawChatId && !source.username) return null;
-    const peer = source.rawChatId ? bigInt(source.rawChatId) : source.username;
+    const peer = bigInt(source.chatId); // marked id (-100...)
 
     const messages = await this.guard.run<TotalList<Api.Message>>('getHistory:seed', () =>
       client.getMessages(peer, { limit: 50 })

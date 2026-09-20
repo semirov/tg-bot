@@ -114,7 +114,7 @@ export class ParserEvaluatorService {
 
     const ids = [candidate.sourceMessageId, ...(candidate.groupIds ?? [])];
     const messages = await this.guard.run<TotalList<Api.Message>>('getMessages:eval', () =>
-      client.getMessages(bigInt(source.rawChatId ?? source.chatId), { ids })
+      client.getMessages(bigInt(source.chatId), { ids }) // marked id
     );
     // Сетевая неудача guard'а — не «пост удалён»: пропускаем, повторим позже.
     if (messages === undefined) return false;
