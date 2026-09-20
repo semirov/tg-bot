@@ -508,7 +508,9 @@ export class ClientBaseService implements OnModuleInit {
       }
     } catch (error) {
       Logger.error(`Error posting daily best meme: ${error}`, ClientBaseService.name);
-      this.bestMemesDailytSubject.next({ byLikePostMemeId: 37, byViewPostMemeId: 37 });
+      // Раньше здесь уходили фиктивные id 37/37 — от них в уведомлениях
+      // пользователям не было смысла. Сообщаем «лучших нет».
+      this.bestMemesDailytSubject.next({});
       throw error;
     }
   }

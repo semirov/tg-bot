@@ -246,13 +246,17 @@ export class ParserRegistryService {
     const usable = rows;
     if (usable.length < 5) return null;
 
-    return computeBaseline(
+    const baseline = computeBaseline(
       usable.map((row) => ({
         views: Number(row.views ?? 0),
         reactions: row.reactions ?? 0,
         posShare: row.metrics?.posShare ?? 0,
       }))
     );
+    // Сохраняем, чтобы базлайн был виден в админке и не считался заново.
+    source.baseline = baseline;
+    await this.sourceRepository.save(source);
+    return baseline;
   }
 
   /**

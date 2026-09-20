@@ -337,6 +337,18 @@ describe('UserPostManagementService', () => {
       expect(h.bot.api.sendMessage).not.toHaveBeenCalled();
     });
 
+    it('пустой список лучших: не строит запрос и ничего не отправляет', async () => {
+      const h = createHarness();
+      const qb = mockQueryBuilder(h, []);
+      h.service.observeDailyBesetMemes();
+      const cb = h.clientBaseService.bestMemesDaily$.subscribe.mock.calls[0][0];
+
+      await cb({});
+
+      expect(qb.where).not.toHaveBeenCalled();
+      expect(h.bot.api.sendMessage).not.toHaveBeenCalled();
+    });
+
     it('ошибка уведомления логируется и не роняет подписку', async () => {
       const h = createHarness();
       mockQueryBuilder(h, [{ id: 1, publishedMessageId: 5, user: { id: 42 } }]);

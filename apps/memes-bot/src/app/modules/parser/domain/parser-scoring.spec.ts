@@ -93,15 +93,49 @@ describe('parser-scoring', () => {
       expect(metrics.nv).toBeCloseTo(2);
       expect(metrics.nr).toBeCloseTo(3);
       expect(metrics.rr).toBeCloseTo(0.015);
-      expect(metrics.posShare).toBeCloseTo(0.8);
+      // posShare = positive / (positive+negative) = 24/26
+      expect(metrics.posShare).toBeCloseTo(24 / 26);
       expect(metrics.cringeShare).toBeCloseTo(2 / 15);
     });
 
-    it('нулевой базлайн не даёт деления на ноль', () => {
+    it('нулевой базлайн не даёт деления на ноль; нет распознанных реакций → posShare нейтрален', () => {
       const metrics = computePostMetrics(0, { total: 0, positive: 0, negative: 0, cringe: 0 }, baseline({ vmed: 0, rmed: 0 }));
       expect(metrics.nv).toBe(0);
       expect(metrics.nr).toBe(0);
-      expect(metrics.posShare).toBe(0);
+      expect(metrics.posShare).toBe(1);
+    });
+  });
+
+  describe('ограничения нормировки', () => {
+    it('nv/nr ограничены сверху (NV_CAP/NR_CAP)', () => {
+      const metrics = computePostMetrics(
+        100000,
+        { total: 1000, positive: 1000, negative: 0, cringe: 0 },
+        baseline({ vmed: 100, rmed: 1 })
+      );
+      expect(metrics.nv).toBe(10);
+      expect(metrics.nr).toBe(10);
+      expect(computeScore(metrics)).toBe(20);
+    });
+
+    it('медиана реакций имеет пол (RMED_FLOOR=3)', () => {
+      const metrics = computePostMetrics(
+        1000,
+        { total: 30, positive: 30, negative: 0, cringe: 0 },
+        baseline({ vmed: 1000, rmed: 0 })
+      );
+      // 30 / max(3, 0) = 10 (кап), а не 30
+      expect(metrics.nr).toBe(10);
+    });
+
+    it('posShare считается по распознанным реакциям: кастомные нейтральны', () => {
+      const metrics = computePostMetrics(
+        1000,
+        { total: 50, positive: 10, negative: 0, cringe: 0 },
+        baseline()
+      );
+      // 40 кастомных реакций не штрафуют: 10 положительных из 10 распознанных
+      expect(metrics.posShare).toBe(1);
     });
   });
 
@@ -115,36 +149,36 @@ describe('parser-scoring', () => {
     const good = { nv: 2, nr: 3, rr: 0.1, posShare: 0.9, cringeShare: 0 };
 
     it('проходит при выполнении всех порогов', () => {
-      const verdict = passesThresholds(2000, good, rules, baseline());
+      const verdict = passesThresholds(2000, 30, good, rules, baseline());
       expect(verdict.passed).toBe(true);
       expect(verdict.reasons).toEqual([]);
     });
 
     it('не проходит по абсолютному полу просмотров', () => {
-      const verdict = passesThresholds(100, good, rules, baseline());
+      const verdict = passesThresholds(100, 30, good, rules, baseline());
       expect(verdict.passed).toBe(false);
       expect(verdict.reasons).toContain('views<200');
     });
 
     it('не проходит по реакциям', () => {
-      const verdict = passesThresholds(2000, { ...good, nr: 0.2 }, rules, baseline());
+      const verdict = passesThresholds(2000, 2, { ...good, nr: 0.2 }, rules, baseline());
       expect(verdict.passed).toBe(false);
       expect(verdict.reasons).toContain('reactions<3');
     });
 
     it('не проходит без относительного превосходства', () => {
-      const verdict = passesThresholds(1000, { ...good, nv: 1, nr: 1 }, rules, baseline());
+      const verdict = passesThresholds(1000, 30, { ...good, nv: 1, nr: 1 }, rules, baseline());
       expect(verdict.passed).toBe(false);
       expect(verdict.reasons).toContain('nv<1.5,nr<2,views<p90');
     });
 
     it('проходит по p90 даже без nv/nr', () => {
-      const verdict = passesThresholds(4000, { ...good, nv: 1, nr: 1 }, rules, baseline());
+      const verdict = passesThresholds(4000, 30, { ...good, nv: 1, nr: 1 }, rules, baseline());
       expect(verdict.passed).toBe(true);
     });
 
     it('не проходит по posShare', () => {
-      const verdict = passesThresholds(2000, { ...good, posShare: 0.1 }, rules, baseline());
+      const verdict = passesThresholds(2000, 30, { ...good, posShare: 0.1 }, rules, baseline());
       expect(verdict.passed).toBe(false);
       expect(verdict.reasons).toContain('posShare<0.25');
     });

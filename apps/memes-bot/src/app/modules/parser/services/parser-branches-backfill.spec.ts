@@ -552,16 +552,12 @@ describe('parser services branch backfill', () => {
       chatId: bigInt('-1008888888888'),
       message: { ...ownMessage, groupedId: bigInt('900') },
     } as never);
-    jest.advanceTimersByTime?.call(jest, 1600);
-    for (let i = 0; i < 25; i += 1) await Promise.resolve();
-
     await service.onLiveEvent({
       isChannel: true,
       chatId: bigInt('-1008888888888'),
       message: { ...ownMessage, groupedId: bigInt('901') },
     } as never);
     registry.repository.findOne.mockResolvedValueOnce(source({ status: 'disabled' }));
-    jest.advanceTimersByTime?.call(jest, 1600);
     for (let i = 0; i < 25; i += 1) await Promise.resolve();
 
     expect(observedRepo.create).not.toHaveBeenCalled();

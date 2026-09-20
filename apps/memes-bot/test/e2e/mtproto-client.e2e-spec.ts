@@ -1103,7 +1103,7 @@ describe('E2E: MTProto-клиент и парсер обсерватории', (
       service.bestMemesDaily$.subscribe((value) => received.push(value));
 
       await expect(service.postDailyBestMeme()).rejects.toThrow('boom');
-      expect(received).toEqual([{ byLikePostMemeId: 37, byViewPostMemeId: 37 }]);
+      expect(received).toEqual([{}]);
     });
   });
 

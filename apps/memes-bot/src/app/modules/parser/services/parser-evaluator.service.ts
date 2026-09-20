@@ -147,7 +147,7 @@ export class ParserEvaluatorService {
     const passed =
       source.category === 'cringe'
         ? passesCringe(views, metrics, this.settings.current.cringeMinViews, this.settings.current.cringeShareMin)
-        : passesThresholds(views, metrics, this.thresholds(), baseline);
+        : passesThresholds(views, reactions.total, metrics, this.thresholds(), baseline);
 
     if (stage === EvalStage.FINAL && !passed.passed) {
       candidate.evalStage = EvalStage.FINAL;

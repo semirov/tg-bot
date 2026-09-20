@@ -61,7 +61,7 @@ describe('parser branch backfill (domain)', () => {
     });
   });
 
-  it('computePostMetrics: пустые реакции → доли 0', () => {
+  it('computePostMetrics: пустые реакции → posShare нейтрален', () => {
     const metrics = computePostMetrics(100, { total: 0, positive: 0, negative: 0, cringe: 0 }, {
       vmed: 10,
       rmed: 1,
@@ -69,13 +69,14 @@ describe('parser branch backfill (domain)', () => {
       posShare: 1,
       sampleSize: 3,
     });
-    expect(metrics.posShare).toBe(0);
+    expect(metrics.posShare).toBe(1);
     expect(metrics.cringeShare).toBe(0);
   });
 
   it('passesThresholds: p90 нулевой не даёт прохода', () => {
     const verdict = passesThresholds(
       1000,
+      30,
       { nv: 1, nr: 1, rr: 0, posShare: 1, cringeShare: 0 },
       { minViews: 200, minReactions: 3, nvMin: 1.5, nrMin: 2, posShareMin: 0.25, hotScore: 4 },
       { vmed: 1000, rmed: 10, p90: 0, posShare: 1, sampleSize: 5 }
