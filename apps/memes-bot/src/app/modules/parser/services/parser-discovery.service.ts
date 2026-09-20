@@ -12,7 +12,6 @@ import {
   CandidateVerdict,
   DISCOVERY_CROSS_LIMIT_PER_RUN,
   DISCOVERY_WEB_CHECK_PER_RUN,
-  DISCOVERY_REVIEW_LIMIT,
   SourceCategory,
   SourceStatus,
 } from '../constants/parser.constants';
@@ -119,7 +118,13 @@ export class ParserDiscoveryService {
     if (!candidate.username) {
       const username = await this.resolveUsername(candidate);
       if (!username) {
+        candidate.attempts += 1;
         candidate.reason = 'username-unresolved';
+        if (candidate.attempts >= ParserDiscoveryService.MAX_CHECK_ATTEMPTS) {
+          candidate.verdict = CandidateVerdict.REJECTED;
+          candidate.reason = 'checks-exhausted';
+        }
+        candidate.checkedAt = this.clock.now();
         await this.candidateRepository.save(candidate);
         return candidate;
       }
@@ -128,7 +133,12 @@ export class ParserDiscoveryService {
 
     const preview = await fetchTmePreview(candidate.username);
     if (!preview || !preview.posts.length) {
+      candidate.attempts += 1;
       candidate.reason = 'web-preview-empty';
+      if (candidate.attempts >= ParserDiscoveryService.MAX_CHECK_ATTEMPTS) {
+        candidate.verdict = CandidateVerdict.REJECTED;
+        candidate.reason = 'checks-exhausted';
+      }
       candidate.checkedAt = this.clock.now();
       await this.candidateRepository.save(candidate);
       return candidate;
@@ -180,6 +190,10 @@ export class ParserDiscoveryService {
     if (gate.passed) {
       candidate.verdict = CandidateVerdict.READY;
       candidate.reason = undefined;
+      await this.candidateRepository.save(candidate);
+      // Без ручного подтверждения: подходящий канал сразу берём в источники.
+      await this.autoApprove(candidate);
+      return candidate;
     } else if (this.isInfraReason(gate.reason)) {
       // Инфраструктурные причины не вердикт: ждём следующего прогона, но с капом.
       candidate.verdict = CandidateVerdict.PENDING;
@@ -201,7 +215,12 @@ export class ParserDiscoveryService {
     return candidate;
   }
 
-  /** Подтверждение кандидата владельцем: web-only (публичные) или джойн. */
+  /** Автоматическое добавление проверенного кандидата (web-only, без джойнов). */
+  public async autoApprove(candidate: SourceCandidateEntity): Promise<SourceCandidateEntity | null> {
+    return this.approve(candidate.id, 'web_only');
+  }
+
+  /** Подтверждение кандидата: web-only (публичные) или джойн. */
   public async approve(
     candidateId: number,
     mode: 'web_only' | 'join',
@@ -249,6 +268,13 @@ export class ParserDiscoveryService {
       return null;
     }
 
+    if (await this.registry.isExcluded(rawChatId)) {
+      candidate.verdict = CandidateVerdict.REJECTED;
+      candidate.reason = 'source-excluded';
+      await this.candidateRepository.save(candidate);
+      return candidate;
+    }
+
     const created = await this.registry.addSource({
       chatId: rawChatId,
       rawChatId,
@@ -264,54 +290,6 @@ export class ParserDiscoveryService {
 
     if (created) this.logger.log(`Parser discovery: источник добавлен ${candidate.key} (${mode})`);
     return candidate;
-  }
-
-  /** Ручная перепроверка кандидата (кнопка «🔎 Перепроверить»). */
-  public async checkCandidateById(candidateId: number): Promise<SourceCandidateEntity | null> {
-    const candidate = await this.candidateRepository.findOne({ where: { id: candidateId } });
-    if (!candidate) return null;
-    return this.checkCandidate(candidate);
-  }
-
-  /** Вернуть кандидата в очередь проверки (сброс вердикта). */
-  public async resetToPending(candidateId: number): Promise<SourceCandidateEntity | null> {
-    const candidate = await this.candidateRepository.findOne({ where: { id: candidateId } });
-    if (!candidate) return null;
-    candidate.verdict = CandidateVerdict.PENDING;
-    candidate.reason = null;
-    candidate.attempts = 0;
-    await this.candidateRepository.save(candidate);
-    return candidate;
-  }
-
-  public async reject(candidateId: number, reason = 'owner-rejected'): Promise<SourceCandidateEntity | null> {
-    const candidate = await this.candidateRepository.findOne({ where: { id: candidateId } });
-    if (!candidate) return null;
-    candidate.verdict = CandidateVerdict.REJECTED;
-    candidate.reason = reason;
-    await this.candidateRepository.save(candidate);
-    return candidate;
-  }
-
-  /** Публичные кандидаты для карточек в админ-меню. */
-  public listReady(limit = 10): Promise<SourceCandidateEntity[]> {
-    return this.candidateRepository.find({
-      where: { verdict: CandidateVerdict.READY },
-      order: { mentions: 'DESC' },
-      take: limit,
-    });
-  }
-
-  /**
-   * Кандидаты для просмотра владельцем: проверенные (ready) и ещё не
-   * проверенные (pending) — по убыванию упоминаний.
-   */
-  public listForReview(limit = DISCOVERY_REVIEW_LIMIT): Promise<SourceCandidateEntity[]> {
-    return this.candidateRepository.find({
-      where: [{ verdict: CandidateVerdict.READY }, { verdict: CandidateVerdict.PENDING }],
-      order: { mentions: 'DESC' },
-      take: limit,
-    });
   }
 
   private evaluateGate(

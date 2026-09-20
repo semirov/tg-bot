@@ -24,6 +24,7 @@ describe('tme-preview', () => {
       ['847', 847],
       [null, 0],
       ['N/A', 0],
+      ['.', 0],
     ])('%s → %d', (raw, expected) => {
       expect(parseTmeViews(raw)).toBe(expected);
     });
@@ -59,6 +60,14 @@ describe('tme-preview', () => {
       });
       expect(preview.posts[1].hasMedia).toBe(false);
     });
+
+    it('пост без текста и времени → пустые значения', () => {
+      const html = `<html><div class="tgme_widget_message_wrap"><div data-post="/ch/7"></div></div></html>`;
+      const preview = parseTmeHtml(html, 'ch');
+
+      expect(preview.title).toBeNull();
+      expect(preview.posts[0]).toMatchObject({ id: 7, text: '', timeIso: null });
+    });
   });
 
   describe('estimatePostsPerDay', () => {
@@ -91,6 +100,11 @@ describe('tme-preview', () => {
     it('не-канальная страница → null', async () => {
       (axios.get as jest.Mock).mockResolvedValue({ data: '<html>404</html>' });
       expect(await fetchTmePreview('nope')).toBeNull();
+    });
+
+    it('не-строковый ответ → null', async () => {
+      (axios.get as jest.Mock).mockResolvedValue({ data: { not: 'a string' } });
+      expect(await fetchTmePreview('weird')).toBeNull();
     });
 
     it('сетевая ошибка → null', async () => {

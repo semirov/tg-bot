@@ -20,9 +20,51 @@ describe('ParserSettingsService', () => {
     const service = new ParserSettingsService(repo, makeConfig());
 
     await service.onModuleInit();
-    expect(service.current.dailyLimit).toBe(12);
-    expect(service.current.sourceDailyCap).toBe(2);
+    expect(service.current.dailyLimit).toBe(0);
+    expect(service.current.sourceDailyCap).toBe(0);
+    expect(service.current.minViews).toBe(100);
+    expect(service.current.errMin).toBe(0.25);
+    expect(service.current.candidateTtlHours).toBe(96);
+    expect(service.current.idlePruneDays).toBe(3);
     expect(service.current.enabled).toBe(true);
+    expect(service.current.boostUntil).toBeNull();
+    expect(service.current.legacyEnabled).toBe(true);
+  });
+
+  it('boost: boostActive учитывает boostUntil', async () => {
+    const repo = makeRepo();
+    repo.findOne.mockResolvedValue(null);
+    const service = new ParserSettingsService(repo, makeConfig());
+    await service.onModuleInit();
+
+    const now = new Date('2026-09-19T12:00:00Z');
+    expect(service.boostActive(now)).toBe(false);
+
+    await service.update({ boostUntil: new Date(now.getTime() + 60_000).toISOString() });
+    expect(service.boostActive(now)).toBe(true);
+
+    await service.update({ boostUntil: new Date(now.getTime() - 60_000).toISOString() });
+    expect(service.boostActive(now)).toBe(false);
+
+    await service.update({ boostUntil: 'не-дата' });
+    expect(service.boostActive(now)).toBe(false);
+  });
+
+  it('legacyEnabled из БД попадает в кэш', async () => {
+    const repo = makeRepo();
+    repo.findOne.mockResolvedValue(row({ legacyEnabled: false }));
+    const service = new ParserSettingsService(repo, makeConfig());
+    await service.onModuleInit();
+    expect(service.current.legacyEnabled).toBe(false);
+  });
+
+  it('boostUntil из БД нормализуется в ISO', async () => {
+    const repo = makeRepo();
+    const boostUntil = new Date('2026-09-19T13:00:00Z');
+    repo.findOne.mockResolvedValue(row({ boostUntil }));
+    const service = new ParserSettingsService(repo, makeConfig());
+    await service.onModuleInit();
+    expect(service.current.boostUntil).toBe(boostUntil.toISOString());
   });
 
   it('строка в БД перекрывает дефолты', async () => {
@@ -59,7 +101,7 @@ describe('ParserSettingsService', () => {
     repo.findOne.mockRejectedValue(new Error('db down'));
     const service = new ParserSettingsService(repo, makeConfig());
     await expect(service.onModuleInit()).resolves.toBeUndefined();
-    expect(service.current.dailyLimit).toBe(12);
+    expect(service.current.dailyLimit).toBe(0);
   });
 
   it('update сохраняет в БД и в кэш; сброс возвращает дефолты', async () => {
@@ -73,8 +115,19 @@ describe('ParserSettingsService', () => {
     expect(service.current.dailyLimit).toBe(15);
 
     await service.reset();
-    expect(service.current.dailyLimit).toBe(12);
-    expect(service.current.minViews).toBe(200);
+    expect(service.current.dailyLimit).toBe(0);
+    expect(service.current.minViews).toBe(100);
+  });
+
+  it('ошибка сохранения update не роняет, кэш обновляется', async () => {
+    const repo = makeRepo();
+    repo.findOne.mockResolvedValue(null);
+    repo.save.mockRejectedValue(new Error('db down'));
+    const service = new ParserSettingsService(repo, makeConfig());
+    await service.onModuleInit();
+
+    await expect(service.update({ dailyLimit: 7 })).resolves.toMatchObject({ dailyLimit: 7 });
+    expect(service.current.dailyLimit).toBe(7);
   });
 
   it('некорректные значения из БД отсекаются', async () => {
@@ -85,9 +138,9 @@ describe('ParserSettingsService', () => {
     const service = new ParserSettingsService(repo, makeConfig());
     await service.onModuleInit();
 
-    expect(service.current.dailyLimit).toBe(12);
+    expect(service.current.dailyLimit).toBe(0);
     expect(service.current.cringeShare).toBeLessThanOrEqual(1);
     expect(service.current.evalFinalHours).toBeGreaterThanOrEqual(2);
-    expect(service.current.sourceDailyCap).toBeGreaterThanOrEqual(1);
+    expect(service.current.sourceDailyCap).toBeGreaterThanOrEqual(0);
   });
 });

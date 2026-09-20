@@ -1,6 +1,6 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { IsNull, Not, Repository } from 'typeorm';
 import * as bigInt from 'big-integer';
 import { Api, TelegramClient } from 'telegram';
 import { TotalList } from 'telegram/Helpers';
@@ -14,7 +14,7 @@ import { DeduplicationService } from '../../bot/services/deduplication.service';
 import { metrics, sourceLabel } from '../../../shared/metrics';
 import { channelInternalId, buildPostUrl, escapeHtml } from '../../../shared/publication/telegram-link';
 import { CLOCK, Clock } from '../../../shared/clock';
-import { CANDIDATE_CB_PREFIX, CARD_CB_PREFIX, MAX_PHOTO_BYTES, MAX_VIDEO_BYTES, ObservedStatus } from '../constants/parser.constants';
+import { CARD_CB_PREFIX, MAX_PHOTO_BYTES, MAX_VIDEO_BYTES, ObservedStatus, QUEUE_MERGE_SIMILARITY, VIDEO_MERGE_SIMILARITY } from '../constants/parser.constants';
 import { ObservedPostEntity } from '../entities/observed-post.entity';
 import { SourceChannelEntity } from '../entities/source-channel.entity';
 import { ParserMtprotoGuard } from './parser-mtproto-guard.service';
@@ -59,24 +59,38 @@ export class ParserDeliveryService {
     }
 
     let imageHash: string | null = null;
-    if (mtproto.photoBuffer) {
+    let perceptualHash: string | null = null;
+    const hashSource = mtproto.photoBuffer ?? mtproto.thumbBuffer;
+    if (hashSource) {
       try {
-        imageHash = await imghash.hash(mtproto.photoBuffer, 16);
+        if (mtproto.photoBuffer) {
+          imageHash = await imghash.hash(mtproto.photoBuffer, 16);
+        }
+        // Фото хешируем напрямую, видео — по обложке (первому кадру).
+        perceptualHash = await imghash.hash(hashSource, 64);
       } catch (error) {
         this.logger.warn(`Parser delivery: imghash failed: ${error}`);
       }
-      if (imageHash) {
-        const duplicates = await this.deduplication.checkDuplicate(imageHash);
-        const isDuplicate = (duplicates ?? []).some((item) => item.distance >= 0.5);
-        if (isDuplicate) {
-          candidate.status = ObservedStatus.DUPLICATE;
-          candidate.rejectReason = 'published-duplicate';
-          await this.observedRepository.save(candidate);
-          metrics.parser.deliveryFailures.inc({ reason: 'published-duplicate' });
-          this.logger.debug(`Parser delivery: дубликат опубликованного (${candidate.id})`);
-          return { ok: false, status: ObservedStatus.DUPLICATE };
-        }
+    }
+    // «В сетке» и опубликованное считаются опубликованными: фото — по 16-бит
+    // хешу, видео — по обложке (64-бит). Такие посты больше не предлагаются.
+    const publishedHash = imageHash ?? perceptualHash;
+    if (publishedHash) {
+      const duplicates = await this.deduplication.checkDuplicateSameLength(publishedHash);
+      const isDuplicate = (duplicates ?? []).some((item) => item.distance >= 0.5);
+      if (isDuplicate) {
+        candidate.status = ObservedStatus.DUPLICATE;
+        candidate.rejectReason = 'published-duplicate';
+        await this.observedRepository.save(candidate);
+        metrics.parser.deliveryFailures.inc({ reason: 'published-duplicate' });
+        this.logger.debug(`Parser delivery: дубликат опубликованного (${candidate.id})`);
+        return { ok: false, status: ObservedStatus.DUPLICATE };
       }
+    }
+    // Тот же мем уже лежит карточкой в предложке (из другого канала) — склеиваем.
+    if (perceptualHash) {
+      const merged = await this.tryMergeIntoQueue(candidate, source, perceptualHash);
+      if (merged) return merged;
     }
 
     const messageId = await this.sendCard(candidate, source, mtproto);
@@ -88,6 +102,7 @@ export class ParserDeliveryService {
     candidate.deliveredAt = this.clock.now();
     candidate.requestChannelMessageId = messageId;
     candidate.imageHash = imageHash;
+    candidate.perceptualHash = perceptualHash;
     await this.observedRepository.save(candidate);
 
     source.selectedTotal += 1;
@@ -100,11 +115,117 @@ export class ParserDeliveryService {
     return { ok: true, status: ObservedStatus.DELIVERED };
   }
 
+  /**
+   * В предложке уже есть необработанная карточка с тем же мемом (по 64-битному
+   * перцептивному хешу)? Тогда старую карточку удаляем, а новый (нижний) пост
+   * встаёт на её место, показывая первый источник и «+N» остальных.
+   * Запланированные/опубликованные карточки сюда не попадают — они уже
+   * засчитаны как опубликованные (published-duplicate).
+   */
+  private async tryMergeIntoQueue(
+    candidate: ObservedPostEntity,
+    source: SourceChannelEntity,
+    perceptualHash: string
+  ): Promise<{ ok: boolean; status: ObservedStatus } | null> {
+    const recent = await this.observedRepository.find({
+      where: { status: ObservedStatus.DELIVERED, perceptualHash: Not(IsNull()) },
+      order: { deliveredAt: 'DESC' },
+      take: 200,
+    });
+
+    const threshold =
+      candidate.mediaKind === 'video' ? VIDEO_MERGE_SIMILARITY : QUEUE_MERGE_SIMILARITY;
+    let best: ObservedPostEntity | null = null;
+    let bestDistance = 0;
+    for (const row of recent) {
+      if (row.id === candidate.id || !row.perceptualHash) continue;
+      const distance = this.deduplication.calculateHashDistance(perceptualHash, row.perceptualHash);
+      if (distance > bestDistance) {
+        bestDistance = distance;
+        best = row;
+      }
+    }
+    if (!best || bestDistance < threshold) return null;
+
+    await this.supersedeCard(best, candidate, source);
+    return null;
+  }
+
+  /** Источники карточки в порядке появления: первый (корневой), затем остальные. */
+  private async cardSources(
+    card: ObservedPostEntity
+  ): Promise<Array<{ chatId: string; title: string | null; username: string | null }>> {
+    const rootChatId = card.rootSourceChatId ?? card.sourceChatId;
+    let title = card.rootSourceTitle;
+    let username = card.rootSourceUsername;
+    if (!card.rootSourceChatId) {
+      const own = await this.registry.repository.findOne({ where: { chatId: card.sourceChatId } });
+      title = own?.title ?? null;
+      username = own?.username ?? null;
+    }
+    const sources = [{ chatId: rootChatId, title, username }];
+    for (const extra of card.extraSources ?? []) {
+      if (!sources.some((item) => item.chatId === extra.chatId)) sources.push(extra);
+    }
+    return sources;
+  }
+
+  /**
+   * Вытеснение старой карточки: удаляем её сообщение, а новый кандидат
+   * получает список источников (первый — самый ранний) и станет нижним постом.
+   */
+  private async supersedeCard(
+    old: ObservedPostEntity,
+    candidate: ObservedPostEntity,
+    source: SourceChannelEntity
+  ): Promise<void> {
+    const previous = await this.cardSources(old);
+    const merged = [...previous];
+    if (!merged.some((item) => item.chatId === String(source.chatId))) {
+      merged.push({ chatId: String(source.chatId), title: source.title ?? null, username: source.username ?? null });
+    }
+
+    candidate.rootSourceChatId = merged[0].chatId;
+    candidate.rootSourceTitle = merged[0].title;
+    candidate.rootSourceUsername = merged[0].username;
+    candidate.extraSources = merged.slice(1);
+    await this.observedRepository.save(candidate);
+
+    old.status = ObservedStatus.DUPLICATE;
+    old.rejectReason = `superseded-by-${candidate.id}`;
+    old.duplicateOfId = candidate.id;
+    await this.observedRepository.save(old);
+    await this.deleteCardMessage(old);
+
+    this.logger.log(
+      `Parser delivery: карточка ${old.id} вытеснена кандидатом ${candidate.id} (источников: ${merged.length})`
+    );
+  }
+
+  /** Удаляет сообщение карточки; если нельзя — помечает его как дубль. */
+  private async deleteCardMessage(card: ObservedPostEntity): Promise<void> {
+    if (card.requestChannelMessageId == null) return;
+    try {
+      await this.bot.api.deleteMessage(this.config.userRequestMemeChannel, Number(card.requestChannelMessageId));
+    } catch (error) {
+      this.logger.warn(`Parser delivery: не удалось удалить карточку ${card.id}: ${error}`);
+      try {
+        await this.bot.api.editMessageCaption(
+          this.config.userRequestMemeChannel,
+          Number(card.requestChannelMessageId),
+          { caption: '🚫 Дубль — актуальная карточка ниже', reply_markup: { inline_keyboard: [] } }
+        );
+      } catch (editError) {
+        this.logger.warn(`Parser delivery: не удалось пометить карточку ${card.id}: ${editError}`);
+      }
+    }
+  }
+
   /** Скачивает медиа через юзербот (read-only). */
   private async fetchMessageBytes(
     candidate: ObservedPostEntity,
     source: SourceChannelEntity
-  ): Promise<{ photoBuffer?: Buffer; videoBuffer?: Buffer; error?: string } | null> {
+  ): Promise<{ photoBuffer?: Buffer; videoBuffer?: Buffer; thumbBuffer?: Buffer; error?: string } | null> {
     const client = await this.activeClient();
     if (!client) return null;
 
@@ -129,7 +250,25 @@ export class ParserDeliveryService {
       return { error: 'media-too-large' };
     }
 
-    return kind === 'video' ? { videoBuffer: buffer } : { photoBuffer: buffer };
+    if (kind === 'video') {
+      // Обложка видео (первый кадр) — перцептивный отпечаток для склейки.
+      const thumbBuffer = await this.downloadThumb(message);
+      return thumbBuffer ? { videoBuffer: buffer, thumbBuffer } : { videoBuffer: buffer };
+    }
+    return { photoBuffer: buffer };
+  }
+
+  /** Скачивает обложку видео (крупнейший размер), если она есть. */
+  private async downloadThumb(message: Api.Message): Promise<Buffer | null> {
+    const thumbs = message.video?.thumbs ?? [];
+    const thumb = thumbs.length ? thumbs[thumbs.length - 1] : undefined;
+    if (!thumb) return null;
+    const client = await this.activeClient();
+    if (!client) return null;
+    const buffer = await this.guard.run('downloadThumb', () =>
+      client.downloadMedia(message, { thumb: thumb as never })
+    );
+    return buffer instanceof Buffer && buffer.length > 0 ? buffer : null;
   }
 
   /** Карточка «Парсер» в предложке с клавиатурой модерации. */
@@ -141,7 +280,7 @@ export class ParserDeliveryService {
     const caption = this.buildCaption(candidate, source);
     const keyboard = this.buildKeyboard(candidate.id);
 
-    try {
+    const send = async (): Promise<number | null> => {
       if (media.videoBuffer) {
         const sent = await this.bot.api.sendVideo(
           this.config.userRequestMemeChannel,
@@ -155,7 +294,6 @@ export class ParserDeliveryService {
         );
         return sent.message_id;
       }
-
       if (media.photoBuffer) {
         const sent = await this.bot.api.sendPhoto(
           this.config.userRequestMemeChannel,
@@ -169,12 +307,36 @@ export class ParserDeliveryService {
         );
         return sent.message_id;
       }
+      return null;
+    };
 
-      return null;
-    } catch (error) {
-      this.logger.error(`Parser delivery: не удалось отправить карточку: ${error}`);
-      return null;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        return await send();
+      } catch (error) {
+        const retryAfter = this.retryAfterSeconds(error);
+        if (retryAfter > 0 && attempt < 2) {
+          this.logger.warn(`Parser delivery: flood-wait ${retryAfter}s, повтор`);
+          await new Promise<void>((resolve) => {
+            const timer = setTimeout(resolve, (retryAfter + 1) * 1000);
+            timer.unref?.();
+          });
+          continue;
+        }
+        this.logger.error(`Parser delivery: не удалось отправить карточку: ${error}`);
+        return null;
+      }
     }
+    return null;
+  }
+
+  /** retry_after из ошибки Bot API (429), иначе 0. */
+  private retryAfterSeconds(error: unknown): number {
+    const e = error as { error?: { error_code?: number; parameters?: { retry_after?: number } }; parameters?: { retry_after?: number } };
+    if (e?.error?.error_code === 429 || e?.parameters?.retry_after) {
+      return Number(e.error?.parameters?.retry_after ?? e.parameters?.retry_after ?? 1);
+    }
+    return 0;
   }
 
   /** Подпись карточки: категория, источник, метрики отбора. */
@@ -187,7 +349,34 @@ export class ParserDeliveryService {
     const reactions = candidate.reactions != null ? ` · 🔥 ${candidate.reactions}` : '';
     const score = candidate.score != null ? ` · ⭐ ${candidate.score.toFixed(1)}` : '';
 
-    return `${label}${sourceLink ? ` · ${sourceLink}` : ''}${views}${reactions}${score}`;
+    // Первым показываем самый ранний (корневой) источник, далее счётчик «+N».
+    const mainLink = candidate.rootSourceChatId
+      ? this.buildExtraSourceLink({
+          chatId: candidate.rootSourceChatId,
+          title: candidate.rootSourceTitle,
+          username: candidate.rootSourceUsername,
+        })
+      : sourceLink;
+    const extraCount = (candidate.extraSources ?? []).length;
+    const extra = extraCount > 0 ? ` · +${extraCount}` : '';
+    const forced = candidate.forced ? ' · ⚡️ форс' : '';
+
+    return `${label}${mainLink ? ` · ${mainLink}` : ''}${extra}${forced}${views}${reactions}${score}`;
+  }
+
+  /** Ссылка на дополнительный источник склеенной карточки. */
+  public buildExtraSourceLink(item: {
+    chatId: string;
+    title: string | null;
+    username: string | null;
+  }): string {
+    const name = escapeHtml(item.title ?? item.username ?? 'источник');
+    if (item.username) return `<a href="https://t.me/${item.username}">${name}</a>`;
+    const chatId = Number(item.chatId);
+    const url = buildPostUrl({ id: chatId, username: undefined }, null);
+    if (url) return `<a href="${url}">${name}</a>`;
+    const internal = channelInternalId(chatId);
+    return internal ? `<a href="https://t.me/c/${internal}">${name}</a>` : name;
   }
 
   /** Ссылка на канал-источник (username или внутренняя форма). */
@@ -207,67 +396,39 @@ export class ParserDeliveryService {
       .text('📋 В очередь', `${CARD_CB_PREFIX}:q:${candidateId}`)
       .row()
       .text('🌙 В ночь (кринж)', `${CARD_CB_PREFIX}:night:${candidateId}`)
-      .text('🗑 Отклонить', `${CARD_CB_PREFIX}:rej:${candidateId}`);
-  }
-
-  /** Клавиатура кандидата в админ-очереди discovery. */
-  public buildCandidateKeyboard(candidateId: number): InlineKeyboard {
-    return new InlineKeyboard()
-      .text('🌐 Web-only', `${CANDIDATE_CB_PREFIX}:wo:${candidateId}`)
-      .text('➕ Джойнить', `${CANDIDATE_CB_PREFIX}:jo:${candidateId}`)
+      .text('🗑 Отклонить', `${CARD_CB_PREFIX}:rej:${candidateId}`)
       .row()
-      .text('🔎 Перепроверить', `${CANDIDATE_CB_PREFIX}:chk:${candidateId}`)
-      .text('↩️ В проверку', `${CANDIDATE_CB_PREFIX}:rst:${candidateId}`)
+      .text('🚫 Исключить источник', `${CARD_CB_PREFIX}:excl:${candidateId}`);
+  }
+
+  /** Добавляет к карточке кнопку «Ещё 20» (на последней карточке бэклога). */
+  public async attachMoreButton(messageId: number, candidateId: number): Promise<void> {
+    const keyboard = this.buildKeyboard(candidateId)
       .row()
-      .text('❌ Отклонить', `${CANDIDATE_CB_PREFIX}:rj:${candidateId}`);
+      .text('🍲 Ещё 20', `${CARD_CB_PREFIX}:more:${candidateId}`);
+    await this.editKeyboard(messageId, keyboard);
   }
 
-  /**
-   * Карточка кандидата для админ-меню: кликабельная ссылка на канал +
-   * метрики (упоминания, подписчики, ERR, частота постов, вердикт/причина).
-   */
-  public buildCandidateCaption(candidate: {
-    id: number;
-    username: string | null;
-    chatId: string | number | null;
-    title: string | null;
-    mentions: number;
-    subscribers: number | null;
-    errEstimate: number | null;
-    postsPerDay: number | null;
-    verdict: string;
-    reason?: string | null;
-  }): string {
-    const name = escapeHtml(candidate.title ?? candidate.username ?? `кандидат #${candidate.id}`);
-    const link = this.buildCandidateLink(candidate);
-    const verdictIcon: Record<string, string> = {
-      ready: '🟡 готов',
-      pending: '⏳ ждёт проверки',
-      approved: '✅ принят',
-      rejected: '⛔️ отклонён',
-    };
-    const rows = [
-      `${verdictIcon[candidate.verdict] ?? candidate.verdict} · ${link ? `<a href="${link}">${name}</a>` : name}`,
-      `упоминаний: ${candidate.mentions}`,
-      candidate.subscribers != null ? `👥 ${candidate.subscribers}` : '',
-      candidate.errEstimate != null ? `ERR ${(candidate.errEstimate * 100).toFixed(1)}%` : '',
-      candidate.postsPerDay != null ? `${candidate.postsPerDay.toFixed(1)} постов/сутки` : '',
-      candidate.reason ? `причина: ${candidate.reason}` : '',
-    ];
-    return rows.filter(Boolean).join(' · ');
+  /** Убирает кнопку «Ещё 20» с карточки (она перестала быть последней). */
+  public async detachMoreButton(messageId: number, candidateId: number): Promise<void> {
+    await this.editKeyboard(messageId, this.buildKeyboard(candidateId));
   }
 
-  /** Публичная ссылка на канал-кандидат (то, что можно открыть в Telegram). */
-  public buildCandidateLink(candidate: {
-    username: string | null;
-    chatId: string | number | null;
-  }): string | null {
-    if (candidate.username) return `https://t.me/${candidate.username}`;
-    if (candidate.chatId != null) {
-      const internal = channelInternalId(Number(candidate.chatId));
-      if (internal) return `https://t.me/c/${internal}`;
+  private async editKeyboard(messageId: number, keyboard: InlineKeyboard): Promise<void> {
+    try {
+      await this.bot.api.editMessageReplyMarkup(this.config.userRequestMemeChannel, messageId, {
+        reply_markup: keyboard,
+      });
+    } catch (error) {
+      this.logger.warn(`Parser delivery: не удалось обновить клавиатуру ${messageId}: ${error}`);
     }
-    return null;
+  }
+
+  /** Клавиатура подтверждения исключения источника. */
+  public buildExcludeConfirmKeyboard(candidateId: number): InlineKeyboard {
+    return new InlineKeyboard()
+      .text('✅ Да, исключить', `${CARD_CB_PREFIX}:exclok:${candidateId}`)
+      .text('↩️ Отмена', `${CARD_CB_PREFIX}:exclno:${candidateId}`);
   }
 
   private async fail(

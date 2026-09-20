@@ -14,6 +14,7 @@ import { PostMetrics } from '../domain/parser-scoring';
 @Index('ux_observed_source_msg', ['sourceChatId', 'sourceMessageId'], { unique: true })
 @Index('ix_observed_status', ['status'])
 @Index('ix_observed_score', ['status', 'score'])
+@Index('ix_observed_media_unique', ['mediaUniqueId'])
 export class ObservedPostEntity {
   @PrimaryGeneratedColumn()
   id: number;
@@ -39,6 +40,10 @@ export class ObservedPostEntity {
   /** 'photo' | 'video'. */
   @Column('varchar', { default: 'photo' })
   mediaKind: string;
+
+  /** Форс: пост разошёлся по 3+ каналам — в предложку без скоринга. */
+  @Column('boolean', { default: false })
+  forced: boolean;
 
   @Column('text', { nullable: true })
   caption: string | null;
@@ -89,6 +94,28 @@ export class ObservedPostEntity {
   /** imghash 16 бит, считается при доставке (дедуп против опубликованных). */
   @Column('varchar', { nullable: true })
   imageHash: string | null;
+
+  /** imghash 64 бит для склейки одинаковых мемов из разных каналов в предложке. */
+  @Column('varchar', { nullable: true })
+  perceptualHash: string | null;
+
+  /** Карточка, в которую склеен этот дубликат (id основного кандидата). */
+  @Column('int', { nullable: true })
+  duplicateOfId: number | null;
+
+  /** Доп. источники, у которых найден тот же мем (склейка карточки). */
+  @Column('jsonb', { nullable: true })
+  extraSources: Array<{ chatId: string; title: string | null; username: string | null }> | null;
+
+  /** Первый (самый ранний) источник мема — показывается в подписи первым. */
+  @Column('bigint', { nullable: true })
+  rootSourceChatId: string | null;
+
+  @Column('varchar', { nullable: true })
+  rootSourceTitle: string | null;
+
+  @Column('varchar', { nullable: true })
+  rootSourceUsername: string | null;
 
   @CreateDateColumn()
   createdAt: Date;

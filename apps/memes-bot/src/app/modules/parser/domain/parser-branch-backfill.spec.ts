@@ -6,7 +6,15 @@ import {
   normalizeChatId,
 } from '../domain/parser-cross-links';
 import { extractMediaInfo, rawIdOf } from '../domain/parser-media';
-import { computeBaseline, computePostMetrics, countReactions, formatViews, parseViewCount, passesThresholds } from '../domain/parser-scoring';
+import {
+  computeBaseline,
+  computePostMetrics,
+  countReactions,
+  formatViews,
+  parseViewCount,
+  passesCringe,
+  passesThresholds,
+} from '../domain/parser-scoring';
 import { dedupBatch } from '../domain/parser-quotas';
 import { estimatePostsPerDay, parseTmeHtml, parseTmeViews } from '../domain/tme-preview';
 
@@ -132,5 +140,54 @@ describe('parser branch backfill (domain)', () => {
       kind: 'photo',
       uniqueId: '111',
     });
+  });
+
+  it('extractMediaInfo: null и видео', () => {
+    expect(extractMediaInfo(null)).toBeUndefined();
+    expect(extractMediaInfo(undefined)).toBeUndefined();
+    const video = new Api.Document({
+      id: bigInt('222'),
+      accessHash: bigInt('1'),
+      fileReference: Buffer.from([]),
+      date: 1,
+      attributes: [],
+      mimeType: 'video/mp4',
+      size: bigInt('10'),
+      dcId: 2,
+    });
+    expect(extractMediaInfo({ video, photo: undefined } as never)).toEqual({
+      kind: 'video',
+      uniqueId: '222',
+    });
+  });
+
+  it('parser-scoring: null/NaN ветки', () => {
+    const baseline = { vmed: 1000, rmed: 10, p90: 4000, posShare: 0.8, sampleSize: 5 };
+    const metrics = computePostMetrics(
+      Number.NaN as never,
+      countReactions([{ emoji: 'x', count: null as never }]),
+      baseline
+    );
+    expect(metrics.nv).toBe(0);
+    expect(metrics.posShare).toBe(1);
+
+    expect(
+      computePostMetrics(undefined as never, { total: 0, positive: 0, negative: 0, cringe: 0 }, baseline).nv
+    ).toBe(0);
+
+    const verdict = passesThresholds(
+      null as never,
+      null as never,
+      metrics,
+      { minViews: 200, minReactions: 3, nvMin: 1.5, nrMin: 2, posShareMin: 0.25, hotScore: 4 },
+      baseline
+    );
+    expect(verdict.passed).toBe(false);
+
+    expect(
+      passesCringe(null as never, { nv: 0, nr: 0, rr: 0, posShare: 1, cringeShare: 0 }, 50, 0.05).passed
+    ).toBe(false);
+    expect(parseViewCount('.')).toBe(0);
+    expect(formatViews(null as never)).toBe('0');
   });
 });

@@ -24,8 +24,13 @@ export interface ParserRuntimeSettings {
   evalPreHours: number;
   evalFinalHours: number;
   candidateTtlHours: number;
+  idlePruneDays: number;
   aiEnabled: boolean;
   aiRelevanceMin: number;
+  /** До какого времени действует boost «Насыпать ещё» (null — выключен). */
+  boostUntil: string | null;
+  /** Старый парсер (обсерватория) включён. */
+  legacyEnabled: boolean;
 }
 
 const clamp = (value: number, min: number, max: number, fallback: number): number => {
@@ -63,6 +68,13 @@ export class ParserSettingsService implements OnModuleInit {
     return this.config.parserEnabled && this.cached.enabled;
   }
 
+  /** Активен ли разовый режим «Насыпать ещё». */
+  public boostActive(now: Date = new Date()): boolean {
+    if (!this.cached.boostUntil) return false;
+    const until = new Date(this.cached.boostUntil).getTime();
+    return Number.isFinite(until) && until > now.getTime();
+  }
+
   async refresh(): Promise<ParserRuntimeSettings> {
     try {
       const row = await this.repository.findOne({ where: { id: PARSER_SETTINGS_ID } });
@@ -92,24 +104,27 @@ export class ParserSettingsService implements OnModuleInit {
   buildDefaults(): ParserRuntimeSettings {
     return {
       enabled: true,
-      dailyLimit: 12,
-      sourceDailyCap: 2,
+      dailyLimit: 0,
+      sourceDailyCap: 0,
       cringeShare: clamp(0.25, 0, 1, 0.25),
-      minViews: 200,
-      minReactions: 3,
-      nvMin: 1.5,
-      nrMin: 2,
-      posShareMin: clamp(0.25, 0, 1, 0.25),
-      hotScore: 4,
-      cringeShareMin: clamp(0.12, 0, 1, 0.12),
-      cringeMinViews: 100,
-      errMin: 0.15,
-      maxSources: 20,
+      minViews: 100,
+      minReactions: 1,
+      nvMin: 0.8,
+      nrMin: 1,
+      posShareMin: clamp(0, 0, 1, 0),
+      hotScore: 2,
+      cringeShareMin: clamp(0.05, 0, 1, 0.05),
+      cringeMinViews: 50,
+      errMin: 0.25,
+      maxSources: 40,
       evalPreHours: 2,
       evalFinalHours: 12,
-      candidateTtlHours: 48,
+      candidateTtlHours: 96,
+      idlePruneDays: 3,
       aiEnabled: false,
       aiRelevanceMin: clamp(0.6, 0, 1, 0.6),
+      boostUntil: null,
+      legacyEnabled: true,
     };
   }
 
@@ -118,7 +133,7 @@ export class ParserSettingsService implements OnModuleInit {
     return {
       enabled: row.enabled ?? defaults.enabled,
       dailyLimit: nonNegativeInt(row.dailyLimit, defaults.dailyLimit),
-      sourceDailyCap: Math.max(1, nonNegativeInt(row.sourceDailyCap, defaults.sourceDailyCap)),
+      sourceDailyCap: nonNegativeInt(row.sourceDailyCap, defaults.sourceDailyCap),
       cringeShare: clamp(row.cringeShare, 0, 1, defaults.cringeShare),
       minViews: nonNegativeInt(row.minViews, defaults.minViews),
       minReactions: nonNegativeInt(row.minReactions, defaults.minReactions),
@@ -133,8 +148,11 @@ export class ParserSettingsService implements OnModuleInit {
       evalPreHours: Math.max(1, nonNegativeInt(row.evalPreHours, defaults.evalPreHours)),
       evalFinalHours: Math.max(2, nonNegativeInt(row.evalFinalHours, defaults.evalFinalHours)),
       candidateTtlHours: Math.max(4, nonNegativeInt(row.candidateTtlHours, defaults.candidateTtlHours)),
+      idlePruneDays: Math.max(1, nonNegativeInt(row.idlePruneDays, defaults.idlePruneDays)),
       aiEnabled: row.aiEnabled ?? defaults.aiEnabled,
       aiRelevanceMin: clamp(row.aiRelevanceMin, 0, 1, defaults.aiRelevanceMin),
+      boostUntil: row.boostUntil ? new Date(row.boostUntil).toISOString() : null,
+      legacyEnabled: row.legacyEnabled ?? defaults.legacyEnabled,
     };
   }
 }

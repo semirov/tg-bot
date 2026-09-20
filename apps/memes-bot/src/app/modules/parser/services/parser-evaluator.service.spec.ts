@@ -58,10 +58,24 @@ const freshMessage = (overrides: Record<string, unknown> = {}): any => ({
 
 void bigInt;
 
-const makeObservedRepo = (): any => ({
-  find: jest.fn().mockResolvedValue([]),
-  save: jest.fn().mockImplementation(async (value) => value),
-});
+const makeObservedRepo = (): any => {
+  const builder = {
+    select: jest.fn().mockReturnThis(),
+    addSelect: jest.fn().mockReturnThis(),
+    where: jest.fn().mockReturnThis(),
+    andWhere: jest.fn().mockReturnThis(),
+    groupBy: jest.fn().mockReturnThis(),
+    having: jest.fn().mockReturnThis(),
+    getRawMany: jest.fn().mockResolvedValue([]),
+  };
+  return {
+    find: jest.fn().mockResolvedValue([]),
+    count: jest.fn().mockResolvedValue(0),
+    save: jest.fn().mockImplementation(async (value) => value),
+    createQueryBuilder: jest.fn(() => builder),
+    builder,
+  };
+};
 
 const makeRegistry = (overrides: Record<string, unknown> = {}): any => ({
   repository: {
@@ -222,16 +236,38 @@ describe('ParserEvaluatorService', () => {
     );
   });
 
-  it('сообщение исчезло → rejected message-gone', async () => {
-    const { service, observedRepo, queueFinds } = setup({ messages: [] });
-    queueFinds([candidate({})]);
+    it('сообщение исчезло → rejected message-gone', async () => {
+      const { service, observedRepo, queueFinds } = setup({ messages: [] });
+      queueFinds([candidate()]);
 
-    await service.evaluateDue();
+      await service.evaluateDue();
 
-    expect(observedRepo.save).toHaveBeenCalledWith(
-      expect.objectContaining({ status: ObservedStatus.REJECTED, rejectReason: 'message-gone' })
-    );
-  });
+      expect(observedRepo.save).toHaveBeenCalledWith(
+        expect.objectContaining({ status: ObservedStatus.REJECTED, rejectReason: 'message-gone' })
+      );
+    });
+
+    it('null в ответе getMessages игнорируется', async () => {
+      const { service, observedRepo, queueFinds } = setup({ messages: [null] });
+      queueFinds([candidate()]);
+
+      await service.evaluateDue();
+
+      expect(observedRepo.save).toHaveBeenCalledWith(
+        expect.objectContaining({ status: ObservedStatus.REJECTED, rejectReason: 'message-gone' })
+      );
+    });
+
+    it('сообщение без views/reactions → 0', async () => {
+      const { service, observedRepo, queueFinds } = setup({ messages: [{ id: 42 }] });
+      queueFinds([candidate()]);
+
+      await service.evaluateDue();
+
+      expect(observedRepo.save).toHaveBeenCalledWith(
+        expect.objectContaining({ views: 0, reactions: 0 })
+      );
+    });
 
   it('кринж-категория: порог по доле 🤡/💩', async () => {
     const { service, observedRepo, queueFinds } = setup({
@@ -288,6 +324,136 @@ describe('ParserEvaluatorService', () => {
     it('не SCORED → не eligible', () => {
       const { service } = setup({});
       expect(service.isEligible(candidate({ status: ObservedStatus.PENDING, evalStage: EvalStage.FINAL, score: 9 }))).toBe(false);
+    });
+
+    it('forced → eligible даже без SCORED', () => {
+      const { service } = setup({});
+      expect(service.isEligible(candidate({ forced: true, status: ObservedStatus.PENDING }))).toBe(true);
+    });
+
+    it('relax пропускает любой SCORED без причины', () => {
+      const { service } = setup({});
+      expect(
+        service.isEligible(candidate({ status: ObservedStatus.SCORED, evalStage: EvalStage.PRE, score: 1 }), true)
+      ).toBe(true);
+    });
+
+    it('rejectReason блокирует отбор', () => {
+      const { service } = setup({});
+      expect(
+        service.isEligible(
+          candidate({ status: ObservedStatus.SCORED, evalStage: EvalStage.FINAL, score: 9, rejectReason: 'x' })
+        )
+      ).toBe(false);
+    });
+  });
+
+  describe('promoteForced', () => {
+    it('группа из 3 каналов помечается forced', async () => {
+      const { service, observedRepo } = setup({});
+      observedRepo.builder.getRawMany.mockResolvedValue([{ media: 'm1' }]);
+      observedRepo.find.mockResolvedValue([
+        candidate({ id: 1, mediaUniqueId: 'm1', status: ObservedStatus.PENDING }),
+        candidate({ id: 2, mediaUniqueId: 'm1', status: ObservedStatus.SCORED }),
+      ]);
+
+      const forced = await service.promoteForced(NOW);
+
+      expect(forced).toBe(2);
+      expect(observedRepo.save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          forced: true,
+          status: ObservedStatus.SCORED,
+          evalStage: EvalStage.FINAL,
+          rejectReason: null,
+        })
+      );
+    });
+
+    it('уже форс-посты не считаются повторно', async () => {
+      const { service, observedRepo } = setup({});
+      observedRepo.builder.getRawMany.mockResolvedValue([{ media: 'm1' }]);
+      observedRepo.find.mockResolvedValue([candidate({ id: 1, mediaUniqueId: 'm1', forced: true })]);
+
+      expect(await service.promoteForced(NOW)).toBe(0);
+      expect(observedRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('нет групп → 0', async () => {
+      const { service } = setup({});
+      expect(await service.promoteForced(NOW)).toBe(0);
+    });
+  });
+
+  describe('пауза оценки при переполненном бэклоге', () => {
+    it('бэклог > EVAL_PAUSE_BACKLOG → оценка не запускается', async () => {
+      const { service, observedRepo, queueFinds } = setup({});
+      observedRepo.count.mockResolvedValue(401);
+      queueFinds([candidate()]);
+
+      expect(await service.evaluateDue()).toBe(0);
+      expect(observedRepo.find).not.toHaveBeenCalled();
+    });
+
+    it('при переполненном бэклоге форс всё равно промоутится', async () => {
+      const { service, observedRepo } = setup({});
+      observedRepo.count.mockResolvedValue(401);
+      observedRepo.builder.getRawMany.mockResolvedValue([{ media: 'm1' }]);
+      observedRepo.find.mockResolvedValue([candidate({ id: 1, mediaUniqueId: 'm1' })]);
+
+      expect(await service.evaluateDue()).toBe(0);
+      expect(observedRepo.save).toHaveBeenCalledWith(expect.objectContaining({ forced: true }));
+    });
+  });
+
+  describe('граничные ветки оценки', () => {
+    it('SCORED+PRE раньше финала → пропуск', async () => {
+      const { service, observedRepo, queueFinds } = setup({});
+      queueFinds([candidate({ status: ObservedStatus.SCORED, evalStage: EvalStage.PRE, createdAt: hoursAgo(3) })]);
+
+      expect(await service.evaluateDue()).toBe(0);
+      expect(observedRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('свежий сохранённый базлайн используется без пересчёта', async () => {
+      const { service, observedRepo, registry, queueFinds } = setup({
+        source: { baseline: { vmed: 1000, rmed: 10, p90: 4000, posShare: 0.8, sampleSize: 30, updatedAt: NOW.toISOString() } },
+        candidate: { createdAt: hoursAgo(13) },
+        messages: [freshMessage({ views: 4000 })],
+      });
+      queueFinds([candidate({ createdAt: hoursAgo(13) })]);
+
+      await service.evaluateDue();
+
+      expect(registry.computeBaselineFor).not.toHaveBeenCalled();
+      expect(observedRepo.save).toHaveBeenCalled();
+    });
+
+    it('базлайн без updatedAt считается протухшим', async () => {
+      const { service, registry, queueFinds } = setup({
+        source: { baseline: { vmed: 1000, rmed: 10, p90: 4000, posShare: 0.8, sampleSize: 30 } },
+        candidate: { createdAt: hoursAgo(13) },
+        messages: [freshMessage({ views: 4000 })],
+      });
+      queueFinds([candidate({ createdAt: hoursAgo(13) })]);
+
+      await service.evaluateDue();
+
+      expect(registry.computeBaselineFor).toHaveBeenCalled();
+    });
+
+    it('promoteForced не перезаписывает evaluatedAt, если он есть', async () => {
+      const { service, observedRepo } = setup({});
+      observedRepo.builder.getRawMany.mockResolvedValue([{ media: 'm1' }]);
+      observedRepo.find.mockResolvedValue([
+        candidate({ id: 1, mediaUniqueId: 'm1', evaluatedAt: hoursAgo(1) }),
+      ]);
+
+      await service.promoteForced(NOW);
+
+      expect(observedRepo.save).toHaveBeenCalledWith(
+        expect.objectContaining({ forced: true, evaluatedAt: hoursAgo(1) })
+      );
     });
   });
 });

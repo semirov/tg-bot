@@ -1,12 +1,12 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { LessThan, Repository } from 'typeorm';
+import { In, LessThan, Repository } from 'typeorm';
 import * as bigInt from 'big-integer';
 import { Api, TelegramClient } from 'telegram';
 import { TotalList } from 'telegram/Helpers';
 import { CLOCK, Clock } from '../../../shared/clock';
 import { RANDOM, Random } from '../../../shared/random';
-import { EvalStage, ObservedStatus } from '../constants/parser.constants';
+import { EVAL_PAUSE_BACKLOG, EvalStage, FORCE_MIN_SOURCES, FORCE_WINDOW_HOURS, ObservedStatus } from '../constants/parser.constants';
 import { ObservedPostEntity } from '../entities/observed-post.entity';
 import { SourceChannelEntity } from '../entities/source-channel.entity';
 import { ParserRegistryService } from './parser-registry.service';
@@ -51,6 +51,16 @@ export class ParserEvaluatorService {
     const config = this.settings.current;
     const now = this.clock.now();
 
+    // Форс обрабатываем всегда, даже если обычная оценка на паузе.
+    const forced = await this.promoteForced(now);
+
+    // Бэклог предложки переполнен — не грузим юзербот и источники впустую.
+    const backlog = await this.observedRepository.count({ where: { status: ObservedStatus.DELIVERED } });
+    if (backlog > EVAL_PAUSE_BACKLOG) {
+      if (forced) this.logger.log(`Parser evaluate: форс ${forced} (оценка на паузе, бэклог ${backlog})`);
+      return 0;
+    }
+
     const expired = await this.expireOld(now, config.candidateTtlHours);
 
     const due = await this.observedRepository.find({
@@ -81,8 +91,8 @@ export class ParserEvaluatorService {
       await this.pace(400);
     }
 
-    if (evaluated || expired) {
-      this.logger.log(`Parser evaluate: оценено ${evaluated}, истекло ${expired}`);
+    if (evaluated || expired || forced) {
+      this.logger.log(`Parser evaluate: оценено ${evaluated}, истекло ${expired}, форс ${forced}`);
     }
     return evaluated;
   }
@@ -166,10 +176,16 @@ export class ParserEvaluatorService {
     return true;
   }
 
-  /** Готов ли кандидат к выбору селектором (финал прошёл или hot на pre). */
-  public isEligible(candidate: ObservedPostEntity): boolean {
+  /**
+   * Готов ли кандидат к выбору селектором: финал прошёл, либо hot на pre.
+   * В режиме boost (relax=true) берём любой оценённый пост без отказа.
+   */
+  public isEligible(candidate: ObservedPostEntity, relax = false): boolean {
+    if (candidate.forced) return true;
     if (candidate.status !== ObservedStatus.SCORED) return false;
-    if (candidate.evalStage === EvalStage.FINAL) return !candidate.rejectReason;
+    if (candidate.rejectReason) return false;
+    if (relax) return true;
+    if (candidate.evalStage === EvalStage.FINAL) return true;
     return candidate.score != null && candidate.score >= this.settings.current.hotScore;
   }
 
@@ -209,6 +225,49 @@ export class ParserEvaluatorService {
       await this.observedRepository.save(row);
     }
     return stale.length;
+  }
+
+  /**
+   * Форс-посты: одно медиа в 3+ разных каналах за окно — сразу в предложку,
+   * минуя пороги и ожидание pre/final. Скоринг не нужен: виральность важнее.
+   */
+  public async promoteForced(now: Date): Promise<number> {
+    const since = new Date(now.getTime() - FORCE_WINDOW_HOURS * 3_600_000);
+    const groups = await this.observedRepository
+      .createQueryBuilder('o')
+      .select('o.mediaUniqueId', 'media')
+      .addSelect('COUNT(DISTINCT o.sourceChatId)', 'sources')
+      .where('o.mediaUniqueId IS NOT NULL')
+      .andWhere('o.createdAt >= :since', { since })
+      .andWhere('o.status IN (:...statuses)', {
+        statuses: [ObservedStatus.PENDING, ObservedStatus.SCORED],
+      })
+      .groupBy('o.mediaUniqueId')
+      .having('COUNT(DISTINCT o.sourceChatId) >= :min', { min: FORCE_MIN_SOURCES })
+      .getRawMany<{ media: string }>();
+
+    if (!groups.length) return 0;
+
+    let forced = 0;
+    for (const group of groups) {
+      const rows = await this.observedRepository.find({
+        where: {
+          mediaUniqueId: group.media,
+          status: In([ObservedStatus.PENDING, ObservedStatus.SCORED]),
+        },
+      });
+      for (const row of rows) {
+        if (row.forced) continue;
+        row.forced = true;
+        row.status = ObservedStatus.SCORED;
+        row.evalStage = EvalStage.FINAL;
+        row.rejectReason = null;
+        row.evaluatedAt = row.evaluatedAt ?? now;
+        await this.observedRepository.save(row);
+        forced += 1;
+      }
+    }
+    return forced;
   }
 
   private async reject(candidate: ObservedPostEntity, reason: string): Promise<void> {

@@ -1,4 +1,4 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Inject, Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { TelegramClient } from 'telegram';
 import { NewMessage, NewMessageEvent } from 'telegram/events';
@@ -12,6 +12,10 @@ import { ParserEvaluatorService } from './parser-evaluator.service';
 import { ParserSelectorService } from './parser-selector.service';
 import { ParserDiscoveryService } from './parser-discovery.service';
 import { ParserModerationService } from './parser-moderation.service';
+import { BOT } from '../../bot/providers/bot.provider';
+import { Bot } from 'grammy';
+import { BotContext } from '../../bot/interfaces/bot-context.interface';
+import { BaseConfigService } from '../../config/base-config.service';
 
 /**
  * Оркестратор парсера: регистрация callback-обработчиков, подключение
@@ -35,12 +39,42 @@ export class ParserService implements OnModuleInit {
     private readonly discovery: ParserDiscoveryService,
     private readonly moderation: ParserModerationService,
     private readonly parserClient: ParserClientService,
-    private readonly clientBase: ClientBaseService
+    private readonly clientBase: ClientBaseService,
+    @Inject(BOT) private readonly bot: Bot<BotContext>,
+    private readonly config: BaseConfigService
   ) {}
 
   public onModuleInit(): void {
     this.moderation.registerCallbacks();
+    this.registerMoreHandlers();
     this.scheduleLiveAttach();
+  }
+
+  /** «Насыпать ещё»: кнопка на последней карточке и команда/пост `/more`. */
+  private registerMoreHandlers(): void {
+    this.bot.callbackQuery(/^prs:more:(\d+)$/, async (ctx) => {
+      if (!ctx.config?.isOwner) {
+        await ctx.answerCallbackQuery('Только владелец');
+        return;
+      }
+      await ctx.answerCallbackQuery('Насыпаю…');
+      const delivered = await this.selector.dumpMore();
+      this.logger.log(`Parser selector: /more по кнопке → ${delivered}`);
+    });
+
+    this.bot.on('channel_post:text', async (ctx) => {
+      const chatId = ctx.chat?.id;
+      if (chatId !== this.config.userRequestMemeChannel) return;
+      const text = (ctx.channelPost?.text ?? '').trim();
+      if (!/^\/more(@\w+)?$/.test(text)) return;
+      const delivered = await this.selector.dumpMore();
+      this.logger.log(`Parser selector: /more из канала → ${delivered}`);
+      try {
+        await ctx.api.deleteMessage(chatId, ctx.channelPost.message_id);
+      } catch {
+        // сообщение могло уже улететь — не критично
+      }
+    });
   }
 
   /**
@@ -100,13 +134,19 @@ export class ParserService implements OnModuleInit {
     }
   }
 
-  /** Отбор и доставка, каждые 20 минут. */
+  /**
+   * Каждые 20 минут: доставляем только форс-посты (обычные — по требованию
+   * кнопкой/`/more`) и состариваем бэклог.
+   */
   @Cron('*/20 * * * *', { timeZone: 'Europe/Moscow' })
   public async onSelect(): Promise<void> {
     if (!this.enabled || this.busy.select) return;
     this.busy.select = true;
     try {
-      await this.runJob('select', () => this.selector.selectAndDeliver());
+      await this.runJob('select', async () => {
+        await this.selector.deliverForced();
+        await this.selector.ageBacklog();
+      });
     } finally {
       this.busy.select = false;
     }
@@ -124,7 +164,7 @@ export class ParserService implements OnModuleInit {
     }
   }
 
-  /** Статистика источников (базлайны, подписчики, ERR) + прунинг, раз в сутки. */
+  /** Статистика источников (базлайны, подписчики, ERR, вес/cooldown), раз в сутки. */
   @Cron('0 5 * * *', { timeZone: 'Europe/Moscow' })
   public async onStats(): Promise<void> {
     if (!this.enabled || this.busy.stats) return;
@@ -142,8 +182,8 @@ export class ParserService implements OnModuleInit {
             this.logger.warn(`Parser stats: источник ${source.chatId}: ${error}`);
           }
         }
-        const disabled = await this.registry.pruneWeakSources();
-        if (disabled) this.logger.log(`Parser stats: прунинг отключил ${disabled} источников`);
+        const released = await this.registry.refreshCooldowns();
+        if (released) this.logger.log(`Parser stats: вернулось из паузы источников: ${released}`);
       });
     } finally {
       this.busy.stats = false;

@@ -1,129 +1,190 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Inject } from '@nestjs/common';
-import { In, Repository } from 'typeorm';
+import { In, LessThan, IsNull, Not, Repository } from 'typeorm';
+import { Bot } from 'grammy';
 import { CLOCK, Clock } from '../../../shared/clock';
-import { ObservedStatus } from '../constants/parser.constants';
+import { BOT } from '../../bot/providers/bot.provider';
+import { BotContext } from '../../bot/interfaces/bot-context.interface';
+import {
+  BACKLOG_TTL_DAYS,
+  BOOST_MULTIPLIER,
+  DUMP_COOLDOWN_MINUTES,
+  DUMP_SIZE,
+  ObservedStatus,
+  POOL_TTL_DAYS,
+} from '../constants/parser.constants';
 import { ObservedPostEntity } from '../entities/observed-post.entity';
 import { SourceChannelEntity } from '../entities/source-channel.entity';
-import { ParserEvaluatorService } from './parser-evaluator.service';
+import { dedupBatch } from '../domain/parser-quotas';
+import { rankScore } from '../domain/parser-source-weight';
 import { ParserDeliveryService } from './parser-delivery.service';
 import { ParserRegistryService } from './parser-registry.service';
 import { ParserSettingsService } from './parser-settings.service';
-import {
-  QuotaRules,
-  SelectCandidate,
-  buildDayCounters,
-  dedupBatch,
-  isCringeCategory,
-  pickByFairness,
-} from '../domain/parser-quotas';
+import { BaseConfigService } from '../../config/base-config.service';
 
 /**
- * Селектор: выбирает оценённых кандидатов с учётом лимитов дня, квот
- * источников/категорий и fairness, затем запускает доставку в предложку.
+ * Селектор «по требованию»: в предложку ничего не льётся само. Посты выдаются
+ * пачкой (до DUMP_SIZE) по кнопке «Ещё 20» на последней карточке или команде
+ * /more. Форс-посты (разошлись по 3+ каналам) доставляются сразу.
+ * Бэклог стареет: карточки старше BACKLOG_TTL_DAYS удаляются, пул — POOL_TTL_DAYS.
  */
 @Injectable()
 export class ParserSelectorService {
   private readonly logger = new Logger(ParserSelectorService.name);
+  private busy = false;
+  private lastDumpAt = 0;
 
   constructor(
     @InjectRepository(ObservedPostEntity)
     private readonly observedRepository: Repository<ObservedPostEntity>,
     private readonly registry: ParserRegistryService,
-    private readonly evaluator: ParserEvaluatorService,
     private readonly delivery: ParserDeliveryService,
     private readonly settings: ParserSettingsService,
+    private readonly config: BaseConfigService,
+    @Inject(BOT) private readonly bot: Bot<BotContext>,
     @Inject(CLOCK) private readonly clock: Clock
   ) {}
 
-  /** Прогон селектора (cron). Возвращает число доставленных постов. */
-  public async selectAndDeliver(): Promise<number> {
-    const config = this.settings.current;
-    if (!this.settings.enabled) return 0;
+  /**
+   * Форс-посты уходят сразу и без скоринга, но чёрный список и ERR источника
+   * всё равно уважаем (форс не должен тащить мусорные каналы).
+   */
+  public async deliverForced(): Promise<number> {
+    if (this.busy) return 0;
+    this.busy = true;
+    try {
+      return await this.deliverForcedInner();
+    } finally {
+      this.busy = false;
+    }
+  }
 
-    const scored = await this.observedRepository.find({
-      where: { status: ObservedStatus.SCORED },
-      order: { score: 'DESC' },
+  private async deliverForcedInner(): Promise<number> {
+    const config = this.settings.current;
+    const rows = await this.observedRepository.find({
+      where: { status: ObservedStatus.SCORED, forced: true },
+      order: { createdAt: 'ASC' },
+      take: DUMP_SIZE,
+    });
+    if (!rows.length) return 0;
+
+    const sources = await this.loadSources(rows.map((row) => row.sourceChatId));
+    const usable = rows.filter((row) => {
+      const source = sources.get(row.sourceChatId);
+      if (!source || source.excluded) return false;
+      if (source.err != null && source.err < config.errMin) return false;
+      return true;
+    });
+    if (!usable.length) return 0;
+
+    return this.deliverRows(usable, sources, false);
+  }
+
+  /**
+   * «Насыпать ещё»: отдаёт до count самых свежих оценённых постов (свежие
+   * первыми, вес — тай-брейкер). Пропускает excluded; cooldown игнорируется.
+   */
+  public async dumpMore(count = DUMP_SIZE): Promise<number> {
+    if (this.busy) {
+      this.logger.debug('Parser selector: добор уже идёт');
+      return 0;
+    }
+    const now = this.clock.now();
+    if (now.getTime() - this.lastDumpAt < DUMP_COOLDOWN_MINUTES * 60_000) {
+      this.logger.debug('Parser selector: слишком частый добор');
+      return 0;
+    }
+
+    const boosted = this.settings.boostActive(now);
+    const limit = boosted ? count * BOOST_MULTIPLIER : count;
+
+    this.busy = true;
+    try {
+      const rows = await this.observedRepository.find({
+        where: { status: ObservedStatus.SCORED, rejectReason: IsNull() },
+        order: { createdAt: 'DESC' },
+        take: limit + 20,
+      });
+      if (!rows.length) return 0;
+
+      const sources = await this.loadSources(rows.map((row) => row.sourceChatId));
+      const unique = this.uniqueBest(rows, sources);
+      const usable = unique
+        .filter((row) => {
+          const source = sources.get(row.sourceChatId);
+          return Boolean(source) && !source?.excluded;
+        })
+        .slice(0, limit);
+      if (!usable.length) return 0;
+
+      const delivered = await this.deliverRows(usable, sources, true);
+      if (delivered) this.lastDumpAt = this.clock.now().getTime();
+      return delivered;
+    } finally {
+      this.busy = false;
+    }
+  }
+
+  /** Старение бэклога: карточки 7д и оценённый пул 14д истекают. */
+  public async ageBacklog(): Promise<number> {
+    const now = this.clock.now();
+    const backlogThreshold = new Date(now.getTime() - BACKLOG_TTL_DAYS * 86_400_000);
+    const poolThreshold = new Date(now.getTime() - POOL_TTL_DAYS * 86_400_000);
+
+    const staleCards = await this.observedRepository.find({
+      where: { status: ObservedStatus.DELIVERED, deliveredAt: LessThan(backlogThreshold) },
       take: 200,
     });
-
-    const eligible = scored.filter((row) => this.evaluator.isEligible(row));
-    if (!eligible.length) return 0;
-
-    const since = this.startOfDay();
-    const todayRows = await this.observedRepository
-      .createQueryBuilder('o')
-      .where('o.status IN (:...statuses)', {
-        statuses: [
-          ObservedStatus.DELIVERED,
-          ObservedStatus.PUBLISHED,
-          ObservedStatus.QUEUED,
-        ],
-      })
-      .andWhere('o.deliveredAt >= :since', { since })
-      .take(500)
-      .getMany();
-
-    const sources = await this.loadSources([
-      ...eligible.map((row) => row.sourceChatId),
-      ...todayRows.map((row) => row.sourceChatId),
-    ]);
-
-    const rules: QuotaRules = {
-      dailyLimit: config.dailyLimit,
-      sourceDailyCap: config.sourceDailyCap,
-      cringeShare: config.cringeShare,
-    };
-    const counters = buildDayCounters(
-      todayRows.map((row) => ({
-        sourceChatId: Number(row.sourceChatId),
-        category: sources.get(row.sourceChatId)?.category ?? 'memes',
-        cringe: isCringeCategory(sources.get(row.sourceChatId)?.category ?? 'memes'),
-        at: row.deliveredAt ?? since,
-      })),
-      since,
-      (item) => item.at
-    );
-
-    const remaining = Math.max(0, rules.dailyLimit - counters.total);
-    if (remaining === 0) {
-      this.logger.debug('Parser selector: дневной лимит исчерпан');
-      return 0;
+    for (const card of staleCards) {
+      await this.deleteCardMessage(card);
+      card.status = ObservedStatus.EXPIRED;
+      card.rejectReason = `backlog-${BACKLOG_TTL_DAYS}d`;
+      await this.observedRepository.save(card);
+      await this.registry.markSourceIgnored(card.sourceChatId, false);
     }
 
-    // Дедуп внутри батча: остаётся лучший по score на каждое уникальное медиа.
-    const uniqueIds = dedupBatch(
-      eligible.map((row) => ({ id: row.id, score: row.score ?? 0, fileKey: row.mediaUniqueId }))
-    );
-    const uniqueById = new Map(eligible.map((row) => [row.id, row]));
-    const unique = uniqueIds.map((id) => uniqueById.get(id)).filter((row): row is ObservedPostEntity => !!row);
-
-    // Кросс-прогонный дедуп: это медиа уже уезжало в предложку/публикацию.
-    const alreadyUsed = await this.findDeliveredMediaIds(
-      unique.map((row) => row.mediaUniqueId).filter((value): value is string => !!value)
-    );
-    const fresh = unique.filter((row) => !alreadyUsed.has(row.mediaUniqueId ?? ''));
-
-    const candidates: SelectCandidate[] = fresh.map((row) => ({
-      id: row.id,
-      sourceChatId: Number(row.sourceChatId),
-      category: sources.get(row.sourceChatId)?.category ?? 'memes',
-      score: row.score ?? 0,
-      stage: row.evalStage,
-    }));
-
-    const pickedIds = pickByFairness(candidates, rules, counters);
-    if (!pickedIds.length) {
-      this.logger.debug('Parser selector: квоты не пропустили ни одного кандидата');
-      return 0;
+    const stalePool = await this.observedRepository.find({
+      where: { status: ObservedStatus.SCORED, createdAt: LessThan(poolThreshold) },
+      take: 200,
+    });
+    for (const row of stalePool) {
+      row.status = ObservedStatus.EXPIRED;
+      row.rejectReason = `pool-${POOL_TTL_DAYS}d`;
+      await this.observedRepository.save(row);
     }
 
+    const stuck = await this.observedRepository.find({
+      where: {
+        status: ObservedStatus.SELECTED,
+        requestChannelMessageId: IsNull(),
+        updatedAt: LessThan(new Date(now.getTime() - 3_600_000)),
+      },
+      take: 100,
+    });
+    for (const row of stuck) {
+      row.status = ObservedStatus.SCORED;
+      await this.observedRepository.save(row);
+    }
+
+    const expired = staleCards.length + stalePool.length;
+    if (expired) this.logger.log(`Parser selector: состарилось постов ${expired}`);
+    return expired;
+  }
+
+  /** Сколько карточек сейчас в предложке (для паузы оценки и меню). */
+  public countBacklog(): Promise<number> {
+    return this.observedRepository.count({ where: { status: ObservedStatus.DELIVERED } });
+  }
+
+  private async deliverRows(
+    rows: ObservedPostEntity[],
+    sources: Map<string, SourceChannelEntity>,
+    withMoreButton: boolean
+  ): Promise<number> {
     let delivered = 0;
-    for (const id of pickedIds) {
-      const row = uniqueById.get(id);
-      if (!row) continue;
+    let lastDelivered: ObservedPostEntity | null = null;
 
+    for (const row of rows) {
       const source = sources.get(row.sourceChatId);
       if (!source) {
         row.status = ObservedStatus.REJECTED;
@@ -138,15 +199,68 @@ export class ParserSelectorService {
       const result = await this.delivery.deliver(row);
       if (result.ok) {
         delivered += 1;
+        lastDelivered = row;
       } else if (result.status === ObservedStatus.FAILED) {
-        // Технический сбой — вернём в score, попробуем в следующем прогоне.
-        row.status = ObservedStatus.SCORED;
+        if (TERMINAL_FAILS.has(row.rejectReason ?? '')) {
+          row.status = ObservedStatus.REJECTED;
+        } else {
+          // Транзиентный сбой (сеть/flood) — вернуть в пул без причины.
+          row.status = ObservedStatus.SCORED;
+          row.rejectReason = null;
+        }
         await this.observedRepository.save(row);
       }
+      await this.pace(1200);
     }
 
-    if (delivered) this.logger.log(`Parser selector: доставлено ${delivered} постов`);
+    if (withMoreButton && lastDelivered?.requestChannelMessageId) {
+      await this.moveMoreButton(lastDelivered);
+    }
+    if (delivered) this.logger.log(`Parser selector: доставлено постов ${delivered}`);
     return delivered;
+  }
+
+  /**
+   * Снимает кнопку «Ещё» с прошлой последней карточки и ставит на новую.
+   * Прошлую ищем в БД (не в памяти) — переживает рестарт.
+   */
+  private async moveMoreButton(last: ObservedPostEntity): Promise<void> {
+    const recent = await this.observedRepository.find({
+      where: { status: ObservedStatus.DELIVERED, requestChannelMessageId: Not(IsNull()) },
+      order: { deliveredAt: 'DESC' },
+      take: 5,
+    });
+    for (const card of recent) {
+      if (card.id === last.id) continue;
+      if (card.requestChannelMessageId) {
+        await this.delivery.detachMoreButton(Number(card.requestChannelMessageId), card.id);
+      }
+      break;
+    }
+    if (last.requestChannelMessageId) {
+      await this.delivery.attachMoreButton(Number(last.requestChannelMessageId), last.id);
+    }
+  }
+
+  private uniqueBest(
+    rows: ObservedPostEntity[],
+    sources: Map<string, SourceChannelEntity>
+  ): ObservedPostEntity[] {
+    const ids = dedupBatch(
+      rows.map((row) => ({ id: row.id, score: this.rank(row, sources), fileKey: row.mediaUniqueId }))
+    );
+    const byId = new Map(rows.map((row) => [row.id, row]));
+    const ordered = ids.map((id) => byId.get(id)).filter((row): row is ObservedPostEntity => Boolean(row));
+    // Свежие первыми, вес и скор — тай-брейкеры.
+    return ordered.sort((a, b) => {
+      const fresh = b.createdAt.getTime() - a.createdAt.getTime();
+      if (fresh !== 0) return fresh;
+      return this.rank(b, sources) - this.rank(a, sources);
+    });
+  }
+
+  private rank(row: ObservedPostEntity, sources: Map<string, SourceChannelEntity>): number {
+    return rankScore(row.score ?? 0, sources.get(row.sourceChatId)?.weight);
   }
 
   private async loadSources(
@@ -157,27 +271,38 @@ export class ParserSelectorService {
     return new Map(sources.map((source) => [source.chatId, source]));
   }
 
-  private startOfDay(): Date {
-    const now = this.clock.now();
-    const start = new Date(now);
-    start.setHours(0, 0, 0, 0);
-    return start;
+  private async deleteCardMessage(card: ObservedPostEntity): Promise<void> {
+    if (card.requestChannelMessageId == null) return;
+    try {
+      await this.bot.api.deleteMessage(
+        this.channelId(),
+        Number(card.requestChannelMessageId)
+      );
+    } catch (error) {
+      this.logger.warn(`Parser selector: не удалось удалить карточку ${card.id}: ${error}`);
+      try {
+        await this.bot.api.editMessageCaption(
+          this.channelId(),
+          Number(card.requestChannelMessageId),
+          { caption: '🚫 Состарилось', reply_markup: { inline_keyboard: [] } }
+        );
+      } catch (editError) {
+        this.logger.warn(`Parser selector: не удалось пометить карточку ${card.id}: ${editError}`);
+      }
+    }
   }
 
-  private async findDeliveredMediaIds(mediaIds: ReadonlyArray<string>): Promise<Set<string>> {
-    if (!mediaIds.length) return new Set();
-    const rows = await this.observedRepository.find({
-      where: {
-        mediaUniqueId: In([...mediaIds]),
-        status: In([
-          ObservedStatus.DELIVERED,
-          ObservedStatus.PUBLISHED,
-          ObservedStatus.QUEUED,
-          ObservedStatus.SELECTED,
-        ]),
-      },
-      take: 500,
+  private channelId(): number {
+    return this.config.userRequestMemeChannel;
+  }
+
+  private async pace(baseMs: number): Promise<void> {
+    await new Promise<void>((resolve) => {
+      const timer = setTimeout(resolve, baseMs);
+      timer.unref?.();
     });
-    return new Set(rows.map((row) => row.mediaUniqueId ?? ''));
   }
 }
+
+/** Ошибки доставки, которые не имеет смысла повторять. */
+const TERMINAL_FAILS = new Set(['media-too-large', 'message-gone', 'source-missing']);

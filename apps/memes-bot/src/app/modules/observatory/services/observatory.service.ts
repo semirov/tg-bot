@@ -23,6 +23,7 @@ import { UserModeratedPostService } from './user-moderated-post.service';
 import { MattermostService } from '../../mattermost/mattermost.service';
 import { TrollService } from '../../troll/services/troll.service';
 import { metrics } from '../../../shared/metrics';
+import { ParserSettingsService } from '../../parser/services/parser-settings.service';
 import { buildTelegramFileUrl, extractTelegramFileId } from '../../../shared/publication/media-url';
 import { buildPostUrl, TelegramPostSource } from '../../../shared/publication/telegram-link';
 import { sendPostToMattermost } from '../../../shared/publication/mattermost-post';
@@ -46,7 +47,8 @@ export class ObservatoryService implements OnModuleInit {
     private deduplicationService: DeduplicationService,
     private userModeratedPostService: UserModeratedPostService,
     private mattermostService: MattermostService,
-    private trollService: TrollService
+    private trollService: TrollService,
+    private parserSettings: ParserSettingsService
   ) {}
 
   /**
@@ -96,6 +98,11 @@ export class ObservatoryService implements OnModuleInit {
       const parserUserId = this.baseConfigService.parserUserId;
       if (!parserUserId || ctx.chat?.type !== 'private' || ctx.from?.id !== parserUserId) {
         // Не наш случай: отдаём апдейт дальше (капча, предложка, тролль).
+        return next();
+      }
+      // Тумблер «Старый парсер»: выключен — не принимаем посты обсерватории,
+      // но юзербот остаётся живым для нового парсера.
+      if (!this.parserSettings.current.legacyEnabled) {
         return next();
       }
       this.logger.log(

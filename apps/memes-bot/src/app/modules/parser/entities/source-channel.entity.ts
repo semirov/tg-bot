@@ -58,6 +58,45 @@ export class SourceChannelEntity {
   @Column('int', { default: 0 })
   rejectedTotal: number;
 
+  /** Сколько постов источника владелец взял в публикацию (интерес к каналу). */
+  @Column('int', { default: 0 })
+  takenTotal: number;
+
+  /** Когда последний раз брали пост источника. */
+  @Column('timestamp', { nullable: true })
+  lastTakenAt: Date | null;
+
+  /** Сколько карточек жёстко проигнорировано (отклонено владельцем). */
+  @Column('int', { default: 0 })
+  ignoredTotal: number;
+
+  /** Сколько карточек мягко проигнорировано (истекли в бэклоге без действия). */
+  @Column('int', { default: 0 })
+  softIgnoredTotal: number;
+
+  /** Сколько раз источник уходил в паузу (гистерезис: пауза удлиняется). */
+  @Column('int', { default: 0 })
+  cooldownCount: number;
+
+  /** Когда последний раз проигнорировали карточку источника. */
+  @Column('timestamp', { nullable: true })
+  lastIgnoredAt: Date | null;
+
+  /** Вес источника для ранжирования (интерес/штраф, стартовый 1). */
+  @Column('real', { default: 1 })
+  weight: number;
+
+  /** Источник в чёрном списке: не собираем и не добавляем вновь. */
+  @Column('boolean', { default: false })
+  excluded: boolean;
+
+  @Column('timestamp', { nullable: true })
+  excludedAt: Date | null;
+
+  /** До какого времени источник в ротации не участвует (низкий вес). */
+  @Column('timestamp', { nullable: true })
+  cooldownUntil: Date | null;
+
   @Column('timestamp', { nullable: true })
   statsUpdatedAt: Date | null;
 

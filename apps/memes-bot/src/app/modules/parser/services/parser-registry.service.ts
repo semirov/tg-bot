@@ -7,10 +7,11 @@ import { Api, TelegramClient } from 'telegram';
 import { TotalList } from 'telegram/Helpers';
 import { CLOCK, Clock } from '../../../shared/clock';
 import { BaseConfigService } from '../../config/base-config.service';
-import { SourceCategory, SourceStatus } from '../constants/parser.constants';
+import { SCAN_WINDOW_HOURS, SourceCategory, SourceStatus } from '../constants/parser.constants';
 import { ObservedPostEntity } from '../entities/observed-post.entity';
 import { SourceChannelEntity, StoredBaseline } from '../entities/source-channel.entity';
 import { computeBaseline, ChannelBaseline } from '../domain/parser-scoring';
+import { COOLDOWN_DAYS, computeSourceInterest } from '../domain/parser-source-weight';
 import { POSITIVE_REACTIONS } from '../constants/parser.constants';
 import { ParserMtprotoGuard } from './parser-mtproto-guard.service';
 import { ParserClientService } from './parser-client.service';
@@ -38,11 +39,35 @@ export class ParserRegistryService {
     return this.sourceRepository;
   }
 
-  /** Активные и web-only источники (по ним идёт сбор). */
+  /** Активные и web-only источники, не находящиеся в чёрном списке. */
   public listCollectible(): Promise<SourceChannelEntity[]> {
     return this.sourceRepository.find({
-      where: [{ status: SourceStatus.ACTIVE }, { status: SourceStatus.WEB_ONLY }],
+      where: [
+        { status: SourceStatus.ACTIVE, excluded: false },
+        { status: SourceStatus.WEB_ONLY, excluded: false },
+      ],
     });
+  }
+
+  /** Все источники в чёрном списке (для меню). */
+  public listExcluded(): Promise<SourceChannelEntity[]> {
+    return this.sourceRepository.find({ where: { excluded: true }, order: { excludedAt: 'DESC' } });
+  }
+
+  /** Топ источников по интересу владельца (взятые посты, затем вес). */
+  public listPopular(limit = 10, offset = 0): Promise<SourceChannelEntity[]> {
+    return this.sourceRepository.find({
+      where: { excluded: false },
+      order: { takenTotal: 'DESC', weight: 'DESC', id: 'ASC' },
+      take: limit,
+      skip: offset,
+    });
+  }
+
+  /** Источник в чёрном списке? */
+  public async isExcluded(chatId: string | number): Promise<boolean> {
+    const source = await this.sourceRepository.findOne({ where: { chatId: String(chatId) } });
+    return Boolean(source?.excluded);
   }
 
   public listAll(): Promise<SourceChannelEntity[]> {
@@ -51,7 +76,10 @@ export class ParserRegistryService {
 
   public async countCollectible(): Promise<number> {
     return this.sourceRepository.count({
-      where: [{ status: SourceStatus.ACTIVE }, { status: SourceStatus.WEB_ONLY }],
+      where: [
+        { status: SourceStatus.ACTIVE, excluded: false },
+        { status: SourceStatus.WEB_ONLY, excluded: false },
+      ],
     });
   }
 
@@ -107,13 +135,12 @@ export class ParserRegistryService {
   }): Promise<SourceChannelEntity | null> {
     const chatId = String(params.chatId);
     const exists = await this.sourceRepository.findOne({ where: { chatId } });
-    if (exists) return exists;
-
-    const collectible = await this.countCollectible();
-    const budget = Math.max(1, this.settings.current.maxSources);
-    if (collectible >= budget) {
-      this.logger.warn(`Parser: реестр источников переполнен (>=${budget}), добавление отклонено`);
-      return null;
+    if (exists) {
+      if (exists.excluded) {
+        this.logger.debug(`Parser: источник ${chatId} в чёрном списке — добавление отклонено`);
+        return null;
+      }
+      return exists;
     }
 
     const source = this.sourceRepository.create({
@@ -132,6 +159,127 @@ export class ParserRegistryService {
     if (!source) return null;
     source.status = source.status === SourceStatus.DISABLED ? SourceStatus.ACTIVE : SourceStatus.DISABLED;
     return this.sourceRepository.save(source);
+  }
+
+  /**
+   * Владелец взял пост источника в публикацию/очередь/кринж — фиксируем
+   * интерес: растёт takenTotal и вес, снимается пауза (канал вернулся).
+   */
+  public async markSourceTaken(sourceChatId: string | number): Promise<void> {
+    const source = await this.sourceRepository.findOne({ where: { chatId: String(sourceChatId) } });
+    if (!source) return;
+    source.takenTotal = (source.takenTotal ?? 0) + 1;
+    source.lastTakenAt = this.clock.now();
+    this.applyInterest(source);
+    await this.sourceRepository.save(source);
+  }
+
+  /**
+   * Владелец проигнорировал/отклонил доставленную карточку источника —
+   * растёт ignoredTotal, вес падает; при просадке источник уходит в cooldown.
+   */
+  public async markSourceIgnored(sourceChatId: string | number, hard = true): Promise<void> {
+    const source = await this.sourceRepository.findOne({ where: { chatId: String(sourceChatId) } });
+    if (!source) return;
+    if (hard) {
+      source.ignoredTotal = (source.ignoredTotal ?? 0) + 1;
+    } else {
+      source.softIgnoredTotal = (source.softIgnoredTotal ?? 0) + 1;
+    }
+    source.lastIgnoredAt = this.clock.now();
+    this.applyInterest(source);
+    await this.sourceRepository.save(source);
+  }
+
+  /** Пересчитывает вес и cooldown по накопленному интересу (с гистерезисом). */
+  private applyInterest(source: SourceChannelEntity): void {
+    const now = this.clock.now();
+    const state = computeSourceInterest(
+      {
+        takenTotal: source.takenTotal ?? 0,
+        ignoredTotal: source.ignoredTotal ?? 0,
+        softIgnoredTotal: source.softIgnoredTotal ?? 0,
+        lastIgnoredAt: source.lastIgnoredAt,
+      },
+      now
+    );
+    source.weight = state.weight;
+
+    if (state.cooldownUntil) {
+      if (!source.cooldownUntil) source.cooldownCount = (source.cooldownCount ?? 0) + 1;
+      // Каждая следующая пауза длиннее — без «качелей».
+      const extraDays = COOLDOWN_DAYS * 0.5 * Math.max(0, (source.cooldownCount ?? 1) - 1);
+      source.cooldownUntil = new Date(state.cooldownUntil.getTime() + extraDays * 86_400_000);
+    } else {
+      source.cooldownUntil = null;
+    }
+  }
+
+  /**
+   * Возврат источников из паузы: когда cooldown истёк, штраф игноров
+   * ослабляется вдвое — канал снова получает шанс попасть в предложку.
+   */
+  public async refreshCooldowns(): Promise<number> {
+    const now = this.clock.now();
+    const sources = await this.sourceRepository.find({
+      where: { excluded: false },
+    });
+    let released = 0;
+    for (const source of sources) {
+      if (!source.cooldownUntil || source.cooldownUntil.getTime() > now.getTime()) continue;
+      // Половину штрафа прощаем и НЕ уходим в паузу заново (иначе «качели»).
+      source.ignoredTotal = Math.floor((source.ignoredTotal ?? 0) / 2);
+      source.softIgnoredTotal = Math.floor((source.softIgnoredTotal ?? 0) / 2);
+      source.cooldownUntil = null;
+      source.lastIgnoredAt = null;
+      const state = computeSourceInterest(
+        {
+          takenTotal: source.takenTotal ?? 0,
+          ignoredTotal: source.ignoredTotal,
+          softIgnoredTotal: source.softIgnoredTotal,
+          lastIgnoredAt: null,
+        },
+        now
+      );
+      source.weight = state.weight;
+      await this.sourceRepository.save(source);
+      released += 1;
+      this.logger.log(`Parser: источник ${source.title ?? source.chatId} вернулся из паузы`);
+    }
+    return released;
+  }
+
+  /** Жёсткое исключение источника (чёрный список) с подтверждением в UI. */
+  public async excludeSource(sourceId: number): Promise<SourceChannelEntity | null> {
+    const source = await this.sourceRepository.findOne({ where: { id: sourceId } });
+    if (!source) return null;
+    source.excluded = true;
+    source.excludedAt = this.clock.now();
+    source.status = SourceStatus.DISABLED;
+    source.lastError = 'excluded-by-owner';
+    await this.sourceRepository.save(source);
+    this.logger.log(`Parser: источник ${source.title ?? source.chatId} исключён владельцем`);
+    return source;
+  }
+
+  /** Возврат источника из чёрного списка. */
+  public async restoreSource(sourceId: number): Promise<SourceChannelEntity | null> {
+    const source = await this.sourceRepository.findOne({ where: { id: sourceId } });
+    if (!source) return null;
+    source.excluded = false;
+    source.excludedAt = null;
+    source.ignoredTotal = 0;
+    source.softIgnoredTotal = 0;
+    source.cooldownCount = 0;
+    source.lastIgnoredAt = null;
+    source.cooldownUntil = null;
+    source.status = source.username || source.rawChatId ? SourceStatus.ACTIVE : SourceStatus.WEB_ONLY;
+    source.lastError = null;
+    this.applyInterest(source);
+    if (source.weight < 1) source.weight = 1;
+    await this.sourceRepository.save(source);
+    this.logger.log(`Parser: источник ${source.title ?? source.chatId} возвращён из чёрного списка`);
+    return source;
   }
 
   public async setCategory(sourceId: number, category: SourceCategory): Promise<SourceChannelEntity | null> {
@@ -187,9 +335,11 @@ export class ParserRegistryService {
   ): Promise<ChannelBaseline | null> {
     if (!source.rawChatId && !source.username) return null;
     const peer = bigInt(source.chatId); // marked id (-100...)
+    // Новый источник смотрим не глубже SCAN_WINDOW_HOURS.
+    const since = Math.floor((this.clock.now().getTime() - SCAN_WINDOW_HOURS * 3_600_000) / 1000);
 
     const messages = await this.guard.run<TotalList<Api.Message>>('getHistory:seed', () =>
-      client.getMessages(peer, { limit: 50 })
+      client.getMessages(peer, { limit: 100, offsetDate: since })
     );
     if (!messages?.length) return null;
 
@@ -257,40 +407,6 @@ export class ParserRegistryService {
     source.baseline = baseline;
     await this.sourceRepository.save(source);
     return baseline;
-  }
-
-  /**
-   * Прунинг: источники без единого отобранного поста за окно и с накопленными
-   * отклонениями помечаются для решения владельца (переводятся в disabled).
-   */
-  public async pruneWeakSources(windowDays = 14): Promise<number> {
-    const threshold = new Date(this.clock.now().getTime() - windowDays * 86_400_000);
-    const sources = await this.listCollectible();
-    let disabled = 0;
-
-    for (const source of sources) {
-      if (source.createdAt.getTime() > threshold.getTime()) continue;
-      const since = new Date(threshold);
-      const recent = await this.observedRepository.find({
-        where: { sourceChatId: source.chatId, createdAt: MoreThan(since) },
-        take: 100,
-      });
-      if (!recent.length) continue;
-      const hasSelected = recent.some(
-        (row) => row.status === 'delivered' || row.status === 'published' || row.status === 'queued'
-      );
-      if (hasSelected) continue;
-      const rejected = recent.filter((row) => row.status === 'rejected').length;
-      if (rejected < recent.length * 0.9) continue;
-
-      source.status = SourceStatus.DISABLED;
-      source.lastError = 'auto-pruned: нет отобранных постов за окно';
-      await this.sourceRepository.save(source);
-      disabled += 1;
-      this.logger.log(`Parser: источник ${source.title ?? source.chatId} авто-отключён (прунинг)`);
-    }
-
-    return disabled;
   }
 
   public isOwnChannel(chatId: number): boolean {

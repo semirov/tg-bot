@@ -58,6 +58,30 @@ export class DeduplicationService {
     }
   }
 
+  /**
+   * Сравнение хешей только одинаковой длины (Hamming по символам), без pg_trgm.
+   * Нужно, чтобы 4-символьные фото-хеши не «совпадали» с 16-символьными видео.
+   */
+  public async checkDuplicateSameLength(
+    hash: string,
+    days = 365
+  ): Promise<{ memePostId: number; distance: number }[]> {
+    if (!hash) return [];
+    const rows: Array<{ hash: string; memeChannelMessageId: number }> =
+      await this.publishedPostHashesEntity.query(
+        `SELECT hash, "memeChannelMessageId" FROM published_post_hashes_entity
+         WHERE hash IS NOT NULL AND length(hash) = $2 AND "createdAt" >= now() - ($1 || ' DAYS')::interval
+         ORDER BY "createdAt" DESC LIMIT 500`,
+        [String(days), hash.length]
+      );
+    let best = { memePostId: 0, distance: 0 };
+    for (const row of rows) {
+      const distance = this.calculateHashDistance(hash, row.hash);
+      if (distance > best.distance) best = { memePostId: row.memeChannelMessageId, distance };
+    }
+    return best.distance > 0 ? [best] : [];
+  }
+
   public async createPublishedPostHash(hash: string, memeChannelMessageId: number): Promise<void> {
     if (hash) {
       await this.publishedPostHashesEntity.insert({ hash, memeChannelMessageId });

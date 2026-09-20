@@ -107,6 +107,57 @@ describe('parser-quotas', () => {
     });
   });
 
+  describe('безлимит и веса источников', () => {
+    const unlimited: QuotaRules = { dailyLimit: 0, sourceDailyCap: 0, cringeShare: 0.25, selectLimit: 2 };
+    const candidate = (id: number, sourceChatId: number, score: number, category = 'memes') => ({
+      id,
+      sourceChatId,
+      category,
+      score,
+      stage: 'final',
+    });
+
+    it('dailyLimit=0 — темп прогона (selectLimit), а не суточный лимит', () => {
+      expect(dailyLeft(unlimited, { perSource: {}, cringe: 0, total: 999 })).toBe(2);
+      expect(cringeQuotaLeft(unlimited, { perSource: {}, cringe: 99, total: 99 })).toBe(2);
+    });
+
+    it('sourceDailyCap=0 — источник не ограничен по слотам', () => {
+      const rows = [candidate(1, 10, 9), candidate(2, 10, 8), candidate(3, 10, 7)];
+      expect(pickByFairness(rows, unlimited, { perSource: {}, cringe: 0, total: 0 })).toEqual([1, 2]);
+    });
+
+    it('вес источника поднимает кандидата выше более скорного', () => {
+      const weighted: QuotaRules = {
+        ...unlimited,
+        selectLimit: 3,
+        weights: { '20': 3 },
+      };
+      const rows = [candidate(1, 10, 10), candidate(2, 20, 5)];
+      expect(pickByFairness(rows, weighted, { perSource: {}, cringe: 0, total: 0 })).toEqual([2, 1]);
+    });
+
+    it('без веса сохраняется порядок по score, затем по id', () => {
+      const rows = [candidate(2, 30, 7), candidate(1, 30, 7)];
+      expect(
+        pickByFairness(rows, { ...unlimited, selectLimit: 5 }, { perSource: {}, cringe: 0, total: 0 })
+      ).toEqual([1, 2]);
+    });
+
+    it('при равном весе-ранжировании решает score', () => {
+      const weighted: QuotaRules = { ...unlimited, selectLimit: 5, weights: { '10': 2 } };
+      const rows = [candidate(1, 10, 5), candidate(2, 20, 10)];
+      // rank(1)=10, rank(2)=10 → тай-брейк по score (2 выше)
+      expect(pickByFairness(rows, weighted, { perSource: {}, cringe: 0, total: 0 })).toEqual([2, 1]);
+    });
+
+    it('нулевой/отрицательный вес трактуется как 1', () => {
+      const weighted: QuotaRules = { ...unlimited, selectLimit: 5, weights: { '20': 0 } };
+      const rows = [candidate(1, 10, 5), candidate(2, 20, 5)];
+      expect(pickByFairness(rows, weighted, { perSource: {}, cringe: 0, total: 0 })).toEqual([1, 2]);
+    });
+  });
+
   describe('dedupBatch', () => {
     it('оставляет лучший по score на каждое медиа', () => {
       const picked = dedupBatch([

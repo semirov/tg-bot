@@ -74,6 +74,7 @@ const candidate = (overrides: Record<string, unknown> = {}): any => ({
   postsPerDay: null,
   aiVerdict: null,
   verdict: 'pending',
+  attempts: 0,
   reason: null,
   checkedAt: null,
   ...overrides,
@@ -86,10 +87,13 @@ const makeObservedRepo = (): any => ({
   create: jest.fn().mockImplementation((value) => ({ ...value })),
   save: jest.fn().mockImplementation(save),
   createQueryBuilder: jest.fn(() => ({
+    select: jest.fn().mockReturnThis(),
+    addSelect: jest.fn().mockReturnThis(),
     where: jest.fn().mockReturnThis(),
     andWhere: jest.fn().mockReturnThis(),
-    take: jest.fn().mockReturnThis(),
-    getMany: jest.fn().mockResolvedValue([]),
+    groupBy: jest.fn().mockReturnThis(),
+    having: jest.fn().mockReturnThis(),
+    getRawMany: jest.fn().mockResolvedValue([]),
     getCount: jest.fn().mockResolvedValue(0),
   })),
 });
@@ -114,13 +118,20 @@ const makeRegistryMock = (): any => ({
     save: jest.fn().mockImplementation(save),
   },
   listCollectible: jest.fn().mockResolvedValue([]),
+  listExcluded: jest.fn().mockResolvedValue([]),
+  listPopular: jest.fn().mockResolvedValue([]),
   listAll: jest.fn().mockResolvedValue([]),
   countCollectible: jest.fn().mockResolvedValue(0),
   isOwnChannel: jest.fn((chatId: number) => chatId === -1001111111111),
+  isExcluded: jest.fn().mockResolvedValue(false),
+  addSource: jest.fn().mockResolvedValue({ id: 1 }),
   computeBaselineFor: jest.fn().mockResolvedValue({ vmed: 1000, rmed: 10, p90: 4000, posShare: 0.8, sampleSize: 5 }),
+  markSourceIgnored: jest.fn().mockResolvedValue(undefined),
+  importSubscriptions: jest.fn().mockResolvedValue(0),
 });
 
 const makeParserClient = (client: unknown): any => ({ client: jest.fn(() => client) });
+
 const makeSettings = (overrides: Record<string, unknown> = {}): any => ({
   current: {
     evalPreHours: 2,
@@ -135,22 +146,21 @@ const makeSettings = (overrides: Record<string, unknown> = {}): any => ({
     aiEnabled: false,
     cringeMinViews: 100,
     cringeShareMin: 0.12,
-    dailyLimit: 12,
-    sourceDailyCap: 2,
-    cringeShare: 0.25,
     errMin: 0.15,
-    maxSources: 20,
     aiRelevanceMin: 0.6,
     enabled: true,
+    legacyEnabled: true,
+    boostUntil: null,
     ...overrides,
   },
   enabled: true,
   update: jest.fn().mockResolvedValue(undefined),
   reset: jest.fn().mockResolvedValue(undefined),
+  boostActive: jest.fn(() => false),
 });
 
 const makeSettingsStub = (): any => ({
-  current: { maxSources: 50 },
+  current: { maxSources: 50, idlePruneDays: 3 },
 });
 
 const makeConfig = (): any => ({
@@ -188,18 +198,20 @@ describe('parser services branch backfill', () => {
 
     const bot: any = { api: { sendPhoto: jest.fn().mockResolvedValue({ message_id: 1 }) } };
     const observedRepo = makeObservedRepo();
-    const registry = makeRegistryMock();
-    const client = { getMessages: jest.fn().mockResolvedValue([mediaMessage()]), downloadMedia: jest.fn().mockResolvedValue(Buffer.from([1])) };
-    const dedup = { checkDuplicate: jest.fn(), createPublishedPostHash: jest.fn() };
+    const client = {
+      getMessages: jest.fn().mockResolvedValue([mediaMessage()]),
+      downloadMedia: jest.fn().mockResolvedValue(Buffer.from([1])),
+    };
+    const dedup = { checkDuplicateSameLength: jest.fn(), createPublishedPostHash: jest.fn() };
     const row = candidate();
     const service = new ParserDeliveryService(
-      bot, makeConfig(), makeGuard(), registry, makeParserClient(client), dedup as never, observedRepo, clock
+      bot, makeConfig(), makeGuard(), makeRegistryMock(), makeParserClient(client), dedup as never, observedRepo, clock
     );
 
     const result = await service.deliver(row);
 
     expect(result).toMatchObject({ ok: true });
-    expect(dedup.checkDuplicate).not.toHaveBeenCalled();
+    expect(dedup.checkDuplicateSameLength).not.toHaveBeenCalled();
     expect(row.imageHash).toBeNull();
   });
 
@@ -219,6 +231,34 @@ describe('parser services branch backfill', () => {
 
     const link = service.buildSourceLink(source({ username: null, title: null, chatId: '-1008888888888' }));
     expect(link).toContain('t.me/c/');
+  });
+
+  it('delivery: видео без обложки не хеширует дедуп', async () => {
+    const video = new Api.Document({
+      id: bigInt('777'),
+      accessHash: bigInt('1'),
+      fileReference: Buffer.from([]),
+      date: 1000,
+      attributes: [new Api.DocumentAttributeVideo({ duration: 10, w: 640, h: 640 })],
+      mimeType: 'video/mp4',
+      size: bigInt('1000'),
+      dcId: 2,
+      thumbs: [],
+    });
+    const bot: any = { api: { sendVideo: jest.fn().mockResolvedValue({ message_id: 1 }) } };
+    const dedup = { checkDuplicateSameLength: jest.fn(), createPublishedPostHash: jest.fn() };
+    const client = {
+      getMessages: jest.fn().mockResolvedValue([{ id: 42, video, views: 4000 } as never]),
+      downloadMedia: jest.fn().mockResolvedValue(Buffer.from([1])),
+    };
+    const service = new ParserDeliveryService(
+      bot, makeConfig(), makeGuard(), makeRegistryMock(), makeParserClient(client), dedup as never, makeObservedRepo(), clock
+    );
+
+    const result = await service.deliver(candidate({ mediaKind: 'video' }));
+
+    expect(result).toMatchObject({ ok: true });
+    expect(dedup.checkDuplicateSameLength).not.toHaveBeenCalled();
   });
 
   // ---------- discovery ----------
@@ -262,9 +302,8 @@ describe('parser services branch backfill', () => {
       posts: [{ id: 1, views: 0, hasMedia: true, text: '', timeIso: null }],
     });
 
-    const result = await service.checkCandidate(candidate({}));
+    const result = await service.checkCandidate(candidate({ chatId: '-1008888888888' }));
     expect(result.errEstimate).toBeNull();
-    // Нет данных для ERR — не вердикт, кандидат остаётся в очереди проверки.
     expect(result.verdict).toBe('pending');
     expect(result.reason).toBe('err-unavailable');
   });
@@ -272,7 +311,6 @@ describe('parser services branch backfill', () => {
   it('discovery: postsPerDay null не мешает гейту; ai nsfw отбрасывает', async () => {
     const fetchTmePreview = jest.requireMock('../domain/tme-preview').fetchTmePreview as jest.Mock;
     const candidateRepo = makeObservedRepo();
-    candidateRepo.find.mockResolvedValue([candidate({})]);
     const ai = { classifyChannel: jest.fn().mockResolvedValue({ category: 'memes', relevance: 0.9, nsfw: true }), rejectPostIfTrash: jest.fn() };
     const client = { invoke: jest.fn().mockResolvedValue({ fullChat: { participantsCount: 10000 } }) };
     const service = new ParserDiscoveryService(
@@ -286,7 +324,7 @@ describe('parser services branch backfill', () => {
       posts: [{ id: 1, views: 3000, hasMedia: true, text: 'текст', timeIso: null }],
     });
 
-    const result = await service.checkCandidate(candidate({}));
+    const result = await service.checkCandidate(candidate({ chatId: '-1008888888888' }));
     expect(result.verdict).toBe('rejected');
     expect(result.reason).toBe('ai:nsfw');
   });
@@ -299,7 +337,7 @@ describe('parser services branch backfill', () => {
     );
 
     expect(await service.approve(1, 'join')).toBeNull();
-    candidateRepo.findOne.mockResolvedValue(candidate({ username: 'linked', chatId: null }));
+    candidateRepo.findOne.mockResolvedValue(candidate({ username: 'linked', chatId: null, verdict: 'ready' }));
     expect(await service.approve(1, 'join')).toBeNull();
   });
 
@@ -316,7 +354,7 @@ describe('parser services branch backfill', () => {
       registry, makeSettings(), { classifyChannel: jest.fn(), rejectPostIfTrash: jest.fn() } as never, clock
     );
     candidateRepo.findOne.mockResolvedValue(
-      candidate({ username: 'linked', chatId: null, verdict: 'ready' })
+      candidate({ username: 'linked', chatId: '-1008888888888', verdict: 'ready' })
     );
 
     const result = await service.approve(1, 'web_only');
@@ -324,40 +362,19 @@ describe('parser services branch backfill', () => {
     expect(registry.addSource).toHaveBeenCalled();
   });
 
-  it('discovery: reject без кандидата → null; listReady', async () => {
-    const candidateRepo = makeObservedRepo();
-    const service = new ParserDiscoveryService(
-      candidateRepo, makeSourceRepo(), makeParserClient({}), makeGuard(),
-      makeRegistryMock(), makeSettings(), { classifyChannel: jest.fn(), rejectPostIfTrash: jest.fn() } as never, clock
-    );
-    expect(await service.reject(42)).toBeNull();
-    candidateRepo.findOne.mockResolvedValue(candidate({}));
-    await service.listReady();
-    expect(candidateRepo.find).toHaveBeenCalled();
-  });
-
   // ---------- menu ----------
-  it('menu: getMenu без onModuleInit строит меню заново; заголовок/источники/обновление', async () => {
+  it('menu: getMenu без onModuleInit строит меню заново; заголовок/статистика', async () => {
     const settings = makeSettings();
     const registry = makeRegistryMock();
     const repo = makeObservedRepo();
-    const bot: any = { api: { sendMessage: jest.fn() } };
-    const service = new ParserMenuService(
-      bot, repo, settings, registry,
-      {
-        repository: { count: jest.fn().mockResolvedValue(0) },
-        listReady: jest.fn().mockResolvedValue([]),
-      } as never,
-      { buildCandidateKeyboard: jest.fn() } as never,
-    );
+    const bot: any = { api: { sendMessage: jest.fn() }, callbackQuery: jest.fn() };
+    const service = new ParserMenuService(bot, repo, settings, registry);
 
     const menu = service.getMenu();
     expect(menu).toBeDefined();
 
     const stats = await service.statsLine();
     expect(stats).toContain('⏳ 0');
-
-    void bot;
   });
 
   // ---------- guard ----------
@@ -429,63 +446,45 @@ describe('parser services branch backfill', () => {
     expect(updated?.subscribers).toBe(5000);
   });
 
-  it('registry: прунинг при смешанных статусах не отключает', async () => {
+  it('registry: данные без fullChat и null-поля не роняют', async () => {
     const observedRepo = makeObservedRepo();
-    const sourceRepo = makeSourceRepo();
-    sourceRepo.find.mockResolvedValue([source()]);
-    observedRepo.find.mockResolvedValue([
-      { status: 'rejected' },
-      { status: 'rejected' },
-      { status: 'scored' },
-    ]);
+    const invoke = jest.fn().mockResolvedValue({});
     const service = new ParserRegistryService(
-      sourceRepo, observedRepo, makeConfig(), makeGuard(), makeParserClient({}), makeSettingsStub(), clock
+      makeSourceRepo(), observedRepo, makeConfig(), makeGuard(), makeParserClient({}), makeSettingsStub(), clock
     );
 
-    expect(await service.pruneWeakSources()).toBe(0);
+    const updated = await service.refreshSourceStats(source(), { invoke } as never);
+    expect(updated?.subscribers).toBeNull();
   });
 
   // ---------- selector ----------
-  it('selector: кандидат без mediaUniqueId проходит дедуп; todayRows с кринжом и неизвестным каналом', async () => {
+  it('selector: пустой пул → 0, занятость и cooldown блокируют', async () => {
     const observedRepo = makeObservedRepo();
-    observedRepo.find.mockImplementation((options: any = {}) => {
-      if (options.where?.mediaUniqueId !== undefined) return Promise.resolve([]);
-      return Promise.resolve([candidate({ id: 1, mediaUniqueId: null, score: 9 })]);
-    });
     const registry = makeRegistryMock();
-    registry.repository.find.mockResolvedValue([source()]);
-    const evaluator = { isEligible: jest.fn(() => true) };
     const delivery = { deliver: jest.fn().mockResolvedValue({ ok: true, status: ObservedStatus.DELIVERED }) };
-    const builder = {
-      where: jest.fn().mockReturnThis(),
-      andWhere: jest.fn().mockReturnThis(),
-      take: jest.fn().mockReturnThis(),
-      getMany: jest.fn().mockResolvedValue([
-        candidate({ id: 5, sourceChatId: '-100999', status: ObservedStatus.PUBLISHED, deliveredAt: NOW }),
-        candidate({ id: 6, status: ObservedStatus.QUEUED, deliveredAt: NOW }),
-      ]),
-    };
-    observedRepo.createQueryBuilder = jest.fn(() => builder);
-
+    const bot: any = { api: { deleteMessage: jest.fn() } };
     const service = new ParserSelectorService(
-      observedRepo, registry, evaluator as never, delivery as never, makeSettings(), clock
+      observedRepo, registry, delivery as never, makeSettings(), makeConfig(), bot, clock
     );
+    (service as never as { pace: unknown }).pace = jest.fn().mockResolvedValue(undefined);
 
-    expect(await service.selectAndDeliver()).toBe(1);
-    expect(delivery.deliver).toHaveBeenCalled();
+    expect(await service.dumpMore()).toBe(0);
+
+    (service as never as { busy: boolean }).busy = true;
+    expect(await service.dumpMore()).toBe(0);
+    (service as never as { busy: boolean }).busy = false;
+
+    (service as never as { lastDumpAt: number }).lastDumpAt = NOW.getTime();
+    expect(await service.dumpMore()).toBe(0);
   });
 
-  it('selector: alreadyUsed пустой список медиа → ранний выход', async () => {
+  it('selector: ageBacklog без старых карточек → 0', async () => {
     const observedRepo = makeObservedRepo();
-    observedRepo.find.mockImplementation((options: any = {}) => {
-      if (options.where?.mediaUniqueId !== undefined) return Promise.resolve([]);
-      return Promise.resolve([]);
-    });
     const service = new ParserSelectorService(
-      observedRepo, makeRegistryMock(), { isEligible: jest.fn(() => true) } as never,
-      { deliver: jest.fn() } as never, makeSettings(), clock
+      observedRepo, makeRegistryMock(), { deliver: jest.fn() } as never,
+      makeSettings(), makeConfig(), { api: { deleteMessage: jest.fn() } } as never, clock
     );
-    expect(await service.selectAndDeliver()).toBe(0);
+    expect(await service.ageBacklog()).toBe(0);
   });
 
   // ---------- evaluator ----------
@@ -533,14 +532,30 @@ describe('parser services branch backfill', () => {
     );
   });
 
+  it('evaluator: guard вернул undefined → кандидат пропущен', async () => {
+    const observedRepo = makeObservedRepo();
+    const client = { getMessages: jest.fn().mockResolvedValue(undefined) };
+    const service = new ParserEvaluatorService(
+      observedRepo, makeRegistryMock(), makeParserClient(client), makeGuard(),
+      makeSettings(), { rejectPostIfTrash: jest.fn() } as never, clock, random
+    );
+    observedRepo.find.mockResolvedValueOnce([]).mockResolvedValueOnce([
+      candidate({ createdAt: new Date(NOW.getTime() - 13 * 3_600_000) }),
+    ]);
+
+    expect(await service.evaluateDue()).toBe(0);
+    expect(observedRepo.save).not.toHaveBeenCalledWith(
+      expect.objectContaining({ rejectReason: 'message-gone' })
+    );
+  });
+
   // ---------- collector ----------
   it('collector: live без chatId; альбом своего канала; альбом disabled-источника', async () => {
     const observedRepo = makeObservedRepo();
     const registry = makeRegistryMock();
-    const discovery = { registerCrossLinks: jest.fn() }; void discovery;
     const parserClient = makeParserClient({ getMessages: jest.fn().mockResolvedValue([]) });
     const service = new ParserCollectorService(
-      observedRepo, registry, makeGuard(), parserClient, discovery as never, makeConfig(), clock
+      observedRepo, registry, makeGuard(), parserClient, { registerCrossLinks: jest.fn() } as never, makeConfig(), clock
     );
 
     await service.onLiveEvent({ isChannel: true, message: mediaMessage() } as never);
@@ -549,21 +564,21 @@ describe('parser services branch backfill', () => {
     const ownMessage = mediaMessage();
     await service.onLiveEvent({
       isChannel: true,
-      chatId: bigInt('-1008888888888'),
+      chatId: bigInt('-1001111111111'),
       message: { ...ownMessage, groupedId: bigInt('900') },
     } as never);
+    registry.repository.findOne.mockResolvedValueOnce(source({ status: 'disabled' }));
     await service.onLiveEvent({
       isChannel: true,
       chatId: bigInt('-1008888888888'),
       message: { ...ownMessage, groupedId: bigInt('901') },
     } as never);
-    registry.repository.findOne.mockResolvedValueOnce(source({ status: 'disabled' }));
     for (let i = 0; i < 25; i += 1) await Promise.resolve();
 
     expect(observedRepo.create).not.toHaveBeenCalled();
   });
 
-  it('collector: sweep c username-peer и смешанным списком сообщений', async () => {
+  it('collector: sweep c marked chatId и смешанным списком сообщений', async () => {
     const observedRepo = makeObservedRepo();
     const registry = makeRegistryMock();
     registry.listCollectible.mockResolvedValue([source({ rawChatId: null })]);
@@ -579,7 +594,6 @@ describe('parser services branch backfill', () => {
     );
 
     expect(await service.sweepAll()).toBe(0);
-    // peer теперь всегда marked chatId (-100...), резолвится из кэша диалогов
     expect(client.getMessages).toHaveBeenCalledWith('-1008888888888', expect.anything());
   });
 
@@ -611,10 +625,13 @@ describe('parser services branch backfill', () => {
   // ---------- parser.service ----------
   it('parser.service: onStats без клиента → выход', async () => {
     const settings = makeSettings();
-    const registry = { listCollectible: jest.fn(), refreshSourceStats: jest.fn(), pruneWeakSources: jest.fn() };
+    const registry = { listCollectible: jest.fn(), refreshSourceStats: jest.fn(), refreshCooldowns: jest.fn() };
     const service = new ParserService(
       settings, registry as never, {} as never, {} as never, {} as never, {} as never,
-      { registerCallbacks: jest.fn() } as never, makeParserClient(undefined), { activeClient: undefined } as never
+      { registerCallbacks: jest.fn() } as never, makeParserClient(undefined),
+      { activeClient: undefined } as never,
+      { callbackQuery: jest.fn(), on: jest.fn(), api: {} } as never,
+      makeConfig()
     );
 
     await (service as never as { onStats(): Promise<void> }).onStats();

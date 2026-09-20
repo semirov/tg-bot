@@ -79,5 +79,13 @@ describe('parser-cross-links', () => {
       );
       expect(hits).toEqual([{ username: 'other_channel', chatId: null, origin: 'link' }]);
     });
+
+    it('t.me/c-ссылка на свой канал отсекается', () => {
+      const hits = collectPostCrossLinks(
+        { message: 'https://t.me/c/8888888888/12', fwdFrom: null },
+        [-1008888888888]
+      );
+      expect(hits).toEqual([]);
+    });
   });
 });

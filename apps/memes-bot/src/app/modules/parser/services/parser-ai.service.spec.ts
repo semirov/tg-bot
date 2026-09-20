@@ -86,4 +86,23 @@ describe('ParserAiService', () => {
 
     expect(await ai.isCringePost('кринжовый пост')).toBe(true);
   });
+
+  it('classifyChannel: null-ответ модели и пустой title', async () => {
+    const deepseek = makeDeepseek();
+    const ai = new ParserAiService(deepseek, makeSettings(true));
+
+    expect(await ai.classifyChannel(null, [])).toBeNull();
+
+    deepseek.completeJson.mockResolvedValue({ category: 'memes', relevance: 0.9, nsfw: false });
+    await ai.classifyChannel(null, ['текст']);
+    expect(deepseek.completeJson.mock.calls[0][1]).toContain('(без названия)');
+  });
+
+  it('isCringePost: undefined-ответ модели → false', async () => {
+    const deepseek = makeDeepseek();
+    deepseek.completeJson.mockResolvedValue(undefined);
+    const ai = new ParserAiService(deepseek, makeSettings(true));
+
+    expect(await ai.isCringePost('кринж')).toBe(false);
+  });
 });

@@ -25,6 +25,19 @@ describe('SourceChannelEntity', () => {
     expect(column('baseline')?.options).toMatchObject({ type: 'jsonb', nullable: true });
   });
 
+  it('поля интереса/чёрного списка/cooldown', () => {
+    expect(column('takenTotal')?.options).toMatchObject({ default: 0 });
+    expect(column('lastTakenAt')?.options).toMatchObject({ nullable: true });
+    expect(column('ignoredTotal')?.options).toMatchObject({ default: 0 });
+    expect(column('softIgnoredTotal')?.options).toMatchObject({ default: 0 });
+    expect(column('cooldownCount')?.options).toMatchObject({ default: 0 });
+    expect(column('lastIgnoredAt')?.options).toMatchObject({ nullable: true });
+    expect(column('weight')?.options).toMatchObject({ default: 1 });
+    expect(column('excluded')?.options).toMatchObject({ default: false });
+    expect(column('excludedAt')?.options).toMatchObject({ nullable: true });
+    expect(column('cooldownUntil')?.options).toMatchObject({ nullable: true });
+  });
+
   it('экземпляр хранит значения', () => {
     const entity = new SourceChannelEntity();
     entity.chatId = '-100123';
