@@ -1,3 +1,10 @@
+# [0.22.0](https://github.com/semirov/tg-bot/compare/v0.21.0...v0.22.0) (2026-09-21)
+
+
+### Features
+
+* **parser:** разнообразие выдачи и остывание положительного рейтинга ([ca2692c](https://github.com/semirov/tg-bot/commit/ca2692c25a5c149f29f3efcec070d3b86b68a2c9))
+
 # [0.21.0](https://github.com/semirov/tg-bot/compare/v0.20.0...v0.21.0) (2026-09-20)
 
 
