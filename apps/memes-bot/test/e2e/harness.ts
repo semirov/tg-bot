@@ -1,5 +1,5 @@
 import { TestingModule, Test } from '@nestjs/testing';
-import { Bot } from 'grammy';
+import { Bot, InputFile } from 'grammy';
 import { Subject } from 'rxjs';
 import { DataSource } from 'typeorm';
 import { AppModule } from '../../src/app/app.module';
@@ -148,6 +148,24 @@ export interface E2EHarnessOptions {
   overrideProviders?: Array<{ provide: unknown; useValue: unknown }>;
 }
 
+/** Заменяет InputFile на безопасный маркер (не вызывает бросающий toJSON). */
+function sanitizeInputFiles(value: any, seen = new WeakSet<object>()): any {
+  if (value instanceof InputFile) {
+    return { __inputFile: true, filename: (value as any).name ?? null };
+  }
+  if (Array.isArray(value)) return value.map((item) => sanitizeInputFiles(item, seen));
+  if (value && typeof value === 'object') {
+    if (seen.has(value)) return value;
+    seen.add(value);
+    const clone: Record<string, any> = {};
+    for (const key of Object.keys(value)) {
+      clone[key] = sanitizeInputFiles((value as any)[key], seen);
+    }
+    return clone;
+  }
+  return value;
+}
+
 /** Поднимает приложение и харнес; исходящий Bot API мокается на уровне grammY. */
 export async function createE2EHarness(options: E2EHarnessOptions = {}): Promise<E2EHarness> {
   const calls: TelegramApiCall[] = [];
@@ -180,10 +198,13 @@ export async function createE2EHarness(options: E2EHarnessOptions = {}): Promise
   // проходило бы молча, а в проде падало на Proxy меню. Здесь падаем заранее.
   bot.api.config.use(async (_prev, method, payload) => {
     // `undefined` payload бывает у методов без аргументов (getMe и т.п.).
+    // grammY 1.46: InputFile.toJSON() намеренно бросает исключение, поэтому
+    // подменяем файлы маркером ДО сериализации (иначе падает «must be sent via grammY»).
+    const sanitized = payload === undefined ? undefined : sanitizeInputFiles(payload);
     const serialized =
-      payload === undefined
+      sanitized === undefined
         ? ({} as Record<string, any>)
-        : (JSON.parse(JSON.stringify(payload)) as Record<string, any>);
+        : (JSON.parse(JSON.stringify(sanitized)) as Record<string, any>);
     calls.push({ method, payload: serialized });
     return {
       ok: true,
