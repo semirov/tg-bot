@@ -211,7 +211,8 @@ describe('PostSchedulerService', () => {
       const date = await service.addPostToSchedule(baseContext as any);
 
       expect(repo.find).toHaveBeenCalledTimes(30);
-      expect(date.getTime()).toBe(msk(2026, 1, 29, 21, 0).getTime());
+      // Не прыгаем на 14 дней — берём начало интервала на следующие сутки.
+      expect(date.getTime()).toBe(msk(2026, 1, 16, 13, 0).getTime());
     });
 
     it('фолбэк округляет минуты вверх до получаса', async () => {
@@ -220,7 +221,7 @@ describe('PostSchedulerService', () => {
       repo.find.mockResolvedValue([{ publishDate: new Date('invalid') }]);
 
       const date = await service.addPostToSchedule(baseContext as any);
-      expect(date.getTime()).toBe(msk(2026, 1, 29, 21, 30).getTime());
+      expect(date.getTime()).toBe(msk(2026, 1, 16, 13, 0).getTime());
     });
   });
 
@@ -411,6 +412,47 @@ describe('PostSchedulerService', () => {
       repo.delete.mockResolvedValue({ affected: undefined });
 
       await expect(service.removeById(12)).resolves.toBe(0);
+    });
+  });
+
+  describe('ночные слоты кринжа', () => {
+    it('первый свободный слот — 02:00, шаг 90 минут', async () => {
+      const { service, repo } = setup();
+      withNow(msk(2026, 1, 15, 10, 0));
+      repo.findOne.mockResolvedValue(null);
+      const date = await service.addPostToSchedule({
+        ...baseContext,
+        mode: PublicationModesEnum.NIGHT_CRINGE,
+      } as any);
+      const mskDate = PostSchedulerService.formatToMsk(date);
+      expect(mskDate.getUTCHours()).toBe(2);
+      expect(mskDate.getUTCMinutes()).toBe(0);
+    });
+
+    it('если 02:00 занято — берёт 03:30', async () => {
+      const { service, repo } = setup();
+      withNow(msk(2026, 1, 15, 10, 0));
+      repo.findOne.mockResolvedValueOnce({ id: 1 }).mockResolvedValue(null);
+      const date = await service.addPostToSchedule({
+        ...baseContext,
+        mode: PublicationModesEnum.NIGHT_CRINGE,
+      } as any);
+      const mskDate = PostSchedulerService.formatToMsk(date);
+      expect(mskDate.getUTCHours()).toBe(3);
+      expect(mskDate.getUTCMinutes()).toBe(30);
+    });
+
+    it('когда вся ночь занята — переносит на следующую', async () => {
+      const { service, repo } = setup();
+      withNow(msk(2026, 1, 15, 10, 0));
+      repo.findOne.mockResolvedValue({ id: 1 });
+      const date = await service.addPostToSchedule({
+        ...baseContext,
+        mode: PublicationModesEnum.NIGHT_CRINGE,
+      } as any);
+      expect(PostSchedulerService.formatToMsk(date).getTime()).toBeGreaterThan(
+        msk(2026, 1, 15, 6, 0).getTime()
+      );
     });
   });
 });
