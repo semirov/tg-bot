@@ -150,7 +150,9 @@ export class ParserCollectorService {
       this.logger.warn(`Parser sweep: у источника ${source.chatId} нет rawChatId и username — пропуск`);
       return 0;
     }
-    const peer = source.chatId; // marked id (-100...): резолвится из кэша диалогов сессии
+    // Для публичных каналов надёжнее username (не требует кэша диалогов),
+    // для приватных — marked id из сессии.
+    const peer = source.username ?? bigInt(source.chatId);
     const since = Math.floor((this.clock.now().getTime() - 26 * 3_600_000) / 1000);
 
     const messages = await this.guard.run<TotalList<Api.Message>>('getHistory', () =>

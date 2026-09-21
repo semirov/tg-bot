@@ -7,7 +7,6 @@ import { BOT } from '../../bot/providers/bot.provider';
 import { BotContext } from '../../bot/interfaces/bot-context.interface';
 import {
   BACKLOG_TTL_DAYS,
-  BOOST_MULTIPLIER,
   DUMP_COOLDOWN_MINUTES,
   DUMP_PER_SOURCE_CAP,
   DUMP_SIZE,
@@ -96,8 +95,7 @@ export class ParserSelectorService {
       return 0;
     }
 
-    const boosted = this.settings.boostActive(now);
-    const limit = boosted ? count * BOOST_MULTIPLIER : count;
+    const limit = count;
 
     this.busy = true;
     try {
@@ -287,28 +285,18 @@ export class ParserSelectorService {
 
   /**
    * Разнообразие выдачи: не больше DUMP_PER_SOURCE_CAP постов одного канала
-   * за раз. Если так не набирается limit — добираем остаток без капа.
+   * за раз. Кап строгий — лучше выдать меньше, чем залить один канал.
    */
   private pickDiverse(rows: ObservedPostEntity[], limit: number): ObservedPostEntity[] {
     const picked: ObservedPostEntity[] = [];
     const perSource = new Map<string, number>();
-    const rest: ObservedPostEntity[] = [];
     for (const row of rows) {
+      if (picked.length >= limit) break;
       const key = row.sourceChatId;
       const used = perSource.get(key) ?? 0;
-      if (used < DUMP_PER_SOURCE_CAP && picked.length < limit) {
-        perSource.set(key, used + 1);
-        picked.push(row);
-      } else {
-        rest.push(row);
-      }
-    }
-    if (picked.length < limit) {
-      // Расширяем добор без капа, по тому же приоритету (свежие/вес).
-      for (const row of rest) {
-        if (picked.length >= limit) break;
-        picked.push(row);
-      }
+      if (used >= DUMP_PER_SOURCE_CAP) continue;
+      perSource.set(key, used + 1);
+      picked.push(row);
     }
     return picked;
   }

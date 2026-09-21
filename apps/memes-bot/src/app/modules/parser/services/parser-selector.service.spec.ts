@@ -239,17 +239,6 @@ describe('ParserSelectorService', () => {
       expect(observedRepo.find).not.toHaveBeenCalled();
     });
 
-    it('boost увеличивает лимит добора', async () => {
-      const { service, observedRepo, settings } = setup();
-      settings.boostActive.mockReturnValue(true);
-
-      await service.dumpMore(5);
-
-      expect(observedRepo.find).toHaveBeenCalledWith(
-        expect.objectContaining({ take: Math.max(20 * 5, 20 + 20) })
-      );
-    });
-
     it('доставляет свежие первыми и ставит кнопку «Ещё 20»', async () => {
       const { service, observedRepo, delivery } = setup();
       const older = scoredRow({ id: 1, createdAt: daysAgo(2), score: 9, mediaUniqueId: 'older' });
@@ -350,7 +339,7 @@ describe('ParserSelectorService', () => {
       expect(picked.filter((row) => row.sourceChatId === '-100A')).toHaveLength(DUMP_PER_SOURCE_CAP);
     });
 
-    it('если кап не даёт набрать limit — добирает из того же источника', () => {
+    it('кап строгий: больше 3 с одного источника не берём даже недобрав limit', () => {
       const { service } = setup();
       const rows = [
         scoredRow({ id: 1, sourceChatId: '-100A' }),
@@ -363,8 +352,8 @@ describe('ParserSelectorService', () => {
 
       const picked = pick(service, rows, 5);
 
-      expect(picked).toHaveLength(5);
-      expect(picked.map((row) => row.id)).toEqual([1, 2, 3, 4, 5]);
+      expect(picked).toHaveLength(3);
+      expect(picked.map((row) => row.id)).toEqual([1, 2, 3]);
     });
 
     it('кандидатов меньше limit — отдаёт всё', () => {
