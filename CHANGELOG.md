@@ -1,3 +1,10 @@
+## [0.26.2](https://github.com/semirov/tg-bot/compare/v0.26.1...v0.26.2) (2026-09-21)
+
+
+### Bug Fixes
+
+* **admin:** «Обсерватория» не дублирует старый парсер ([21bcfc5](https://github.com/semirov/tg-bot/commit/21bcfc5ef378e3ba110da821f0bee963e4f30e9c))
+
 ## [0.26.1](https://github.com/semirov/tg-bot/compare/v0.26.0...v0.26.1) (2026-09-21)
 
 
