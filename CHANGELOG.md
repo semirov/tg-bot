@@ -1,3 +1,10 @@
+# [0.25.0](https://github.com/semirov/tg-bot/compare/v0.24.0...v0.25.0) (2026-09-21)
+
+
+### Features
+
+* убран механизм голосования подписчиков по постам ([5559b0e](https://github.com/semirov/tg-bot/commit/5559b0eb59fe833248bcb1ead32e68812cc07ed9))
+
 # [0.24.0](https://github.com/semirov/tg-bot/compare/v0.23.2...v0.24.0) (2026-09-21)
 
 
