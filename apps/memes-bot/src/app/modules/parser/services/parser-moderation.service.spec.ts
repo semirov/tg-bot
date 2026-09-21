@@ -201,13 +201,23 @@ describe('ParserModerationService', () => {
     expect(observedRepo.save).not.toHaveBeenCalled();
   });
 
-  it('уже обработанная карточка → «Уже обработано»', async () => {
+  it('повторный клик по запланированной карточке восстанавливает клавиатуру', async () => {
     const { service } = setup({ candidate: { status: ObservedStatus.QUEUED } });
     const ctx = makeCtx();
 
     await service.handleAction(ctx, 'now', 10);
 
-    expect(ctx.answerCallbackQuery).toHaveBeenCalledWith('Уже обработано');
+    expect(ctx.answerCallbackQuery).toHaveBeenCalledWith('Уже в сетке');
+    expect(ctx.editMessageReplyMarkup).toHaveBeenCalled();
+  });
+
+  it('опубликованная карточка → «Уже опубликовано»', async () => {
+    const { service } = setup({ candidate: { status: ObservedStatus.PUBLISHED } });
+    const ctx = makeCtx();
+
+    await service.handleAction(ctx, 'now', 10);
+
+    expect(ctx.answerCallbackQuery).toHaveBeenCalledWith('Уже опубликовано');
   });
 
   it('done: кнопка-заглушка просто гасит спиннер, клавиатура не меняется', async () => {
@@ -378,7 +388,7 @@ describe('ParserModerationService', () => {
 
       await service.handleAction(ctx, 'q', 10);
 
-      expect(ctx.answerCallbackQuery).toHaveBeenCalledWith('Уже запланирован');
+      expect(ctx.answerCallbackQuery).toHaveBeenCalledWith('Уже запланировано');
       expect(observedRepo.save).not.toHaveBeenCalled();
     });
 
@@ -434,7 +444,7 @@ describe('ParserModerationService', () => {
       await service.handleAction(ctx, 'night', 10);
 
       expect(cringe.repository.insert).not.toHaveBeenCalled();
-      expect(ctx.answerCallbackQuery).toHaveBeenCalledWith('Уже запланирован');
+      expect(ctx.answerCallbackQuery).toHaveBeenCalledWith('Уже запланировано');
     });
 
     it('night без from использует ownerId', async () => {

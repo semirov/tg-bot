@@ -149,9 +149,10 @@ export class ParserModerationService {
       return;
     }
 
-    // Карточка обрабатывается один раз: повторный клик по уже изменённой — отказ.
+    // Карточка обрабатывается один раз, но если клавиатура «залипла» —
+    // восстанавливаем её по фактическому статусу и говорим, что уже сделано.
     if (candidate.status !== ObservedStatus.DELIVERED) {
-      await ctx.answerCallbackQuery('Уже обработано');
+      await this.restoreStaleKeyboard(ctx, candidate);
       return;
     }
 
@@ -175,6 +176,61 @@ export class ParserModerationService {
       return;
     }
     await this.reject(ctx, candidate);
+  }
+
+  /** Восстанавливает клавиатуру карточки по фактическому статусу (анти-«залипание»). */
+  private async restoreStaleKeyboard(
+    ctx: BotContext,
+    candidate: ObservedPostEntity
+  ): Promise<void> {
+    if (candidate.status === ObservedStatus.QUEUED) {
+      await this.replaceKeyboard(ctx, await this.buildScheduledKeyboard(candidate));
+      const entry = await this.scheduler.findByRequestMessageId(
+        Number(candidate.requestChannelMessageId)
+      );
+      if (entry?.publishDate) {
+        const date = PostSchedulerService.formatToMsk(entry.publishDate);
+        const when = `${String(date.getDate()).padStart(2, '0')}.${String(date.getMonth() + 1).padStart(2, '0')} ~${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+        const where = entry.mode === PublicationModesEnum.NIGHT_CRINGE ? 'кринж' : 'основной';
+        await ctx.answerCallbackQuery(`Уже в сетке: ${when} · ${where}`);
+        return;
+      }
+      await ctx.answerCallbackQuery('Уже в сетке');
+      return;
+    }
+
+    if (candidate.status === ObservedStatus.PUBLISHED) {
+      await this.replaceKeyboard(
+        ctx,
+        new InlineKeyboard().text('✅ Опубликовано', `${CARD_CB_PREFIX}:done:${candidate.id}`)
+      );
+      await ctx.answerCallbackQuery('Уже опубликовано');
+      return;
+    }
+
+    if (
+      candidate.status === ObservedStatus.REJECTED ||
+      candidate.status === ObservedStatus.DUPLICATE ||
+      candidate.status === ObservedStatus.EXPIRED
+    ) {
+      await this.replaceKeyboard(
+        ctx,
+        new InlineKeyboard().text('🗑 Обработано', `${CARD_CB_PREFIX}:done:${candidate.id}`)
+      );
+      await ctx.answerCallbackQuery('Уже обработано');
+      return;
+    }
+
+    if (candidate.status === ObservedStatus.DELIVERED) {
+      // Гонка: в БД записи сетки нет, но кандидат ещё в модерации.
+      await this.replaceKeyboard(ctx, this.delivery.buildKeyboard(candidate.id));
+      await ctx.answerCallbackQuery('Уже запланировано');
+      return;
+    }
+
+    // Неизвестное/промежуточное состояние — вернём обычное меню модерации.
+    await this.replaceKeyboard(ctx, this.delivery.buildKeyboard(candidate.id));
+    await ctx.answerCallbackQuery('Вернул в модерацию');
   }
 
   /** Публикация сейчас: копия в основной канал + ссылка на источник. */
@@ -226,7 +282,7 @@ export class ParserModerationService {
 
     const publishDate = await this.scheduler.addPostToSchedule(context);
     if (!publishDate) {
-      await ctx.answerCallbackQuery('Уже запланирован');
+      await this.restoreStaleKeyboard(ctx, candidate);
       return;
     }
 
@@ -258,7 +314,7 @@ export class ParserModerationService {
 
     const publishDate = await this.scheduler.addPostToSchedule(context);
     if (!publishDate) {
-      await ctx.answerCallbackQuery('Уже запланирован');
+      await this.restoreStaleKeyboard(ctx, candidate);
       return;
     }
 
