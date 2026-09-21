@@ -1,3 +1,10 @@
+## [0.23.2](https://github.com/semirov/tg-bot/compare/v0.23.1...v0.23.2) (2026-09-21)
+
+
+### Bug Fixes
+
+* **troll:** пересказ больше не обрезает хвост ([6ab8ea6](https://github.com/semirov/tg-bot/commit/6ab8ea68f2dc575cb2cd30a33095bb92d0beb8b0))
+
 ## [0.23.1](https://github.com/semirov/tg-bot/compare/v0.23.0...v0.23.1) (2026-09-21)
 
 
