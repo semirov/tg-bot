@@ -1,3 +1,10 @@
+## [0.26.3](https://github.com/semirov/tg-bot/compare/v0.26.2...v0.26.3) (2026-09-21)
+
+
+### Bug Fixes
+
+* **deps:** явная зависимость form-data ([2205703](https://github.com/semirov/tg-bot/commit/2205703bfbc1ab9c6ef10d755e0763b6a807e7f6))
+
 ## [0.26.2](https://github.com/semirov/tg-bot/compare/v0.26.1...v0.26.2) (2026-09-21)
 
 
