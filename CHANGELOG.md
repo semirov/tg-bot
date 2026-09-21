@@ -1,3 +1,10 @@
+## [0.23.1](https://github.com/semirov/tg-bot/compare/v0.23.0...v0.23.1) (2026-09-21)
+
+
+### Bug Fixes
+
+* **admin:** сетка показывает просроченные неопубликованные посты ([6f0d652](https://github.com/semirov/tg-bot/commit/6f0d65241617f62aa3e04955276b003b628dfd18))
+
 # [0.23.0](https://github.com/semirov/tg-bot/compare/v0.22.1...v0.23.0) (2026-09-21)
 
 
