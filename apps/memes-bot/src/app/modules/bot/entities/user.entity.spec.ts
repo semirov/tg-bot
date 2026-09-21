@@ -27,7 +27,6 @@ describe('UserEntity', () => {
       allowSetStrike: true,
       allowMakeBan: true,
       createdAt: now,
-      canBeModeratePosts: false,
       memeLimitDisabledUntil: until,
     });
 
@@ -46,7 +45,6 @@ describe('UserEntity', () => {
       allowRestoreDiscardedPost: true,
       allowSetStrike: true,
       allowMakeBan: true,
-      canBeModeratePosts: false,
     });
     expect(entity.lastActivity).toBe(now);
     expect(entity.banUntilTo).toBe(until);

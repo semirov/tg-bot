@@ -18,7 +18,7 @@ describe('SessionEntity', () => {
     const entity = new SessionEntity();
     entity.id = '1';
     entity.key = 'k';
-    entity.value = '{"canBeModeratePosts":true}';
+    entity.value = '{"anonymousPublishing":true}';
     entity.value = '{}';
 
     expect(entity.value).toBe('{}');

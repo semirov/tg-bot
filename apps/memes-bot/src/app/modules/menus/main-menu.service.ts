@@ -49,30 +49,12 @@ export class MainMenuService {
     const menu = new Menu<BotContext>(UserMenusEnum.USER_START_MENU)
       .text('Показать правила', (ctx) => ctx.reply(this.MEME_RULES, { parse_mode: 'HTML' }))
       .row()
-      .submenu('Настройки', 'main-settings-menu')
-      .row()
       .text('Связаться с админом', async (ctx) => {
         await ctx.reply('Просто напиши сообщение, тебе ответят')
       })
       .row()
       .url('Перейти в канал', 'https://t.me/filipp_memes');
 
-    const settings = new Menu<BotContext>('main-settings-menu')
-      .text(
-        (ctx) => (ctx.session.canBeModeratePosts ? '👮 Оцениваю посты' : '🙅 Не оцениваю посты'),
-        async (ctx) => {
-          ctx.session.canBeModeratePosts = !ctx.session.canBeModeratePosts;
-          await this.userService.changeUserModeratedMode(
-            ctx.from.id,
-            ctx.session.canBeModeratePosts
-          );
-          ctx.menu.update();
-        }
-      )
-      .row()
-      .back('Назад');
-
-    menu.register(settings);
 
     return menu;
   }

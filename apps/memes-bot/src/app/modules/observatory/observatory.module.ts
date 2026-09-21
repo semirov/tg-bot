@@ -5,9 +5,6 @@ import { AppConfigModule } from '../config/app-config.module';
 import { MattermostModule } from '../mattermost/mattermost.module';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ObservatoryPostEntity } from './entities/observatory-post.entity';
-import { UserModeratedPostEntity } from './entities/user-moderated-post.entity';
-import { UserModeratedPostService } from './services/user-moderated-post.service';
-import { UserMessageModeratedPostEntity } from './entities/user-message-moderated-post.entity';
 import { TrollModule } from '../troll/troll.module';
 import { ParserModule } from '../parser/parser.module';
 
@@ -20,11 +17,9 @@ import { ParserModule } from '../parser/parser.module';
     ParserModule,
     TypeOrmModule.forFeature([
       ObservatoryPostEntity,
-      UserModeratedPostEntity,
-      UserMessageModeratedPostEntity,
     ]),
   ],
-  providers: [ObservatoryService, UserModeratedPostService],
+  providers: [ObservatoryService],
   exports: [ObservatoryService],
 })
 export class ObservatoryModule {}

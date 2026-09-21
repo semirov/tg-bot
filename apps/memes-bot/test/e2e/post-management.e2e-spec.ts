@@ -7,8 +7,6 @@ import { UserEntity } from '../../src/app/modules/bot/entities/user.entity';
 import { SessionEntity } from '../../src/app/modules/bot/session/session.entity';
 import { DeduplicationService } from '../../src/app/modules/bot/services/deduplication.service';
 import { ObservatoryPostEntity } from '../../src/app/modules/observatory/entities/observatory-post.entity';
-import { UserModeratedPostEntity } from '../../src/app/modules/observatory/entities/user-moderated-post.entity';
-import { UserModeratedPostService } from '../../src/app/modules/observatory/services/user-moderated-post.service';
 import { PublicationModesEnum } from '../../src/app/modules/post-management/constants/publication-modes.enum';
 import { UserPostManagementService } from '../../src/app/modules/post-management/user-post-management.service';
 import { TrollSettingsService } from '../../src/app/modules/troll/services/troll-settings.service';
@@ -116,7 +114,6 @@ describe('E2E: post-management, menus и observatory', () => {
   let sessionRepo: Repository<SessionEntity>;
   let publishedHashRepo: Repository<PublishedPostHashesEntity>;
   let observatoryRepo: Repository<ObservatoryPostEntity>;
-  let userModeratedRepo: Repository<UserModeratedPostEntity>;
 
   beforeEach(async () => {
     h = await createE2EHarness();
@@ -137,7 +134,6 @@ describe('E2E: post-management, menus и observatory', () => {
     sessionRepo = h.dataSource.getRepository(SessionEntity);
     publishedHashRepo = h.dataSource.getRepository(PublishedPostHashesEntity);
     observatoryRepo = h.dataSource.getRepository(ObservatoryPostEntity);
-    userModeratedRepo = h.dataSource.getRepository(UserModeratedPostEntity);
 
     // Пользователь и модератор, которыми подписываем апдейты и заявки.
     await userRepo.save({ id: USER_ID, username: 'user', firstName: 'User' });
@@ -157,7 +153,7 @@ describe('E2E: post-management, menus и observatory', () => {
     // Капча для приватных сообщений проходится сессией в БД (ключ = id чата).
     await sessionRepo.save({
       key: String(USER_ID),
-      value: JSON.stringify({ anonymousPublishing: false, canBeModeratePosts: true, captchaSolved: true }),
+      value: JSON.stringify({ anonymousPublishing: false, captchaSolved: true }),
     });
   });
 
@@ -397,68 +393,5 @@ describe('E2E: post-management, menus и observatory', () => {
       expect(findCall(h.calls, 'copyMessage', (p) => p.from_chat_id === 818181)).toBeUndefined();
     });
 
-    it('user-moderation round: голос пользователя и публикация по итогу', async () => {
-      const userModerated = h.moduleRef.get(UserModeratedPostService, { strict: false });
-      // Репост в чаты — fire-and-forget с рандомом; выключаем, чтобы публикация
-      // гарантированно завершалась до закрытия харнеса.
-      const trollSettings = h.moduleRef.get(TrollSettingsService, { strict: false });
-      await trollSettings.update({ memeAnnounceEnabled: false });
-      const copyToUser = jest.fn().mockResolvedValue({ message_id: 880 });
-      const usersCtx = { api: { copyMessage: copyToUser } } as any;
-
-      const count = await userModerated.moderateViaUsers(usersCtx, {
-        mode: PublicationModesEnum.NOW_SILENT,
-        requestChannelMessageId: 400,
-        processedByModerator: MOD_ID,
-        isUserPost: false,
-        hash: 'hash',
-      });
-      expect(count).toBe(1);
-      // Не сравниваем объект меню (у него прокси-геттер), проверяем позиционные аргументы.
-      expect(copyToUser).toHaveBeenCalledTimes(1);
-      const copiedCall = copyToUser.mock.calls[0];
-      expect(copiedCall.slice(0, 3).map(Number)).toEqual([USER_ID, REQUEST_CHANNEL, 400]);
-      expect(copiedCall[3]?.reply_markup).toBeDefined();
-
-      // Пользователь голосует «за» через реальное меню.
-      const voteData = await buttonData((userModerated as any).moderatePostMenu, (t) => t === '👍');
-      await h.sendUpdate(
-        callbackUpdate({ fromId: USER_ID, chatId: USER_ID, messageId: 880, data: voteData })
-      );
-
-      const moderated = await userModeratedRepo.findOne({ where: { requestChannelMessageId: 400 } });
-      expect(Number(moderated!.likes)).toBe(1);
-
-      // Делаем раунд «созревшим» и запускаем обработку — пост уходит в канал.
-      await userModeratedRepo.update(
-        { requestChannelMessageId: 400 },
-        { moderatedTo: new Date(Date.now() - 1000) }
-      );
-      await userModerated.handleCron();
-
-      await waitFor(() => {
-        expect(
-          findCall(
-            h.calls,
-            'copyMessage',
-            (p) =>
-              Number(p.chat_id) === MEME_CHANNEL &&
-              Number(p.from_chat_id) === REQUEST_CHANNEL &&
-              Number(p.message_id) === 400
-          )
-        ).toBeDefined();
-      });
-      // Публикация асинхронна (подписка на Subject): дожидаемся её последнего
-      // шага с БД, иначе close() оборвёт запрос и ошибка всплывёт в следующем сьюте.
-      await waitFor(async () => {
-        const hashRow = await h.dataSource
-          .getRepository(PublishedPostHashesEntity)
-          .findOne({ where: { hash: 'hash' } });
-        expect(hashRow).not.toBeNull();
-      });
-
-      const approved = await userModeratedRepo.findOne({ where: { requestChannelMessageId: 400 } });
-      expect(approved!.isApproved).toBe(true);
-    });
   });
 });

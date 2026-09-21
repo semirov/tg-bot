@@ -23,8 +23,6 @@ import { CronModule } from './modules/cron/cron.module';
 import { MenuModule } from './modules/menus/menu.module';
 import { MetricsModule } from './modules/metrics/metrics.module';
 import { ObservatoryPostEntity } from './modules/observatory/entities/observatory-post.entity';
-import { UserMessageModeratedPostEntity } from './modules/observatory/entities/user-message-moderated-post.entity';
-import { UserModeratedPostEntity } from './modules/observatory/entities/user-moderated-post.entity';
 import { ObservatoryModule } from './modules/observatory/observatory.module';
 import { PostManagementModule } from './modules/post-management/post-management.module';
 import { YearResultEntity } from './modules/year-results/entities/year-result.entity';
@@ -77,8 +75,6 @@ import { SharedModule } from './shared/shared.module';
           SettingsEntity,
           CringePostEntity,
           PublishedPostHashesEntity,
-          UserModeratedPostEntity,
-          UserMessageModeratedPostEntity,
           YearResultEntity,
           ChannelMemeEntity,
           TrollChatEntity,

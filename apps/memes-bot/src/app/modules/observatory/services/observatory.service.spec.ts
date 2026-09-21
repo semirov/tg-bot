@@ -6,7 +6,6 @@ jest.mock('@nestjs/axios', () => ({ HttpService: class HttpService {} }));
 
 import { Logger } from '@nestjs/common';
 import { Menu } from '@grammyjs/menu';
-import { Subject } from 'rxjs';
 import { ObservatoryService } from './observatory.service';
 import { ObservatoryPostMenusEnum } from '../contsants/observatory-post-menus.enum';
 import { PublicationModesEnum } from '../../post-management/constants/publication-modes.enum';
@@ -21,7 +20,6 @@ const flush = async () => {
 type CapturedText = { menuId: string; label: string; handler: (ctx: any) => any };
 
 function setup() {
-  const moderatedSubject = new Subject<any>();
 
   const bot = {
     use: jest.fn(),
@@ -62,11 +60,6 @@ function setup() {
     checkDuplicate: jest.fn(),
     createPublishedPostHash: jest.fn().mockResolvedValue(undefined),
   };
-  const userModeratedPostService = {
-    buildUserModeratePost: jest.fn().mockReturnValue({ id: 'user-moderate-menu' }),
-    moderateViaUsers: jest.fn(),
-    userModeratedPost$: moderatedSubject.asObservable(),
-  };
   const mattermostService = { sendPostWithFile: jest.fn().mockResolvedValue(undefined) };
   const trollService = { maybeRepostMeme: jest.fn().mockResolvedValue(undefined) };
   const parserSettings = { current: { legacyEnabled: true } };
@@ -80,7 +73,6 @@ function setup() {
     settingsService as any,
     cringeManagementService as any,
     deduplicationService as any,
-    userModeratedPostService as any,
     mattermostService as any,
     trollService as any,
     parserSettings as any
@@ -96,10 +88,8 @@ function setup() {
     settingsService,
     cringeManagementService,
     deduplicationService,
-    userModeratedPostService,
     mattermostService,
     trollService,
-    moderatedSubject,
   };
 }
 
@@ -154,22 +144,17 @@ describe('ObservatoryService', () => {
   }
 
   describe('onModuleInit', () => {
-    it('подключает меню пользовательской модерации и строит меню обсерватории', () => {
-      const { service, bot, userModeratedPostService } = setup();
+    it('строит меню обсерватории', () => {
+      const { service, bot } = setup();
 
       service.onModuleInit();
 
-      expect(userModeratedPostService.buildUserModeratePost).toHaveBeenCalled();
-      expect(bot.use).toHaveBeenCalledWith({ id: 'user-moderate-menu' });
-      expect(bot.use).toHaveBeenCalledTimes(2);
+      expect(bot.use).toHaveBeenCalledTimes(1);
       expect(captured.some((item) => item.menuId === ObservatoryPostMenusEnum.POST_MENU)).toBe(
         true
       );
       expect(
         captured.some((item) => item.menuId === ObservatoryPostMenusEnum.OBSERVATORY_PUBLICATION)
-      ).toBe(true);
-      expect(
-        captured.some((item) => item.menuId === ObservatoryPostMenusEnum.USER_MODERATE_POST)
       ).toBe(true);
     });
 
@@ -365,22 +350,6 @@ describe('ObservatoryService', () => {
     });
   });
 
-  describe('onNewUserModeratedPost', () => {
-    it('публикует пост с режимом из контекста модерации', async () => {
-      const { service, moderatedSubject } = setup();
-      service.onModuleInit();
-      const publishSpy = jest
-        .spyOn(service as any, 'publishWithContext')
-        .mockResolvedValue(undefined);
-      const ctx = { mode: PublicationModesEnum.NOW_SILENT };
-
-      moderatedSubject.next(ctx);
-      await flush();
-
-      expect(publishSpy).toHaveBeenCalledWith(PublicationModesEnum.NOW_SILENT, ctx);
-    });
-  });
-
   describe('меню обсерватории', () => {
     it('навигация по кнопкам верхнего меню учитывает права', async () => {
       const { service, userService } = setup();
@@ -389,7 +358,6 @@ describe('ObservatoryService', () => {
 
       userService.checkPermission.mockReturnValue(false);
       await handlerFor(ObservatoryPostMenusEnum.POST_MENU, 'Опубликовать')(ctx);
-      await handlerFor(ObservatoryPostMenusEnum.POST_MENU, 'На модерацию пользователям')(ctx);
       expect(ctx.menu.nav).not.toHaveBeenCalled();
 
       userService.checkPermission.mockReturnValue(true);
@@ -397,8 +365,6 @@ describe('ObservatoryService', () => {
       expect(ctx.menu.nav).toHaveBeenCalledWith(
         ObservatoryPostMenusEnum.OBSERVATORY_PUBLICATION
       );
-      await handlerFor(ObservatoryPostMenusEnum.POST_MENU, 'На модерацию пользователям')(ctx);
-      expect(ctx.menu.nav).toHaveBeenCalledWith(ObservatoryPostMenusEnum.USER_MODERATE_POST);
     });
 
     it('кнопка «Отклонить» вызывает отклонение только с правами', async () => {
@@ -444,35 +410,6 @@ describe('ObservatoryService', () => {
         PublicationModesEnum.NEXT_MIDDAY,
         PublicationModesEnum.NEXT_EVENING,
       ]);
-      expect(backSpy).toHaveBeenCalledWith(ObservatoryPostMenusEnum.POST_MENU);
-    });
-
-    it('кнопки пользовательской модерации вызывают moderateViaUsers и publishPost', async () => {
-      const { service } = setup();
-      service.onModuleInit();
-      const moderateSpy = jest
-        .spyOn(service as any, 'moderateViaUsers')
-        .mockResolvedValue(undefined);
-      const publishSpy = jest.spyOn(service as any, 'publishPost').mockResolvedValue(undefined);
-      const backSpy = jest.fn();
-
-      const menu = ObservatoryPostMenusEnum.USER_MODERATE_POST;
-      await handlerFor(menu, 'Сейчас')(makeCtx());
-      await handlerFor(menu, 'Ближайший слот')(makeCtx());
-      await handlerFor(menu, 'Ночью')(makeCtx());
-      await handlerFor(menu, 'Утром')(makeCtx());
-      await handlerFor(menu, 'Днем')(makeCtx());
-      await handlerFor(menu, 'Вечером')(makeCtx());
-      await handlerFor(menu, 'Назад')({ menu: { nav: backSpy } });
-
-      expect(moderateSpy.mock.calls.map((call) => call[1])).toEqual([
-        PublicationModesEnum.NOW_SILENT,
-        PublicationModesEnum.NEXT_NIGHT,
-        PublicationModesEnum.NEXT_MORNING,
-        PublicationModesEnum.NEXT_MIDDAY,
-        PublicationModesEnum.NEXT_EVENING,
-      ]);
-      expect(publishSpy).toHaveBeenCalledWith(expect.anything(), PublicationModesEnum.NEXT_INTERVAL);
       expect(backSpy).toHaveBeenCalledWith(ObservatoryPostMenusEnum.POST_MENU);
     });
   });
@@ -743,53 +680,6 @@ describe('ObservatoryService', () => {
       userService.checkPermission.mockReturnValue(true);
       await handler(ctx);
       expect(ctx.deleteMessage).toHaveBeenCalled();
-    });
-  });
-
-  describe('moderateViaUsers', () => {
-    it('запускает пользовательскую модерацию и показывает счётчик', async () => {
-      const {
-        service,
-        userModeratedPostService,
-        deduplicationService,
-        bot,
-        baseConfigService,
-      } = setup();
-      deduplicationService.getPostImageHash.mockResolvedValue('hash');
-      userModeratedPostService.moderateViaUsers.mockResolvedValue(7);
-      const ctx = makeCtx();
-
-      await (service as any).moderateViaUsers(ctx, PublicationModesEnum.NOW_SILENT);
-
-      expect(userModeratedPostService.moderateViaUsers).toHaveBeenCalledWith(ctx, {
-        mode: PublicationModesEnum.NOW_SILENT,
-        requestChannelMessageId: 11,
-        processedByModerator: 5,
-        isUserPost: false,
-        hash: 'hash',
-      });
-      const keyboard = bot.api.editMessageReplyMarkup.mock.calls[0][2].reply_markup;
-      expect(keyboard.inline_keyboard[0][0].text).toBe('👷 Модерируют пользователи (7)');
-      expect(bot.api.editMessageReplyMarkup).toHaveBeenCalledWith(
-        baseConfigService.userRequestMemeChannel,
-        11,
-        { reply_markup: expect.anything() }
-      );
-    });
-
-    it('падает на некорректном callbackQuery без message', async () => {
-      const { service, deduplicationService } = setup();
-      deduplicationService.getPostImageHash.mockResolvedValue('hash');
-
-      await expect(
-        (service as any).moderateViaUsers(undefined, PublicationModesEnum.NOW_SILENT)
-      ).rejects.toThrow();
-      await expect(
-        (service as any).moderateViaUsers({}, PublicationModesEnum.NOW_SILENT)
-      ).rejects.toThrow();
-      await expect(
-        (service as any).moderateViaUsers({ callbackQuery: {} }, PublicationModesEnum.NOW_SILENT)
-      ).rejects.toThrow();
     });
   });
 

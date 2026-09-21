@@ -33,7 +33,6 @@ function isBenignTelegramError(error: unknown): boolean {
 
 const initialSessionData: SessionDataInterface = {
   anonymousPublishing: false,
-  canBeModeratePosts: true,
 };
 
 export const BOT_PROVIDER = {
