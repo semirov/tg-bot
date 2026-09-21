@@ -594,7 +594,7 @@ describe('parser services branch backfill', () => {
     );
 
     expect(await service.sweepAll()).toBe(0);
-    expect(client.getMessages).toHaveBeenCalledWith('-1008888888888', expect.anything());
+    expect(client.getMessages).toHaveBeenCalledWith('memes_source', expect.anything());
   });
 
   it('collector: fetchMessage без клиента → undefined; markSourceError c не-Error', async () => {

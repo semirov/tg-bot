@@ -130,32 +130,6 @@ describe('ParserMenuService', () => {
     expect(settings.update).toHaveBeenCalledWith({ legacyEnabled: false });
   });
 
-  it('boost-тумблер включает и выключает', async () => {
-    const { service, settings } = makeDeps();
-    service.onModuleInit();
-
-    const boostButton = captured.find(
-      (button) => typeof button.label === 'function' && (button.label as () => string)() === '🍲 Насыпать ещё'
-    )!;
-    await boostButton.handler(makeCtx());
-    expect(settings.update).toHaveBeenCalledWith({ boostUntil: expect.any(String) });
-
-    settings.boostActive.mockReturnValue(true);
-    settings.update.mockClear();
-    await boostButton.handler(makeCtx());
-    expect(settings.update).toHaveBeenCalledWith({ boostUntil: null });
-  });
-
-  it('boostLabel показывает остаток при активном boost', async () => {
-    const { service, settings } = makeDeps();
-    settings.current.boostUntil = new Date(Date.now() + 30 * 60_000).toISOString();
-    settings.boostActive.mockReturnValue(true);
-    service.onModuleInit();
-
-    const button = await findButton('Boost ещё');
-    expect(String(await (button.label as () => Promise<string>)())).toContain('Boost ещё');
-  });
-
   it('кнопка импорта подписок вызывает реестр', async () => {
     const { service, registry } = makeDeps();
     service.onModuleInit();

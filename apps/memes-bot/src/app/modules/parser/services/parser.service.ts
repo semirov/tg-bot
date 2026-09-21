@@ -66,7 +66,8 @@ export class ParserService implements OnModuleInit {
       const chatId = ctx.chat?.id;
       if (chatId !== this.config.userRequestMemeChannel) return;
       const text = (ctx.channelPost?.text ?? '').trim();
-      if (!/^\/more(@\w+)?$/.test(text)) return;
+      // Синонимы «насыпать ещё» — только в канале модерации (предложки).
+      if (!/^\/?(?:more|ещё|еще|больше|насыпь)(?:@\w+)?$/i.test(text)) return;
       const delivered = await this.selector.dumpMore();
       this.logger.log(`Parser selector: /more из канала → ${delivered}`);
       try {

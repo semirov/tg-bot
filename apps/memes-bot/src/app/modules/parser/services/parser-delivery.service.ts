@@ -420,6 +420,11 @@ export class ParserDeliveryService {
         reply_markup: keyboard,
       });
     } catch (error) {
+      const text = String(error);
+      if (text.includes('message is not modified')) {
+        this.logger.debug(`Parser delivery: клавиатура ${messageId} без изменений`);
+        return;
+      }
       this.logger.warn(`Parser delivery: не удалось обновить клавиатуру ${messageId}: ${error}`);
     }
   }

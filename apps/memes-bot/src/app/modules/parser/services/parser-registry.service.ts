@@ -386,7 +386,7 @@ export class ParserRegistryService {
     client: TelegramClient
   ): Promise<ChannelBaseline | null> {
     if (!source.rawChatId && !source.username) return null;
-    const peer = bigInt(source.chatId); // marked id (-100...)
+    const peer = source.username ?? bigInt(source.chatId); // публичные — по username
     // Новый источник смотрим не глубже SCAN_WINDOW_HOURS.
     const since = Math.floor((this.clock.now().getTime() - SCAN_WINDOW_HOURS * 3_600_000) / 1000);
 

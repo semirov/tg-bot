@@ -16,9 +16,6 @@ import { ParserSettingsService } from './parser-settings.service';
 /** Размер страницы списков. */
 const PAGE_SIZE = 8;
 
-/** Длительность boost «Насыпать ещё», часов. */
-const BOOST_HOURS = 2;
-
 type ListType = 'pop' | 'exc' | 'src';
 
 /**
@@ -74,8 +71,7 @@ export class ParserMenuService implements OnModuleInit {
     const menu = new Menu<BotContext>(AdminMenusEnum.PARSER_SETTINGS_MENU);
 
     menu.text(
-      async () =>
-        `🧭 Парсер ${settings().enabled ? '🟢' : '⚪️'} · ${await this.statsLine()} · ${this.boostLabel()}`,
+      async () => `🧭 Парсер ${settings().enabled ? '🟢' : '⚪️'} · ${await this.statsLine()}`,
       guard(async (ctx) => ctx.menu.update())
     ).row();
 
@@ -85,19 +81,7 @@ export class ParserMenuService implements OnModuleInit {
         await this.settings.update({ enabled: !settings().enabled });
         ctx.menu.update();
       })
-    )
-      .text(
-        () => this.boostLabel(),
-        guard(async (ctx) => {
-          const boostUntil = this.settings.boostActive()
-            ? null
-            : new Date(Date.now() + BOOST_HOURS * 3_600_000).toISOString();
-          await this.settings.update({ boostUntil });
-          await ctx.answerCallbackQuery(boostUntil ? 'Насыпаю ещё' : 'Boost выключен');
-          ctx.menu.update();
-        })
-      )
-      .row();
+    ).row();
 
     menu.text(
       () => `ERR min: ${Math.round(settings().errMin * 100)}%`,
@@ -251,14 +235,6 @@ export class ParserMenuService implements OnModuleInit {
     const weight = (source.weight ?? 1).toFixed(2);
     const err = source.err != null ? ` · ERR ${(source.err * 100).toFixed(1)}%` : '';
     return `${position}. ${icon} <b>${title}</b> — взято ${taken} · вес ${weight}${err}`;
-  }
-
-  private boostLabel(): string {
-    const until = this.settings.current.boostUntil;
-    if (!until || !this.settings.boostActive()) return '🍲 Насыпать ещё';
-    const msLeft = new Date(until).getTime() - Date.now();
-    const minutes = Math.max(1, Math.round(msLeft / 60_000));
-    return `🍲 Boost ещё ${minutes}м`;
   }
 
   /** Статистика для заголовка меню (собрано/оценено/доставлено сегодня). */
