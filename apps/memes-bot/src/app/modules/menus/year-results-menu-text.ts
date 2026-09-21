@@ -92,7 +92,7 @@ export class YearResultsMenuText {
    * @returns текст подсказки
    */
   public publishHint(): string {
-    return 'Для публикации итогов используйте команду /year_result_publish';
+    return 'Для публикации итогов используйте команду 📊 Итоги года → 🚀 Опубликовать';
   }
 
   /**

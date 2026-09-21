@@ -32,6 +32,8 @@ import { AdminSettingsPresets } from './admin-settings-presets';
 import { MenuPresenter } from './menu-presenter';
 import { YearResultsMenuText } from './year-results-menu-text';
 
+export type ScheduleFilter = 'all' | 'user' | 'parser';
+
 @Injectable()
 export class AdminMenuService implements OnModuleInit {
   /** Чистые тексты админ-меню (итоги года, лимиты мемов). */
@@ -72,28 +74,6 @@ export class AdminMenuService implements OnModuleInit {
         ConversationsEnum.ADD_MODERATOR_CONVERSATION
       )
     );
-
-    // Регистрируем команды для итогов года
-    this.bot.command('year_result', async (ctx) => {
-      if (!ctx.from) return;
-      await this.userService.findById(ctx.from.id);
-
-      if (!ctx.config.isOwner) {
-        await ctx.reply('У вас нет прав для выполнения этой команды');
-        return;
-      }
-      await this.showYearResults(ctx);
-    });
-
-    this.bot.command('year_result_publish', async (ctx) => {
-      if (!ctx.from) return;
-      await this.userService.findById(ctx.from.id);
-      if (!ctx.config.isOwner) {
-        await ctx.reply('У вас нет прав для выполнения этой команды');
-        return;
-      }
-      await this.publishYearResults(ctx);
-    });
   }
 
   public buildStartAdminMenu(
@@ -101,28 +81,17 @@ export class AdminMenuService implements OnModuleInit {
     moderatorStartMenu: Menu<BotContext>
   ): Menu<BotContext> {
     const menu = new Menu<BotContext>(AdminMenusEnum.ADMIN_START_MENU)
-      .text('👥 Модераторы', (ctx) => ctx.menu.nav('moderators-list'))
+      .text('👥 Модераторы', this.ownerGuard((ctx) => ctx.menu.nav('moderators-list')))
       .row()
       .text('➕ Добавить модератора', async (ctx) =>
         ctx.conversation.enter(ConversationsEnum.ADD_MODERATOR_CONVERSATION)
       )
       .row()
-      .text('🎚 Управление лимитом мемов', (ctx) => ctx.menu.nav('meme-limit-control'))
+      .text('🤖 Боты и парсеры', this.ownerGuard((ctx) => ctx.menu.nav('admin-bots')))
       .row()
-      .text(
-        '🧭 Парсер мемов',
-        this.ownerGuard((ctx) => ctx.menu.nav(AdminMenusEnum.PARSER_SETTINGS_MENU))
-      )
+      .text('📅 Публикации и акции', this.ownerGuard((ctx) => ctx.menu.nav('admin-publications')))
       .row()
-      .text(
-        '📅 Сетка публикаций',
-        this.ownerGuard(async (ctx) => this.showPublicationGrid(ctx))
-      )
-      .row()
-      .text(
-        '🤖 Тролль-бот',
-        this.ownerGuard((ctx) => ctx.menu.nav(AdminMenusEnum.TROLL_SETTINGS_MENU))
-      )
+      .text('📊 Итоги года', this.ownerGuard((ctx) => ctx.menu.nav('admin-year-results')))
       .row()
       .text(
         async () => {
@@ -135,6 +104,23 @@ export class AdminMenuService implements OnModuleInit {
         })
       )
       .row()
+      .text('Меню модератора', this.menuPresenter.switchToMenu(moderatorStartMenu))
+      .row()
+      .text('Меню пользователя', this.menuPresenter.switchToMenu(userStartMenu))
+      .row();
+
+    const botsMenu = new Menu<BotContext>('admin-bots')
+      .text('🧭 Парсер мемов', this.ownerGuard((ctx) => ctx.menu.nav(AdminMenusEnum.PARSER_SETTINGS_MENU)))
+      .row()
+      .text('🤖 Тролль-бот', this.ownerGuard((ctx) => ctx.menu.nav(AdminMenusEnum.TROLL_SETTINGS_MENU)))
+      .row()
+      .back('Назад');
+
+    const publicationsMenu = new Menu<BotContext>('admin-publications')
+      .text('🎚 Управление лимитом мемов', this.ownerGuard((ctx) => ctx.menu.nav('meme-limit-control')))
+      .row()
+      .text('📅 Сетка публикаций', this.ownerGuard(async (ctx) => this.showPublicationGrid(ctx)))
+      .row()
       .text(
         '🏆 Лучший пост в «Лучшее»',
         this.ownerGuard(async (ctx) => {
@@ -145,10 +131,14 @@ export class AdminMenuService implements OnModuleInit {
       .row()
       .text('📣 Промо бота', this.ownerGuard(async (ctx) => this.publishBotPromo(ctx)))
       .row()
-      .text('Меню модератора', this.menuPresenter.switchToMenu(moderatorStartMenu))
+      .back('Назад');
+
+    const yearResultsMenu = new Menu<BotContext>('admin-year-results')
+      .text('👀 Предпросмотр', this.ownerGuard(async (ctx) => this.showYearResults(ctx)))
       .row()
-      .text('Меню пользователя', this.menuPresenter.switchToMenu(userStartMenu))
-      .row();
+      .text('🚀 Опубликовать', this.ownerGuard(async (ctx) => this.publishYearResults(ctx)))
+      .row()
+      .back('Назад');
 
     const moderatorsListMenu = new Menu<BotContext>('moderators-list').dynamic(async () => {
       const moderators = await this.userService.getModerators();
@@ -665,6 +655,9 @@ export class AdminMenuService implements OnModuleInit {
     menu.register(memeLimitOptionsMenu);
     menu.register(trollSettingsMenu);
     menu.register(this.parserMenuService.getMenu());
+    menu.register(botsMenu);
+    menu.register(publicationsMenu);
+    menu.register(yearResultsMenu);
 
     return menu;
   }
@@ -753,33 +746,38 @@ export class AdminMenuService implements OnModuleInit {
 
   /** Callback-и пагинированной сетки публикаций и снятия с публикации. */
   private registerScheduleCallbacks(): void {
-    this.bot.callbackQuery(/^sched:p:(\d+)$/, async (ctx) => {
+    this.bot.callbackQuery(/^sched:p:(all|user|parser):(\d+)$/, async (ctx) => {
       if (!ctx.config?.isOwner) return ctx.answerCallbackQuery('Только владелец');
       await ctx.answerCallbackQuery();
-      await this.sendSchedulePage(ctx, Number(ctx.match?.[1]));
+      await this.sendSchedulePage(ctx, Number(ctx.match?.[2]), false, ctx.match?.[1] as ScheduleFilter);
     });
 
-    this.bot.callbackQuery(/^sched:off:(\d+):(\d+)$/, async (ctx) => {
+    this.bot.callbackQuery(/^sched:off:(all|user|parser):(\d+):(\d+)$/, async (ctx) => {
       if (!ctx.config?.isOwner) return ctx.answerCallbackQuery('Только владелец');
       await ctx.answerCallbackQuery('Снять с публикации?');
+      const filter = ctx.match?.[1] as ScheduleFilter;
+      const page = ctx.match?.[2];
+      const id = ctx.match?.[3];
       await this.editScheduleKeyboard(
         ctx,
         new InlineKeyboard()
-          .text('✅ Снять с публикации', `sched:offok:${ctx.match?.[1]}:${ctx.match?.[2]}`)
-          .text('↩️ Отмена', `sched:offno:${ctx.match?.[1]}:${ctx.match?.[2]}`)
+          .text('✅ Снять с публикации', `sched:offok:${filter}:${page}:${id}`)
+          .text('↩️ Отмена', `sched:offno:${filter}:${page}:${id}`)
       );
     });
 
-    this.bot.callbackQuery(/^sched:offno:(\d+):(\d+)$/, async (ctx) => {
+    this.bot.callbackQuery(/^sched:offno:(all|user|parser):(\d+):(\d+)$/, async (ctx) => {
       if (!ctx.config?.isOwner) return ctx.answerCallbackQuery('Только владелец');
       await ctx.answerCallbackQuery('Оставлено');
-      await this.sendSchedulePage(ctx, Number(ctx.match?.[2]));
+      await this.sendSchedulePage(ctx, Number(ctx.match?.[2]), false, ctx.match?.[1] as ScheduleFilter);
     });
 
-    this.bot.callbackQuery(/^sched:offok:(\d+):(\d+)$/, async (ctx) => {
+    this.bot.callbackQuery(/^sched:offok:(all|user|parser):(\d+):(\d+)$/, async (ctx) => {
       if (!ctx.config?.isOwner) return ctx.answerCallbackQuery('Только владелец');
       try {
-        const id = Number(ctx.match?.[1]);
+        const filter = ctx.match?.[1] as ScheduleFilter;
+        const page = Number(ctx.match?.[2]);
+        const id = Number(ctx.match?.[3]);
         const entry = await this.postSchedulerService.getScheduledPostById(id);
         const messageId = entry?.requestChannelMessageId
           ? Number(entry.requestChannelMessageId)
@@ -788,25 +786,45 @@ export class AdminMenuService implements OnModuleInit {
           ? await this.parserModeration.unscheduleByMessageId(messageId)
           : (await this.postSchedulerService.removeById(id)) > 0;
         await ctx.answerCallbackQuery(removed ? 'Снято с публикации' : 'Уже снято');
+        await this.sendSchedulePage(ctx, page, false, filter);
+        return;
       } catch (error) {
         Logger.warn(`Schedule remove failed: ${error}`);
-        await ctx.answerCallbackQuery('Ошибка снятия');
       }
-      await this.sendSchedulePage(ctx, Number(ctx.match?.[2]));
+      await ctx.answerCallbackQuery('Ошибка снятия');
     });
   }
 
-  /** Рисует страницу сетки: ближайшие публикации первыми. */
-  public async sendSchedulePage(ctx: BotContext, page: number, forceSend = false): Promise<void> {
+  /** Рисует страницу сетки: ближайшие публикации первыми, с фильтром по типу. */
+  public async sendSchedulePage(
+    ctx: BotContext,
+    page: number,
+    forceSend = false,
+    filter: ScheduleFilter = 'all'
+  ): Promise<void> {
     const PAGE = 8;
+    const isUserPost = filter === 'all' ? undefined : filter === 'user';
     const safePage = Number.isFinite(page) && page > 0 ? Math.floor(page) : 0;
-    const total = await this.postSchedulerService.countUpcoming();
+    const total =
+      isUserPost === undefined
+        ? await this.postSchedulerService.countUpcoming()
+        : await this.postSchedulerService.countUpcoming(isUserPost);
     const pages = Math.max(1, Math.ceil(total / PAGE));
     const current = Math.min(safePage, pages - 1);
-    const rows = await this.postSchedulerService.getUpcomingPage(PAGE, current * PAGE);
+    const rows =
+      isUserPost === undefined
+        ? await this.postSchedulerService.getUpcomingPage(PAGE, current * PAGE)
+        : await this.postSchedulerService.getUpcomingPage(PAGE, current * PAGE, isUserPost);
 
+    const labels: Record<ScheduleFilter, string> = {
+      all: 'все',
+      user: '👤 юзерские',
+      parser: '🧭 парсер',
+    };
     const channelId = channelInternalId(this.baseConfigService.userRequestMemeChannel);
-    const lines = [`📅 <b>Сетка публикаций</b> · стр. ${current + 1}/${pages} · всего ${total}`];
+    const lines = [
+      `📅 <b>Сетка публикаций</b> · ${labels[filter]} · стр. ${current + 1}/${pages} · всего ${total}`,
+    ];
     if (!rows.length) {
       lines.push('— пусто —');
     } else {
@@ -815,17 +833,24 @@ export class AdminMenuService implements OnModuleInit {
         const when = format(date, 'dd.MM HH:mm');
         const link = `https://t.me/c/${channelId}/${row.requestChannelMessageId}`;
         const who = row.processedByModerator?.username ? ` · @${row.processedByModerator.username}` : '';
-        lines.push(`${current * PAGE + index + 1}. ${when} · <a href="${link}">пост</a>${who}`);
+        const kind = row.isUserPost ? '👤' : '🧭';
+        lines.push(`${current * PAGE + index + 1}. ${when} ${kind} · <a href="${link}">карточка</a>${who}`);
       });
     }
 
-    const matrix: Array<Array<{ text: string; callback_data: string }>> = [];
+    const matrix: Array<Array<{ text: string; callback_data: string }>> = [
+      [
+        { text: filter === 'all' ? '• Все' : 'Все', callback_data: `sched:p:all:0` },
+        { text: filter === 'user' ? '• 👤 Юзер' : '👤 Юзер', callback_data: `sched:p:user:0` },
+        { text: filter === 'parser' ? '• 🧭 Парсер' : '🧭 Парсер', callback_data: `sched:p:parser:0` },
+      ],
+    ];
     let rowButtons: Array<{ text: string; callback_data: string }> = [];
     rows.forEach((row) => {
       const date = utcToZonedTime(row.publishDate, 'Europe/Moscow');
       rowButtons.push({
         text: `🚫 Снять ${format(date, 'dd.MM HH:mm')}`,
-        callback_data: `sched:off:${row.id}:${current}`,
+        callback_data: `sched:off:${filter}:${current}:${row.id}`,
       });
       if (rowButtons.length === 2) {
         matrix.push(rowButtons);
@@ -834,8 +859,9 @@ export class AdminMenuService implements OnModuleInit {
     });
     if (rowButtons.length) matrix.push(rowButtons);
     const nav: Array<{ text: string; callback_data: string }> = [];
-    if (current > 0) nav.push({ text: '⬅️', callback_data: `sched:p:${current - 1}` });
-    if (current < pages - 1) nav.push({ text: '➡️', callback_data: `sched:p:${current + 1}` });
+    if (current > 0) nav.push({ text: '⬅️', callback_data: `sched:p:${filter}:${current - 1}` });
+    if (current < pages - 1)
+      nav.push({ text: '➡️', callback_data: `sched:p:${filter}:${current + 1}` });
     if (nav.length) matrix.push(nav);
     const keyboard = InlineKeyboard.from(matrix);
 

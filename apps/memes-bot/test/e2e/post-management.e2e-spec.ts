@@ -347,7 +347,9 @@ describe('E2E: post-management, menus и observatory', () => {
       const flat = (reply!.payload.reply_markup.inline_keyboard as any[][])
         .flat()
         .map((b) => String(b.text));
-      expect(flat).toContain('🤖 Тролль-бот');
+      expect(flat).toContain('🤖 Боты и парсеры');
+      expect(flat).toContain('📅 Публикации и акции');
+      expect(flat).toContain('📊 Итоги года');
     });
   });
 

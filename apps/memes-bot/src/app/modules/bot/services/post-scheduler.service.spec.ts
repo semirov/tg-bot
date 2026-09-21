@@ -286,34 +286,76 @@ describe('PostSchedulerService', () => {
   });
 
   describe('getUpcomingPage', () => {
-    it('берёт страницу предстоящих постов с модератором, стабильным порядком и пропуском', async () => {
+    const baseArgs = {
+      relations: { processedByModerator: true },
+      order: { publishDate: 'ASC', id: 'ASC' },
+      take: 8,
+      skip: 16,
+      cache: false,
+    };
+
+    it('без фильтра типа ключ isUserPost в where отсутствует', async () => {
       const { service, repo } = setup();
-      const now = msk(2026, 1, 15, 10, 0);
-      withNow(now);
       const posts = [{ id: 1 }];
       repo.find.mockResolvedValue(posts);
 
       await expect(service.getUpcomingPage(8, 16)).resolves.toBe(posts);
       expect(repo.find).toHaveBeenCalledWith({
         where: { isPublished: false },
-        relations: { processedByModerator: true },
-        order: { publishDate: 'ASC', id: 'ASC' },
-        take: 8,
-        skip: 16,
-        cache: false,
+        ...baseArgs,
+      });
+    });
+
+    it('фильтр «юзерские» добавляет isUserPost=true', async () => {
+      const { service, repo } = setup();
+      repo.find.mockResolvedValue([]);
+
+      await service.getUpcomingPage(8, 16, true);
+      expect(repo.find).toHaveBeenCalledWith({
+        where: { isPublished: false, isUserPost: true },
+        ...baseArgs,
+      });
+    });
+
+    it('фильтр «парсер» добавляет isUserPost=false', async () => {
+      const { service, repo } = setup();
+      repo.find.mockResolvedValue([]);
+
+      await service.getUpcomingPage(8, 16, false);
+      expect(repo.find).toHaveBeenCalledWith({
+        where: { isPublished: false, isUserPost: false },
+        ...baseArgs,
       });
     });
   });
 
   describe('countUpcoming', () => {
-    it('считает будущие неопубликованные записи от текущего момента', async () => {
+    it('без фильтра типа ключ isUserPost в where отсутствует', async () => {
       const { service, repo } = setup();
-      const now = msk(2026, 1, 15, 10, 0);
-      withNow(now);
       repo.count.mockResolvedValue(17);
 
       await expect(service.countUpcoming()).resolves.toBe(17);
       expect(repo.count).toHaveBeenCalledWith({ where: { isPublished: false } });
+    });
+
+    it('фильтр «юзерские» добавляет isUserPost=true', async () => {
+      const { service, repo } = setup();
+      repo.count.mockResolvedValue(3);
+
+      await expect(service.countUpcoming(true)).resolves.toBe(3);
+      expect(repo.count).toHaveBeenCalledWith({
+        where: { isPublished: false, isUserPost: true },
+      });
+    });
+
+    it('фильтр «парсер» добавляет isUserPost=false', async () => {
+      const { service, repo } = setup();
+      repo.count.mockResolvedValue(2);
+
+      await expect(service.countUpcoming(false)).resolves.toBe(2);
+      expect(repo.count).toHaveBeenCalledWith({
+        where: { isPublished: false, isUserPost: false },
+      });
     });
   });
 
