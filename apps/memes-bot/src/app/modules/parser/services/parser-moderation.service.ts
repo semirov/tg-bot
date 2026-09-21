@@ -202,7 +202,7 @@ export class ParserModerationService {
     if (candidate.status === ObservedStatus.PUBLISHED) {
       await this.replaceKeyboard(
         ctx,
-        new InlineKeyboard().text('✅ Опубликовано', `${CARD_CB_PREFIX}:done:${candidate.id}`)
+        new InlineKeyboard().disabled('✅ Опубликовано')
       );
       await ctx.answerCallbackQuery('Уже опубликовано');
       return;
@@ -215,7 +215,7 @@ export class ParserModerationService {
     ) {
       await this.replaceKeyboard(
         ctx,
-        new InlineKeyboard().text('🗑 Обработано', `${CARD_CB_PREFIX}:done:${candidate.id}`)
+        new InlineKeyboard().disabled('🗑 Обработано')
       );
       await ctx.answerCallbackQuery('Уже обработано');
       return;
@@ -256,7 +256,7 @@ export class ParserModerationService {
 
       await this.replaceKeyboard(
         ctx,
-        new InlineKeyboard().text('✅ Опубликовано', `${CARD_CB_PREFIX}:done:${candidate.id}`)
+        new InlineKeyboard().disabled('✅ Опубликовано')
       );
       await ctx.answerCallbackQuery('Опубликовано');
     } catch (error) {
@@ -401,7 +401,7 @@ export class ParserModerationService {
     await this.registry.excludeSource(source.id);
     await this.replaceKeyboard(
       ctx,
-      new InlineKeyboard().text('🚫 Источник исключён', `${CARD_CB_PREFIX}:done:${candidate.id}`)
+      new InlineKeyboard().disabled('🚫 Источник исключён')
     );
     await ctx.answerCallbackQuery('Источник исключён');
   }

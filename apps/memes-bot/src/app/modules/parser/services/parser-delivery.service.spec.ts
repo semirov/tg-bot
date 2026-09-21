@@ -648,16 +648,17 @@ describe('ParserDeliveryService', () => {
       const keyboard = service.buildKeyboard(7) as unknown as {
         inline_keyboard: Array<Array<{ text: string; callback_data: string }>>;
       };
-      expect(keyboard.inline_keyboard[0]).toEqual([
-        { text: '▶️ Сейчас', callback_data: 'prs:now:7' },
-        { text: '📋 В очередь', callback_data: 'prs:q:7' },
+      const pick = (b: any) => ({ text: b.text, callback_data: b.callback_data, style: b.style });
+      expect(keyboard.inline_keyboard[0].map(pick)).toEqual([
+        { text: '▶️ Сейчас', callback_data: 'prs:now:7', style: 'success' },
+        { text: '📋 В очередь', callback_data: 'prs:q:7', style: 'primary' },
       ]);
-      expect(keyboard.inline_keyboard[1]).toEqual([
-        { text: '🌙 В ночь (кринж)', callback_data: 'prs:night:7' },
-        { text: '🗑 Отклонить', callback_data: 'prs:rej:7' },
+      expect(keyboard.inline_keyboard[1].map(pick)).toEqual([
+        { text: '🌙 В ночь (кринж)', callback_data: 'prs:night:7', style: 'primary' },
+        { text: '🗑 Отклонить', callback_data: 'prs:rej:7', style: 'danger' },
       ]);
-      expect(keyboard.inline_keyboard[2]).toEqual([
-        { text: '🚫 Исключить источник', callback_data: 'prs:excl:7' },
+      expect(keyboard.inline_keyboard[2].map(pick)).toEqual([
+        { text: '🚫 Исключить источник', callback_data: 'prs:excl:7', style: 'danger' },
       ]);
     });
 
@@ -677,9 +678,13 @@ describe('ParserDeliveryService', () => {
       const keyboard = service.buildUnscheduleConfirmKeyboard(7) as unknown as {
         inline_keyboard: Array<Array<{ text: string; callback_data: string }>>;
       };
-      expect(keyboard.inline_keyboard.flat()).toEqual([
-        { text: '✅ Снять с публикации', callback_data: 'prs:unschedok:7' },
-        { text: '↩️ Отмена', callback_data: 'prs:unschedno:7' },
+      expect(
+        keyboard.inline_keyboard
+          .flat()
+          .map((b: any) => ({ text: b.text, callback_data: b.callback_data, style: b.style }))
+      ).toEqual([
+        { text: '✅ Снять с публикации', callback_data: 'prs:unschedok:7', style: 'danger' },
+        { text: '↩️ Отмена', callback_data: 'prs:unschedno:7', style: undefined },
       ]);
     });
   });

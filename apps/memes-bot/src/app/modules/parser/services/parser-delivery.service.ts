@@ -392,13 +392,13 @@ export class ParserDeliveryService {
   /** Инлайн-клавиатура карточки (обычный InlineKeyboard — без граммY-Menu). */
   public buildKeyboard(candidateId: number): InlineKeyboard {
     return new InlineKeyboard()
-      .text('▶️ Сейчас', `${CARD_CB_PREFIX}:now:${candidateId}`)
-      .text('📋 В очередь', `${CARD_CB_PREFIX}:q:${candidateId}`)
+      .text('▶️ Сейчас', `${CARD_CB_PREFIX}:now:${candidateId}`).success()
+      .text('📋 В очередь', `${CARD_CB_PREFIX}:q:${candidateId}`).primary()
       .row()
-      .text('🌙 В ночь (кринж)', `${CARD_CB_PREFIX}:night:${candidateId}`)
-      .text('🗑 Отклонить', `${CARD_CB_PREFIX}:rej:${candidateId}`)
+      .text('🌙 В ночь (кринж)', `${CARD_CB_PREFIX}:night:${candidateId}`).primary()
+      .text('🗑 Отклонить', `${CARD_CB_PREFIX}:rej:${candidateId}`).danger()
       .row()
-      .text('🚫 Исключить источник', `${CARD_CB_PREFIX}:excl:${candidateId}`);
+      .text('🚫 Исключить источник', `${CARD_CB_PREFIX}:excl:${candidateId}`).danger();
   }
 
   /** Добавляет к карточке кнопку «Ещё 20» (на последней карточке бэклога). */
@@ -432,14 +432,14 @@ export class ParserDeliveryService {
   /** Клавиатура подтверждения снятия с публикации. */
   public buildUnscheduleConfirmKeyboard(candidateId: number): InlineKeyboard {
     return new InlineKeyboard()
-      .text('✅ Снять с публикации', `${CARD_CB_PREFIX}:unschedok:${candidateId}`)
+      .text('✅ Снять с публикации', `${CARD_CB_PREFIX}:unschedok:${candidateId}`).danger()
       .text('↩️ Отмена', `${CARD_CB_PREFIX}:unschedno:${candidateId}`);
   }
 
   /** Клавиатура подтверждения исключения источника. */
   public buildExcludeConfirmKeyboard(candidateId: number): InlineKeyboard {
     return new InlineKeyboard()
-      .text('✅ Да, исключить', `${CARD_CB_PREFIX}:exclok:${candidateId}`)
+      .text('✅ Да, исключить', `${CARD_CB_PREFIX}:exclok:${candidateId}`).danger()
       .text('↩️ Отмена', `${CARD_CB_PREFIX}:exclno:${candidateId}`);
   }
 

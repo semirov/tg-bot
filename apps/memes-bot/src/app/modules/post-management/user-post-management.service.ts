@@ -1401,9 +1401,9 @@ export class UserPostManagementService implements OnModuleInit {
     const who = username ? ` · @${username}` : '';
     const where = isCringe ? '📍 кринж (ночь)' : '📍 основной';
     return new InlineKeyboard()
-      .text(`⏰ ${dateFormatted}${who} · ${where}`)
+      .disabled(`⏰ ${dateFormatted}${who} · ${where}`)
       .row()
-      .text('🚫 Снять с публикации', `upsched:unsch:${messageId}`);
+      .text('🚫 Снять с публикации', `upsched:unsch:${messageId}`).danger();
   }
 
   /** Снятие с публикации: подтверждение и возврат карточки в модерацию. */

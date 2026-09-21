@@ -452,9 +452,9 @@ export class ObservatoryService implements OnModuleInit {
     const who = username ? ` · @${username}` : '';
     const where = isCringe ? '📍 кринж (ночь)' : '📍 основной';
     return new InlineKeyboard()
-      .text(`⏰ ${dateFormatted}${who} · ${where}`)
+      .disabled(`⏰ ${dateFormatted}${who} · ${where}`)
       .row()
-      .text('🚫 Снять с публикации', `obsched:unsch:${messageId}`);
+      .text('🚫 Снять с публикации', `obsched:unsch:${messageId}`).danger();
   }
 
   /** Снятие с публикации: подтверждение и возврат карточки в модерацию. */
