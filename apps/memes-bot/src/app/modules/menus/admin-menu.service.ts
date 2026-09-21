@@ -838,19 +838,21 @@ export class AdminMenuService implements OnModuleInit {
       });
     }
 
-    const matrix: Array<Array<{ text: string; callback_data: string }>> = [
+    type GridBtn = { text: string; callback_data: string; style?: 'danger' | 'success' | 'primary' };
+    const matrix: Array<GridBtn[]> = [
       [
-        { text: filter === 'all' ? '• Все' : 'Все', callback_data: `sched:p:all:0` },
-        { text: filter === 'user' ? '• 👤 Юзер' : '👤 Юзер', callback_data: `sched:p:user:0` },
-        { text: filter === 'parser' ? '• 🧭 Парсер' : '🧭 Парсер', callback_data: `sched:p:parser:0` },
+        { text: filter === 'all' ? '• Все' : 'Все', callback_data: `sched:p:all:0`, style: filter === 'all' ? 'primary' : undefined },
+        { text: filter === 'user' ? '• 👤 Юзер' : '👤 Юзер', callback_data: `sched:p:user:0`, style: filter === 'user' ? 'primary' : undefined },
+        { text: filter === 'parser' ? '• 🧭 Парсер' : '🧭 Парсер', callback_data: `sched:p:parser:0`, style: filter === 'parser' ? 'primary' : undefined },
       ],
     ];
-    let rowButtons: Array<{ text: string; callback_data: string }> = [];
+    let rowButtons: GridBtn[] = [];
     rows.forEach((row) => {
       const date = utcToZonedTime(row.publishDate, 'Europe/Moscow');
       rowButtons.push({
         text: `🚫 Снять ${format(date, 'dd.MM HH:mm')}`,
         callback_data: `sched:off:${filter}:${current}:${row.id}`,
+        style: 'danger',
       });
       if (rowButtons.length === 2) {
         matrix.push(rowButtons);
@@ -858,7 +860,7 @@ export class AdminMenuService implements OnModuleInit {
       }
     });
     if (rowButtons.length) matrix.push(rowButtons);
-    const nav: Array<{ text: string; callback_data: string }> = [];
+    const nav: GridBtn[] = [];
     if (current > 0) nav.push({ text: '⬅️', callback_data: `sched:p:${filter}:${current - 1}` });
     if (current < pages - 1)
       nav.push({ text: '➡️', callback_data: `sched:p:${filter}:${current + 1}` });

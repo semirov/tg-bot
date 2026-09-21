@@ -211,6 +211,34 @@ describe('ParserModerationService', () => {
     expect(ctx.editMessageReplyMarkup).toHaveBeenCalled();
   });
 
+  it('отклонённая карточка → «Уже обработано» и статусная клавиатура', async () => {
+    const { service } = setup({ candidate: { status: ObservedStatus.REJECTED } });
+    const ctx = makeCtx();
+    await service.handleAction(ctx, 'now', 10);
+    expect(ctx.answerCallbackQuery).toHaveBeenCalledWith('Уже обработано');
+    expect(ctx.editMessageReplyMarkup).toHaveBeenCalled();
+  });
+
+  it('промежуточный статус → возврат в модерацию', async () => {
+    const { service } = setup({ candidate: { status: ObservedStatus.SCORED } });
+    const ctx = makeCtx();
+    await service.handleAction(ctx, 'now', 10);
+    expect(ctx.answerCallbackQuery).toHaveBeenCalledWith('Вернул в модерацию');
+    expect(ctx.editMessageReplyMarkup).toHaveBeenCalled();
+  });
+
+  it('запланировано: ответ показывает время и куда', async () => {
+    const { service, scheduler } = setup({ candidate: { status: ObservedStatus.QUEUED } });
+    scheduler.findByRequestMessageId.mockResolvedValue({
+      publishDate: new Date('2026-09-21T00:30:00Z'),
+      mode: PublicationModesEnum.NIGHT_CRINGE,
+    });
+    const ctx = makeCtx();
+    await service.handleAction(ctx, 'now', 10);
+    expect(ctx.answerCallbackQuery).toHaveBeenCalledWith(expect.stringContaining('Уже в сетке:'));
+    expect(ctx.answerCallbackQuery).toHaveBeenCalledWith(expect.stringContaining('кринж'));
+  });
+
   it('опубликованная карточка → «Уже опубликовано»', async () => {
     const { service } = setup({ candidate: { status: ObservedStatus.PUBLISHED } });
     const ctx = makeCtx();
