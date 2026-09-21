@@ -43,16 +43,6 @@ describe('UserService', () => {
     expect(service.repository).toBe(repo);
   });
 
-  describe('changeUserModeratedMode', () => {
-    it('обновляет флаг модерации по id', async () => {
-      const { service, repo } = makeService();
-
-      await service.changeUserModeratedMode(7, true);
-
-      expect(repo.update).toHaveBeenCalledWith({ id: 7 }, { canBeModeratePosts: true });
-    });
-  });
-
   describe('findById', () => {
     it('ищет пользователя по id', async () => {
       const { service, repo } = makeService();
@@ -206,21 +196,6 @@ describe('UserService', () => {
         'Error checking meme limit status for user 5: read fail',
         'UserService'
       );
-    });
-  });
-
-  describe('getUsersForPostModerate', () => {
-    it('выбирает только id активных и сортирует по последней активности', async () => {
-      const { service, repo } = makeService();
-      const rows = [{ id: 1 }, { id: 2 }];
-      repo.find.mockResolvedValue(rows);
-
-      await expect(service.getUsersForPostModerate()).resolves.toBe(rows);
-      expect(repo.find).toHaveBeenCalledWith({
-        select: { id: true },
-        where: { canBeModeratePosts: true, isBanned: false },
-        order: { lastActivity: 'DESC' },
-      });
     });
   });
 

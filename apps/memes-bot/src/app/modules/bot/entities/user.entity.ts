@@ -55,9 +55,6 @@ export class UserEntity {
   @Column('timestamp', { default: 'NOW' })
   createdAt: Date;
 
-  @Column('boolean', { default: true })
-  canBeModeratePosts: boolean;
-
   @Column('timestamp', { nullable: true })
   memeLimitDisabledUntil: Date;
 

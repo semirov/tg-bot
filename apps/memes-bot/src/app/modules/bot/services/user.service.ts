@@ -16,10 +16,6 @@ export class UserService {
     return this.userRepository;
   }
 
-  public async changeUserModeratedMode(id: number, canBeModeratePosts: boolean): Promise<void> {
-    await this.userRepository.update({ id }, { canBeModeratePosts });
-  }
-
   public findById(id: number): Promise<UserEntity | undefined> {
     return this.userRepository.findOne({ where: { id } });
   }
@@ -101,14 +97,6 @@ export class UserService {
       Logger.error(`Error checking meme limit status for user ${userId}: ${error.message}`, UserService.name);
       return false;
     }
-  }
-
-  public getUsersForPostModerate(): Promise<Pick<UserEntity, 'id'>[]> {
-    return this.userRepository.find({
-      select: { id: true },
-      where: { canBeModeratePosts: true, isBanned: false },
-      order: { lastActivity: 'DESC' },
-    });
   }
 
   public checkPermission(ctx: BotContext, permission: UserPermissionEnum): boolean {

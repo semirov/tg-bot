@@ -44,7 +44,7 @@ async function rawKeyboard(container: any, ctx: any): Promise<any[][]> {
 function makeCtx(overrides: any = {}): any {
   return {
     config: { isOwner: false, user: { isModerator: false } },
-    session: { canBeModeratePosts: true },
+    session: {},
     from: { id: 321 },
     reply: jest.fn().mockResolvedValue({}),
     menu: { nav: jest.fn(), update: jest.fn(), back: jest.fn() },
@@ -69,7 +69,7 @@ describe('MainMenuService', () => {
     moderatorStartMenuService = {
       buildStartModeratorMenu: jest.fn().mockReturnValue(moderatorMenu),
     };
-    userService = { changeUserModeratedMode: jest.fn().mockResolvedValue(undefined) };
+    userService = {};
     service = new MainMenuService(bot, adminMenuService, moderatorStartMenuService, userService);
   });
 
@@ -157,7 +157,7 @@ describe('MainMenuService', () => {
       service.initStartMenu();
       const ctx = makeCtx();
       const kb = await rawKeyboard(service['userStartMenu'], ctx);
-      await kb[2][0].middleware[0](ctx, jest.fn());
+      await kb[1][0].middleware[0](ctx, jest.fn());
       expect(ctx.reply).toHaveBeenCalledWith('Просто напиши сообщение, тебе ответят');
     });
 
@@ -165,38 +165,8 @@ describe('MainMenuService', () => {
       service.initStartMenu();
       const ctx = makeCtx();
       const kb = await rawKeyboard(service['userStartMenu'], ctx);
-      expect(kb[3][0].text).toBe('Перейти в канал');
-      expect(kb[3][0].url).toBe('https://t.me/filipp_memes');
-    });
-
-    it('кнопка настроек открывает подменю', async () => {
-      service.initStartMenu();
-      const ctx = makeCtx();
-      const kb = await rawKeyboard(service['userStartMenu'], ctx);
-      await kb[1][0].middleware[0](ctx, jest.fn());
-      expect(ctx.menu.nav).toHaveBeenCalledWith('main-settings-menu');
-    });
-
-    it('подменю настроек переключает режим оценивания', async () => {
-      service.initStartMenu();
-      const ctx = makeCtx();
-      const settings = service['userStartMenu'].at('main-settings-menu');
-      const kb = await rawKeyboard(settings, ctx);
-      const toggle = kb[0][0];
-
-      ctx.session.canBeModeratePosts = true;
-      expect(await (toggle.text as any)(ctx)).toBe('👮 Оцениваю посты');
-      ctx.session.canBeModeratePosts = false;
-      expect(await (toggle.text as any)(ctx)).toBe('🙅 Не оцениваю посты');
-
-      ctx.session.canBeModeratePosts = true;
-      await toggle.middleware[0](ctx, jest.fn());
-      expect(ctx.session.canBeModeratePosts).toBe(false);
-      expect(userService.changeUserModeratedMode).toHaveBeenCalledWith(321, false);
-      expect(ctx.menu.update).toHaveBeenCalled();
-
-      await kb[1][0].middleware[0](ctx, jest.fn());
-      expect(ctx.menu.back).toHaveBeenCalled();
+      expect(kb[2][0].text).toBe('Перейти в канал');
+      expect(kb[2][0].url).toBe('https://t.me/filipp_memes');
     });
 
     it('меню пользователя зарегистрировано под ожидаемым идентификатором', () => {

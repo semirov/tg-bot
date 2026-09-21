@@ -96,7 +96,6 @@ function makeCtx(overrides: any = {}): any {
   return {
     config: { isOwner: true, user: { isModerator: false } },
     session: {
-      canBeModeratePosts: true,
       memeLimitControlState: undefined,
       memeLimitUserId: undefined,
       lastChangedModeratorId: undefined,

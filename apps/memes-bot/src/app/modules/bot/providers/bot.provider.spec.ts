@@ -87,7 +87,6 @@ describe('BOT_PROVIDER', () => {
     const options = (session as unknown as jest.Mock).mock.calls[0][0];
     expect(options.initial()).toEqual({
       anonymousPublishing: false,
-      canBeModeratePosts: true,
     });
   });
 

@@ -14,7 +14,6 @@ export interface CaptchaValuesInterface {
 
 export interface SessionDataInterface {
   anonymousPublishing: boolean;
-  canBeModeratePosts: boolean;
   lastChangedModeratorId?: number;
   lastPublishedAt?: number;
   adminUserConversationUserId?: number;
@@ -22,7 +21,6 @@ export interface SessionDataInterface {
   captchaSolved?: boolean;
   captchaValues?: CaptchaValuesInterface;
   approveJoinRequest?: number;
-  userVoted?: boolean;
   memeLimitControlState?: string;
   memeLimitUserId?: number;
   yearResultsPreview?: YearResultsPreview;

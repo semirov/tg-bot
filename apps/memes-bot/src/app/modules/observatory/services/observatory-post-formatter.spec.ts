@@ -12,7 +12,6 @@ describe('ObservatoryPostFormatter', () => {
     expect(ObservatoryPostFormatter.POST_MENU_LABEL).toBe('🤖 Пост обсерватории');
     expect(ObservatoryPostFormatter.PUBLISH_LABEL).toBe('Опубликовать');
     expect(ObservatoryPostFormatter.REJECT_LABEL).toBe('Отклонить');
-    expect(ObservatoryPostFormatter.MODERATE_BY_USERS_LABEL).toBe('На модерацию пользователям');
     expect(ObservatoryPostFormatter.PUBLISH_NIGHT_CRINGE_LABEL).toBe('Кринж');
     expect(ObservatoryPostFormatter.PUBLISH_NOW_LABEL).toBe('Сейчас');
     expect(ObservatoryPostFormatter.PUBLISH_NEXT_INTERVAL_LABEL).toBe('Ближайший слот');
@@ -66,10 +65,4 @@ describe('ObservatoryPostFormatter', () => {
     });
   });
 
-  describe('moderatingUsersKeyboard', () => {
-    it('строит кнопку-счётчик модерации', () => {
-      const keyboard = formatter.moderatingUsersKeyboard(7);
-      expect(keyboard.inline_keyboard[0][0].text).toBe('👷 Модерируют пользователи (7)');
-    });
-  });
 });

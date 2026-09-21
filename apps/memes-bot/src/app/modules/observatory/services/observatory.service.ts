@@ -19,7 +19,6 @@ import { format } from 'date-fns';
 import { SettingsService } from '../../bot/services/settings.service';
 import { CringeManagementService } from '../../bot/services/cringe-management.service';
 import { DeduplicationService } from '../../bot/services/deduplication.service';
-import { UserModeratedPostService } from './user-moderated-post.service';
 import { MattermostService } from '../../mattermost/mattermost.service';
 import { TrollService } from '../../troll/services/troll.service';
 import { metrics } from '../../../shared/metrics';
@@ -45,7 +44,6 @@ export class ObservatoryService implements OnModuleInit {
     private settingsService: SettingsService,
     private cringeManagementService: CringeManagementService,
     private deduplicationService: DeduplicationService,
-    private userModeratedPostService: UserModeratedPostService,
     private mattermostService: MattermostService,
     private trollService: TrollService,
     private parserSettings: ParserSettingsService
@@ -67,8 +65,6 @@ export class ObservatoryService implements OnModuleInit {
   });
 
   public onModuleInit(): void {
-    this.bot.use(this.userModeratedPostService.buildUserModeratePost());
-    this.onNewUserModeratedPost();
     this.waitDeleteObserverPost();
     // Меню ставится через `bot.use` до обработчика парсера: обработчик отдаёт
     // пост в предложку с `reply_markup: observatoryPostMenu`, а grammY умеет
@@ -79,11 +75,6 @@ export class ObservatoryService implements OnModuleInit {
     this.onParserPost();
   }
 
-  private onNewUserModeratedPost() {
-    this.userModeratedPostService.userModeratedPost$.subscribe(async (ctx) => {
-      await this.publishWithContext(ctx.mode, ctx);
-    });
-  }
 
   /**
    * Принимает пост от доверенного парсера: userbot форвардит найденный
@@ -219,12 +210,6 @@ export class ObservatoryService implements OnModuleInit {
           await this.rejectObserverPost(ctx);
         }
       })
-      .row()
-      .text(ObservatoryPostFormatter.MODERATE_BY_USERS_LABEL, async (ctx) => {
-        if (this.userService.checkPermission(ctx, UserPermissionEnum.IS_BASE_MODERATOR)) {
-          ctx.menu.nav(ObservatoryPostMenusEnum.USER_MODERATE_POST);
-        }
-      })
       .row();
 
     const publishSubmenu = new Menu<BotContext>(ObservatoryPostMenusEnum.OBSERVATORY_PUBLICATION, {
@@ -258,36 +243,7 @@ export class ObservatoryService implements OnModuleInit {
         ctx.menu.nav(ObservatoryPostMenusEnum.POST_MENU)
       );
 
-    const userModeratePost = new Menu<BotContext>(ObservatoryPostMenusEnum.USER_MODERATE_POST, {
-      autoAnswer: false,
-    })
-      .text(ObservatoryPostFormatter.PUBLISH_NOW_LABEL, async (ctx) =>
-        this.moderateViaUsers(ctx, PublicationModesEnum.NOW_SILENT)
-      )
-      .row()
-      .text(ObservatoryPostFormatter.PUBLISH_NEXT_INTERVAL_LABEL, async (ctx) =>
-        this.publishPost(ctx, PublicationModesEnum.NEXT_INTERVAL)
-      )
-      .row()
-      .text(ObservatoryPostFormatter.PUBLISH_NIGHT_LABEL, async (ctx) =>
-        this.moderateViaUsers(ctx, PublicationModesEnum.NEXT_NIGHT)
-      )
-      .text(ObservatoryPostFormatter.PUBLISH_MORNING_LABEL, async (ctx) =>
-        this.moderateViaUsers(ctx, PublicationModesEnum.NEXT_MORNING)
-      )
-      .text(ObservatoryPostFormatter.PUBLISH_MIDDAY_LABEL, async (ctx) =>
-        this.moderateViaUsers(ctx, PublicationModesEnum.NEXT_MIDDAY)
-      )
-      .text(ObservatoryPostFormatter.PUBLISH_EVENING_LABEL, async (ctx) =>
-        this.moderateViaUsers(ctx, PublicationModesEnum.NEXT_EVENING)
-      )
-      .row()
-      .text(ObservatoryPostFormatter.BACK_LABEL, (ctx) =>
-        ctx.menu.nav(ObservatoryPostMenusEnum.POST_MENU)
-      );
-
     this.observatoryPostMenu.register(publishSubmenu);
-    this.observatoryPostMenu.register(userModeratePost);
 
     this.bot.use(this.observatoryPostMenu);
   }
@@ -479,25 +435,4 @@ export class ObservatoryService implements OnModuleInit {
     });
   }
 
-  private async moderateViaUsers(ctx: BotContext, mode: PublicationModesEnum): Promise<void> {
-    const imageHash = await this.deduplicationService.getPostImageHash(
-      ctx?.callbackQuery?.message?.photo
-    );
-    const publishContext: ScheduledPostContextInterface = {
-      mode,
-      requestChannelMessageId: ctx.callbackQuery.message.message_id,
-      processedByModerator: ctx.callbackQuery.from.id,
-      isUserPost: false,
-      hash: imageHash,
-    };
-
-    const count = await this.userModeratedPostService.moderateViaUsers(ctx, publishContext);
-    const inlineKeyboard = this.formatter.moderatingUsersKeyboard(count);
-
-    await this.bot.api.editMessageReplyMarkup(
-      this.baseConfigService.userRequestMemeChannel,
-      publishContext.requestChannelMessageId,
-      { reply_markup: inlineKeyboard }
-    );
-  }
 }

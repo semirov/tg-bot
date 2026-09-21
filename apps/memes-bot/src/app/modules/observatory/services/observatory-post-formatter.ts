@@ -25,9 +25,6 @@ export class ObservatoryPostFormatter {
   /** Метка кнопки отклонения поста. */
   public static readonly REJECT_LABEL = 'Отклонить';
 
-  /** Метка кнопки пользовательской модерации. */
-  public static readonly MODERATE_BY_USERS_LABEL = 'На модерацию пользователям';
-
   /** Метка режима «Кринж» (общая с post-management). */
   public static readonly PUBLISH_NIGHT_CRINGE_LABEL = UserPostFormatter.PUBLISH_NIGHT_CRINGE_LABEL;
 
@@ -142,13 +139,4 @@ export class ObservatoryPostFormatter {
       .row();
   }
 
-  /**
-   * Клавиатура счётчика пользовательской модерации.
-   *
-   * @param count число пользователей, которым ушёл пост
-   * @returns клавиатура из одной кнопки-счётчика
-   */
-  public moderatingUsersKeyboard(count: number): InlineKeyboard {
-    return new InlineKeyboard().text(`👷 Модерируют пользователи (${count})`).row();
-  }
 }
