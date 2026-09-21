@@ -1,3 +1,10 @@
+# [0.27.0](https://github.com/semirov/tg-bot/compare/v0.26.3...v0.27.0) (2026-09-21)
+
+
+### Features
+
+* **ui:** цветные стили кнопок и disabled-статусы (Bot API 10.3) ([9214dd8](https://github.com/semirov/tg-bot/commit/9214dd8ecf68649b78a5b1b572aa434020d67513))
+
 ## [0.26.3](https://github.com/semirov/tg-bot/compare/v0.26.2...v0.26.3) (2026-09-21)
 
 
