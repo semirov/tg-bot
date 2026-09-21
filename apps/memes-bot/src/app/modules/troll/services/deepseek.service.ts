@@ -182,8 +182,13 @@ export class DeepSeekService {
         );
 
         const content: string = response.data?.choices?.[0]?.message?.content?.trim() ?? '';
+        const finishReason: string = response.data?.choices?.[0]?.finish_reason ?? '';
         // Сырой ответ модели пишем целиком — без него не разобрать поведение промпта.
         this.logger.debug(`${tag}LLM-ответ: ${this.flatten(content) || '(пусто)'}`);
+        if (finishReason === 'length') {
+          // Модель упёрлась в max_tokens — хвост мог обрезаться на её стороне.
+          this.logger.warn(`${tag}DeepSeek: ответ обрезан по max_tokens (${maxTokens})`);
+        }
 
         return content;
       } catch (error) {

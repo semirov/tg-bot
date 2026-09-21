@@ -167,9 +167,31 @@ function cleanModelText(input: string, maxChars: number): string {
   text = text.replace(/^[.,;:!?…\-—]+$/gm, '');
   text = collapseWhitespace(text);
   if (text.length > limit) {
-    text = text.slice(0, limit).trim();
+    text = truncateAtBoundary(text, limit);
   }
   return text;
+}
+
+/**
+ * Аккуратно усекает текст до limit: по границе предложения (в пределах нижней
+ * половины), иначе по последнему пробелу, иначе жёстко. Не рвёт слова и мысли
+ * посередине — иначе «хвост» ответа выглядит обрезанным.
+ */
+function truncateAtBoundary(text: string, limit: number): string {
+  const head = text.slice(0, limit);
+  const minBoundary = Math.floor(limit * 0.5);
+
+  const sentenceMatch = head.match(/[.!?…\n][^.!?…\n]*$/);
+  const sentenceEnd = sentenceMatch ? limit - sentenceMatch[0].length : -1;
+  if (sentenceEnd >= minBoundary) {
+    return head.slice(0, sentenceEnd + 1).trimEnd();
+  }
+
+  const lastSpace = head.lastIndexOf(' ');
+  if (lastSpace >= minBoundary) {
+    return `${head.slice(0, lastSpace).trimEnd()}…`;
+  }
+  return `${head.slice(0, Math.max(0, limit - 1)).trimEnd()}…`;
 }
 
 /**

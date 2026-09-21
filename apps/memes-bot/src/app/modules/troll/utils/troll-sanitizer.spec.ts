@@ -57,6 +57,26 @@ describe('troll-sanitizer', () => {
       expect(sanitizeModelText('aaaaaaaaaaaaaaaaaaaa', 5).length).toBeLessThanOrEqual(5);
     });
 
+    it('усекает по границе предложения, не рвя мысль', () => {
+      const input = 'Первое предложение тут. Второе предложение тоже длинное очень.';
+      const output = sanitizeModelText(input, 30);
+      expect(output.length).toBeLessThanOrEqual(30);
+      expect(output).toBe('Первое предложение тут');
+    });
+
+    it('без знаков препинания усекает по слову и ставит многоточие', () => {
+      const output = sanitizeModelText('слово слово слово слово слово слово', 15);
+      expect(output.length).toBeLessThanOrEqual(15);
+      expect(output.endsWith('…')).toBe(true);
+      expect(output).not.toContain('словосло');
+    });
+
+    it('одно длинное слово усекает с многоточием без переполнения', () => {
+      const output = sanitizeModelText('а'.repeat(50), 5);
+      expect(output.length).toBeLessThanOrEqual(5);
+      expect(output.endsWith('…')).toBe(true);
+    });
+
     it('оставляет точку у сокращения в конце строки', () => {
       expect(sanitizeModelText('Притянули ст.', 400)).toBe('Притянули ст.');
     });
