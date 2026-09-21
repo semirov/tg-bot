@@ -1,3 +1,10 @@
+## [0.26.1](https://github.com/semirov/tg-bot/compare/v0.26.0...v0.26.1) (2026-09-21)
+
+
+### Bug Fixes
+
+* **parser:** не залипает меню карточки при повторных кликах ([5e766ca](https://github.com/semirov/tg-bot/commit/5e766ca41334bfbf2f992d95abf9714030a4d729))
+
 # [0.26.0](https://github.com/semirov/tg-bot/compare/v0.25.0...v0.26.0) (2026-09-21)
 
 
