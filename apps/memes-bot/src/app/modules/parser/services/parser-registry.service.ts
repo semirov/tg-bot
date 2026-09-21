@@ -64,6 +64,16 @@ export class ParserRegistryService {
     });
   }
 
+  /** Сколько исключённых источников (для пагинации). */
+  public countExcluded(): Promise<number> {
+    return this.sourceRepository.count({ where: { excluded: true } });
+  }
+
+  /** Сколько источников в обороте (не исключённых). */
+  public countPopular(): Promise<number> {
+    return this.sourceRepository.count({ where: { excluded: false } });
+  }
+
   /** Источник в чёрном списке? */
   public async isExcluded(chatId: string | number): Promise<boolean> {
     const source = await this.sourceRepository.findOne({ where: { chatId: String(chatId) } });

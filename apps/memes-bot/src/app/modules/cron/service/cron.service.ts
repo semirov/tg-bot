@@ -57,6 +57,11 @@ export class CronService {
     if (!post) {
       return;
     }
+    // Пост могли снять, пока шла выборка — не публикуем «отменённое».
+    const stillScheduled = await this.postSchedulerService.getScheduledPostById(post.id);
+    if (!stillScheduled || stillScheduled.isPublished) {
+      return;
+    }
 
     const publishContext: ScheduledPostContextInterface = {
       mode: post.mode,

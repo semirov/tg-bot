@@ -55,6 +55,6 @@ import { ParserService } from './services/parser.service';
     ParserMenuService,
     ParserService,
   ],
-  exports: [ParserSettingsService, ParserRegistryService, ParserMenuService],
+  exports: [ParserSettingsService, ParserRegistryService, ParserMenuService, ParserModerationService],
 })
 export class ParserModule {}

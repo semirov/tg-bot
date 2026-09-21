@@ -19,7 +19,18 @@ import { BaseConfigService } from '../../config/base-config.service';
 import { ObservedStatus, CARD_CB_PREFIX } from '../constants/parser.constants';
 
 /** Действия карточки парсера в предложке. */
-export type CardAction = 'now' | 'q' | 'night' | 'rej' | 'excl' | 'exclok' | 'exclno';
+export type CardAction =
+  | 'now'
+  | 'q'
+  | 'night'
+  | 'rej'
+  | 'excl'
+  | 'exclok'
+  | 'exclno'
+  | 'unsched'
+  | 'unschedok'
+  | 'unschedno'
+  | 'done';
 import { ObservedPostEntity } from '../entities/observed-post.entity';
 import { ParserDeliveryService } from './parser-delivery.service';
 import { ParserDiscoveryService } from './parser-discovery.service';
@@ -51,7 +62,7 @@ export class ParserModerationService {
   /** Регистрирует callback-обработчики карточек и кандидатов (один раз). */
   public registerCallbacks(): void {
     this.bot.callbackQuery(
-      new RegExp(`^${CARD_CB_PREFIX}:(now|q|night|rej|excl|exclok|exclno):(\\d+)$`),
+      new RegExp(`^${CARD_CB_PREFIX}:(now|q|night|rej|excl|exclok|exclno|unsched|unschedok|unschedno|done):(\\d+)$`),
       async (ctx) => {
         const action = ctx.match?.[1] as CardAction;
         const postId = Number(ctx.match?.[2]);
@@ -75,6 +86,38 @@ export class ParserModerationService {
     const cardMessageId = ctx.callbackQuery?.message?.message_id;
     if (cardMessageId !== Number(candidate.requestChannelMessageId)) {
       await ctx.answerCallbackQuery('Пост устарел');
+      return;
+    }
+
+    // Кнопки-заглушки «уже обработано» — просто гасим спиннер.
+    if (action === 'done') {
+      await ctx.answerCallbackQuery('Уже обработано');
+      return;
+    }
+
+    // Снятие с публикации (кнопка с датой) — только с подтверждением.
+    if (action === 'unsched') {
+      if (!this.userService.checkPermission(ctx, UserPermissionEnum.ALLOW_PUBLISH_TO_CHANNEL)) {
+        await ctx.answerCallbackQuery('Нет прав');
+        return;
+      }
+      await ctx.answerCallbackQuery('Снять с публикации?');
+      await this.replaceKeyboard(ctx, this.delivery.buildUnscheduleConfirmKeyboard(candidate.id));
+      return;
+    }
+
+    if (action === 'unschedno') {
+      await ctx.answerCallbackQuery('Оставлено');
+      await this.replaceKeyboard(ctx, await this.buildScheduledKeyboard(candidate));
+      return;
+    }
+
+    if (action === 'unschedok') {
+      if (!this.userService.checkPermission(ctx, UserPermissionEnum.ALLOW_PUBLISH_TO_CHANNEL)) {
+        await ctx.answerCallbackQuery('Нет прав');
+        return;
+      }
+      await this.unschedule(ctx, candidate);
       return;
     }
 
@@ -198,7 +241,7 @@ export class ParserModerationService {
 
     await this.replaceKeyboard(
       ctx,
-      new InlineKeyboard().text(`${icon} Запланировано на ${formatted}`, `${CARD_CB_PREFIX}:done:${candidate.id}`)
+      new InlineKeyboard().text(`${icon} Запланировано на ${formatted} · снять`, `${CARD_CB_PREFIX}:unsched:${candidate.id}`)
     );
     await ctx.answerCallbackQuery('Запланировано');
   }
@@ -234,9 +277,57 @@ export class ParserModerationService {
 
     await this.replaceKeyboard(
       ctx,
-      new InlineKeyboard().text(`🌙 Ночь: ${formatted}`, `${CARD_CB_PREFIX}:done:${candidate.id}`)
+      new InlineKeyboard().text(`🌙 Ночь: ${formatted} · снять`, `${CARD_CB_PREFIX}:unsched:${candidate.id}`)
     );
     await ctx.answerCallbackQuery('В ночной кринж');
+  }
+
+  /** Снятие поста с публикации: убираем из сетки, карточка снова в модерации. */
+  public async unschedule(ctx: BotContext, candidate: ObservedPostEntity): Promise<void> {
+    const removed = await this.unscheduleByMessageId(Number(candidate.requestChannelMessageId));
+    if (!removed) {
+      // Пост уже опубликован/снят — состояние не трогаем, иначе можно опубликовать повторно.
+      await ctx.answerCallbackQuery('Уже не в сетке');
+      return;
+    }
+    await this.replaceKeyboard(ctx, this.delivery.buildKeyboard(candidate.id));
+    await ctx.answerCallbackQuery('Снято с публикации');
+  }
+
+  /**
+   * Снятие по сообщению карточки (для сетки в админке): убирает запись из
+   * планировщика и cringe, возвращает парсер-кандидата в модерацию.
+   */
+  public async unscheduleByMessageId(messageId: number): Promise<boolean> {
+    const removed = await this.scheduler.removeByRequestMessageId(messageId);
+    if (!removed) return false;
+
+    try {
+      await this.cringeManagement.repository.delete({ requestChannelMessageId: messageId });
+    } catch (error) {
+      this.logger.warn(`Parser moderation: не удалось убрать cringe-запись ${messageId}: ${error}`);
+    }
+
+    const candidate = await this.observedRepository.findOne({
+      where: { requestChannelMessageId: messageId, status: ObservedStatus.QUEUED },
+    });
+    if (candidate) {
+      candidate.status = ObservedStatus.DELIVERED;
+      await this.observedRepository.save(candidate);
+    }
+    return true;
+  }
+
+  /** Клавиатура запланированной карточки (кнопка с датой → снять). */
+  private async buildScheduledKeyboard(candidate: ObservedPostEntity): Promise<InlineKeyboard> {
+    const entry = await this.scheduler.findByRequestMessageId(Number(candidate.requestChannelMessageId));
+    if (!entry?.publishDate) {
+      return new InlineKeyboard().text('📋 Запланировано · снять', `${CARD_CB_PREFIX}:unsched:${candidate.id}`);
+    }
+    const date = PostSchedulerService.formatToMsk(entry.publishDate);
+    const formatted = `${String(date.getDate()).padStart(2, '0')}.${String(date.getMonth() + 1).padStart(2, '0')} ~${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+    const icon = entry.mode === PublicationModesEnum.NIGHT_CRINGE ? '🌙 Ночь:' : '📋 Запланировано на';
+    return new InlineKeyboard().text(`${icon} ${formatted} · снять`, `${CARD_CB_PREFIX}:unsched:${candidate.id}`);
   }
 
   /** Исключение источника карточки в чёрный список (с подтверждением). */

@@ -103,6 +103,7 @@ function makeCtx(overrides: any = {}): any {
     reply: jest.fn().mockResolvedValue({}),
     answerCallbackQuery: jest.fn().mockResolvedValue({}),
     editMessageReplyMarkup: jest.fn().mockResolvedValue({}),
+    editMessageText: jest.fn().mockResolvedValue({}),
     api: {
       sendMessage: jest.fn().mockResolvedValue({}),
       createChatInviteLink: jest.fn().mockResolvedValue({ invite_link: 'https://t.me/+invite' }),
@@ -218,6 +219,7 @@ describe('AdminMenuService', () => {
   let trollService: any;
   let trollSettings: any;
   let deepSeek: any;
+  let parserModeration: any;
 
   beforeEach(() => {
     bot = {
@@ -236,13 +238,24 @@ describe('AdminMenuService', () => {
       findById: jest.fn(),
       disableMemeLimitForUser: jest.fn().mockResolvedValue(undefined),
     };
-    baseConfigService = { userRequestMemeChannel: -1001234567890, memeChanelId: -1009876543210, bestMemeChanelId: -1002222222222 };
+    baseConfigService = {
+      userRequestMemeChannel: -1001234567890,
+      memeChanelId: -1009876543210,
+      bestMemeChanelId: -1002222222222,
+      ownerId: 999,
+    };
     clientBaseService = {
       lastObserverStatus: jest.fn().mockResolvedValue(false),
       toggleChannelObserver: jest.fn().mockResolvedValue(undefined),
       postDailyBestMeme: jest.fn().mockResolvedValue(undefined),
     };
-    postSchedulerService = { getScheduledPost: jest.fn().mockResolvedValue([]) };
+    postSchedulerService = {
+      getScheduledPost: jest.fn().mockResolvedValue([]),
+      getScheduledPostById: jest.fn().mockResolvedValue(null),
+      countUpcoming: jest.fn().mockResolvedValue(0),
+      getUpcomingPage: jest.fn().mockResolvedValue([]),
+      removeById: jest.fn().mockResolvedValue(1),
+    };
     yearResultsService = {
       generateYearResults: jest.fn(),
       formatGeneralStatistics: jest.fn().mockReturnValue('general-stats'),
@@ -261,6 +274,9 @@ describe('AdminMenuService', () => {
       reset: jest.fn().mockResolvedValue(undefined),
     };
     deepSeek = { usage: { requests: 12, tokens: 3456, costUsd: 0.5, peak: false } };
+    parserModeration = {
+      unscheduleByMessageId: jest.fn().mockResolvedValue(true),
+    };
 
     service = new AdminMenuService(
       bot,
@@ -274,7 +290,8 @@ describe('AdminMenuService', () => {
       deepSeek,
       {
         getMenu: jest.fn().mockReturnValue(new Menu<BotContext>('PARSER_SETTINGS_MENU')),
-      } as never
+      } as never,
+      parserModeration
     );
   });
 
@@ -393,10 +410,34 @@ describe('AdminMenuService', () => {
       expect(ctx.menu.nav).toHaveBeenCalledWith(AdminMenusEnum.TROLL_SETTINGS_MENU);
     });
 
+    it('главное меню: порядок кнопок и отсутствие дублей', async () => {
+      const { menu } = buildAdmin();
+      const ctx = makeCtx();
+      clientBaseService.lastObserverStatus.mockResolvedValue(false);
+      const kb = await rawKeyboard(menu, ctx);
+      const labels: string[] = [];
+      for (const row of kb) for (const btn of row) labels.push(await buttonText(btn, ctx));
+
+      expect(labels).toEqual([
+        '👥 Модераторы',
+        '➕ Добавить модератора',
+        '🎚 Управление лимитом мемов',
+        '🧭 Парсер мемов',
+        '📅 Сетка публикаций',
+        '🤖 Тролль-бот',
+        '👁 Обсерватория: запустить',
+        '🏆 Лучший пост в «Лучшее»',
+        '📣 Промо бота',
+        'Меню модератора',
+        'Меню пользователя',
+      ]);
+      expect(new Set(labels).size).toBe(labels.length);
+    });
+
     it('кнопка "Модераторы" ведёт к списку', async () => {
       const { menu } = buildAdmin();
       const ctx = makeCtx();
-      const btn = await findByText(menu, ctx, (t) => t === 'Модераторы');
+      const btn = await findByText(menu, ctx, (t) => t === '👥 Модераторы');
       await btn.middleware[0](ctx, jest.fn());
       expect(ctx.menu.nav).toHaveBeenCalledWith('moderators-list');
     });
@@ -404,20 +445,20 @@ describe('AdminMenuService', () => {
     it('кнопка добавления модератора запускает диалог', async () => {
       const { menu } = buildAdmin();
       const ctx = makeCtx();
-      const btn = await findByText(menu, ctx, (t) => t === 'Добавить модератора');
+      const btn = await findByText(menu, ctx, (t) => t === '➕ Добавить модератора');
       await btn.middleware[0](ctx, jest.fn());
       expect(ctx.conversation.enter).toHaveBeenCalledWith(
         ConversationsEnum.ADD_MODERATOR_CONVERSATION
       );
     });
 
-    it('обе кнопки лимита мемов ведут в меню управления лимитом', async () => {
+    it('лимит мемов — ровно одна кнопка, ведущая в меню управления лимитом', async () => {
       const { menu } = buildAdmin();
       const ctx = makeCtx();
-      const btns = await findAllByText(menu, ctx, (t) => t === 'Управление лимитом мемов');
-      expect(btns).toHaveLength(2);
-      for (const btn of btns) await btn.middleware[0](ctx, jest.fn());
-      expect(ctx.menu.nav).toHaveBeenCalledTimes(2);
+      const btns = await findAllByText(menu, ctx, (t) => t === '🎚 Управление лимитом мемов');
+      expect(btns).toHaveLength(1);
+      await btns[0].middleware[0](ctx, jest.fn());
+      expect(ctx.menu.nav).toHaveBeenCalledTimes(1);
       expect(ctx.menu.nav).toHaveBeenCalledWith('meme-limit-control');
     });
 
@@ -426,22 +467,31 @@ describe('AdminMenuService', () => {
       const ctx = makeCtx();
 
       clientBaseService.lastObserverStatus.mockResolvedValue(true);
-      let btn = await findByText(menu, ctx, (t) => t.includes('обсерваторию'));
-      expect(await buttonText(btn, ctx)).toBe('Остановить обсерваторию');
+      let btn = await findByText(menu, ctx, (t) => t.includes('Обсерватория'));
+      expect(await buttonText(btn, ctx)).toBe('👁 Обсерватория: остановить');
 
       clientBaseService.lastObserverStatus.mockResolvedValue(false);
-      btn = await findByText(menu, ctx, (t) => t.includes('обсерваторию'));
-      expect(await buttonText(btn, ctx)).toBe('Запустить обсерваторию');
+      btn = await findByText(menu, ctx, (t) => t.includes('Обсерватория'));
+      expect(await buttonText(btn, ctx)).toBe('👁 Обсерватория: запустить');
 
       await btn.middleware[0](ctx, jest.fn());
       expect(clientBaseService.toggleChannelObserver).toHaveBeenCalledTimes(1);
       expect(ctx.menu.update).toHaveBeenCalledTimes(1);
     });
 
+    it('обсерватория: не-владельцу недоступна', async () => {
+      const { menu } = buildAdmin();
+      const ctx = makeCtx({ config: { isOwner: false, user: {} } });
+      const btn = await findByText(menu, ctx, (t) => t.includes('Обсерватория'));
+      await btn.middleware[0](ctx, jest.fn());
+      expect(clientBaseService.toggleChannelObserver).not.toHaveBeenCalled();
+      expect(ctx.answerCallbackQuery).toHaveBeenCalledWith('Доступно только владельцу');
+    });
+
     it('промо бота отправляет инлайн-кнопку в канал', async () => {
       const { menu } = buildAdmin();
       const ctx = makeCtx();
-      const btn = await findByText(menu, ctx, (t) => t === 'Опубликовать промо бота');
+      const btn = await findByText(menu, ctx, (t) => t === '📣 Промо бота');
       await btn.middleware[0](ctx, jest.fn());
 
       expect(bot.api.sendMessage).toHaveBeenCalledTimes(1);
@@ -453,12 +503,22 @@ describe('AdminMenuService', () => {
       expect(opts.reply_markup.inline_keyboard[0][0].url).toBe('https://t.me/memes_bot');
     });
 
-    it('лучший пост дня отправляется от имени пользователя', async () => {
+    it('лучший пост дня отправляется в «Лучшее»', async () => {
       const { menu } = buildAdmin();
       const ctx = makeCtx();
-      const btn = await findByText(menu, ctx, (t) => t === 'Лучший пост в канал');
+      const btn = await findByText(menu, ctx, (t) => t === '🏆 Лучший пост в «Лучшее»');
       await btn.middleware[0](ctx, jest.fn());
       expect(clientBaseService.postDailyBestMeme).toHaveBeenCalledWith(-1002222222222);
+      expect(ctx.answerCallbackQuery).toHaveBeenCalledWith('Лучший пост опубликован в «Лучшее»');
+    });
+
+    it('лучший пост: не-владельцу недоступен', async () => {
+      const { menu } = buildAdmin();
+      const ctx = makeCtx({ config: { isOwner: false, user: {} } });
+      const btn = await findByText(menu, ctx, (t) => t === '🏆 Лучший пост в «Лучшее»');
+      await btn.middleware[0](ctx, jest.fn());
+      expect(clientBaseService.postDailyBestMeme).not.toHaveBeenCalled();
+      expect(ctx.answerCallbackQuery).toHaveBeenCalledWith('Доступно только владельцу');
     });
 
     it('кнопки меню модератора и пользователя отдают соответствующие клавиатуры', async () => {
@@ -479,44 +539,58 @@ describe('AdminMenuService', () => {
       });
     });
 
-    it('showPublicationGrid: группирует посты по режимам и шлёт HTML', async () => {
+    it('showPublicationGrid: forceSend шлёт новое сообщение, даже если есть callbackQuery', async () => {
       const { menu } = buildAdmin();
       const ctx = makeCtx();
-      postSchedulerService.getScheduledPost.mockResolvedValue([
-        makePost(PublicationModesEnum.NEXT_NIGHT, { isUserPost: true }),
-        makePost(PublicationModesEnum.NEXT_NIGHT),
-        makePost(PublicationModesEnum.NEXT_MORNING),
-        makePost(PublicationModesEnum.NIGHT_CRINGE),
-        makePost(PublicationModesEnum.NEXT_MIDDAY),
-        makePost(PublicationModesEnum.NEXT_EVENING),
+      postSchedulerService.countUpcoming.mockResolvedValue(1);
+      postSchedulerService.getUpcomingPage.mockResolvedValue([
+        makePost(PublicationModesEnum.NEXT_NIGHT, {
+          id: 77,
+          requestChannelMessageId: 42,
+          processedByModerator: { username: 'mod' },
+        }),
       ]);
 
-      const btn = await findByText(menu, ctx, (t) => t === 'Сетка публикаций');
+      const btn = await findByText(menu, ctx, (t) => t === '📅 Сетка публикаций');
       await btn.middleware[0](ctx, jest.fn());
 
-      expect(ctx.api.sendMessage).toHaveBeenCalledWith(
-        555,
-        expect.stringContaining('<b>Сетка публикаций</b>'),
-        { parse_mode: 'HTML' }
-      );
-      const message = ctx.api.sendMessage.mock.calls[0][1];
-      expect(message).toContain('<b>Кринж:</b>');
-      expect(message).toContain('<b>Ночь:</b>');
-      expect(message).toContain('<b>Утро:</b>');
-      expect(message).toContain('<b>День:</b>');
-      expect(message).toContain('<b>Вечер:</b>');
-      expect(message).toContain('👨');
-      expect(message).toContain('@mod');
-      expect(message).toContain('https://t.me/c/');
+      expect(postSchedulerService.getUpcomingPage).toHaveBeenCalledWith(8, 0);
+      expect(ctx.editMessageText).not.toHaveBeenCalled();
+      const [chatId, text, opts] = bot.api.sendMessage.mock.calls[0];
+      expect(chatId).toBe(555);
+      expect(text).toContain('<b>Сетка публикаций</b>');
+      expect(text).toContain('стр. 1/1');
+      expect(text).toContain('15.09 12:30');
+      expect(text).toContain('<a href="https://t.me/c/1234567890/42">пост</a>');
+      expect(text).toContain('@mod');
+      expect(opts.parse_mode).toBe('HTML');
+      const buttons = opts.reply_markup.inline_keyboard.flat();
+      expect(buttons.map((b: any) => b.callback_data)).toEqual(['sched:off:77:0']);
+      expect(buttons[0].text).toContain('🚫 Снять');
     });
 
-    it('showPublicationGrid: пустая сетка сообщает об отсутствии постов', async () => {
+    it('showPublicationGrid: пустая сетка показывает заглушку', async () => {
       const { menu } = buildAdmin();
       const ctx = makeCtx();
-      postSchedulerService.getScheduledPost.mockResolvedValue([]);
-      const btn = await findByText(menu, ctx, (t) => t === 'Сетка публикаций');
+      postSchedulerService.countUpcoming.mockResolvedValue(0);
+      postSchedulerService.getUpcomingPage.mockResolvedValue([]);
+
+      const btn = await findByText(menu, ctx, (t) => t === '📅 Сетка публикаций');
       await btn.middleware[0](ctx, jest.fn());
-      expect(ctx.api.sendMessage.mock.calls[0][1]).toContain('Постов нет');
+
+      const [, text, opts] = bot.api.sendMessage.mock.calls[0];
+      expect(text).toContain('— пусто —');
+      expect(opts.reply_markup.inline_keyboard.flat()).toHaveLength(0);
+    });
+
+    it('сетка: не-владельцу кнопка недоступна', async () => {
+      const { menu } = buildAdmin();
+      const ctx = makeCtx({ config: { isOwner: false, user: {} } });
+      const btn = await findByText(menu, ctx, (t) => t === '📅 Сетка публикаций');
+      await btn.middleware[0](ctx, jest.fn());
+      expect(postSchedulerService.countUpcoming).not.toHaveBeenCalled();
+      expect(bot.api.sendMessage).not.toHaveBeenCalled();
+      expect(ctx.answerCallbackQuery).toHaveBeenCalledWith('Доступно только владельцу');
     });
 
     it('getPostMessagesGrid: пустой список и список с постом', () => {
@@ -529,6 +603,328 @@ describe('AdminMenuService', () => {
       expect(filled).toContain('<b>Утро:</b>');
       expect(filled).toContain('https://t.me/c/');
       expect(filled).toContain('@mod');
+    });
+  });
+
+  describe('сетка публикаций: пагинация и снятие', () => {
+    function callbacks(): Record<string, any> {
+      service.onModuleInit();
+      const handlers: Record<string, any> = {};
+      for (const call of bot.callbackQuery.mock.calls) {
+        if (call[0] instanceof RegExp) handlers[call[0].source] = call[1];
+      }
+      return handlers;
+    }
+
+    it('вторая страница: пропуск и обе навигационные кнопки', async () => {
+      const handlers = callbacks();
+      const ctx = makeCtx({ match: ['sched:p:1', '1'] });
+      postSchedulerService.countUpcoming.mockResolvedValue(17);
+      postSchedulerService.getUpcomingPage.mockResolvedValue(
+        Array.from({ length: 8 }, (_, i) => ({
+          id: 100 + i,
+          requestChannelMessageId: i + 1,
+          publishDate: new Date('2026-09-15T09:30:00Z'),
+          processedByModerator: { username: 'mod' },
+        }))
+      );
+
+      await handlers['^sched:p:(\\d+)$'](ctx);
+
+      expect(postSchedulerService.getUpcomingPage).toHaveBeenCalledWith(8, 8);
+      const [text, opts] = ctx.editMessageText.mock.calls[0];
+      expect(text).toContain('стр. 2/3');
+      const data = opts.reply_markup.inline_keyboard.flat().map((b: any) => b.callback_data);
+      expect(data).toContain('sched:p:0');
+      expect(data).toContain('sched:p:2');
+      expect(data.filter((c: string) => c.startsWith('sched:off:'))).toHaveLength(8);
+    });
+
+    it('sendSchedulePage: страница вне диапазона прижимается к последней', async () => {
+      const ctx = makeCtx();
+      postSchedulerService.countUpcoming.mockResolvedValue(17);
+      postSchedulerService.getUpcomingPage.mockResolvedValue([]);
+
+      await service.sendSchedulePage(ctx, 9);
+
+      expect(postSchedulerService.getUpcomingPage).toHaveBeenCalledWith(8, 16);
+      expect(ctx.editMessageText.mock.calls[0][0]).toContain('стр. 3/3');
+    });
+
+    it('sendSchedulePage: нечисловая страница трактуется как первая', async () => {
+      const ctx = makeCtx();
+      postSchedulerService.countUpcoming.mockResolvedValue(1);
+      postSchedulerService.getUpcomingPage.mockResolvedValue([]);
+
+      await service.sendSchedulePage(ctx, NaN);
+
+      expect(postSchedulerService.getUpcomingPage).toHaveBeenCalledWith(8, 0);
+      expect(ctx.editMessageText.mock.calls[0][0]).toContain('стр. 1/1');
+    });
+
+    it('sendSchedulePage без callbackQuery шлёт новое сообщение', async () => {
+      const ctx = makeCtx({ callbackQuery: undefined });
+      postSchedulerService.countUpcoming.mockResolvedValue(0);
+      postSchedulerService.getUpcomingPage.mockResolvedValue([]);
+
+      await service.sendSchedulePage(ctx, 0);
+
+      expect(bot.api.sendMessage).toHaveBeenCalledWith(555, expect.any(String), {
+        parse_mode: 'HTML',
+        reply_markup: expect.any(InlineKeyboard),
+      });
+      expect(ctx.editMessageText).not.toHaveBeenCalled();
+    });
+
+    it('sendSchedulePage с forceSend шлёт новое сообщение вместо edit', async () => {
+      const ctx = makeCtx();
+      postSchedulerService.countUpcoming.mockResolvedValue(0);
+      postSchedulerService.getUpcomingPage.mockResolvedValue([]);
+
+      await service.sendSchedulePage(ctx, 0, true);
+
+      expect(ctx.editMessageText).not.toHaveBeenCalled();
+      expect(bot.api.sendMessage).toHaveBeenCalledWith(555, expect.any(String), {
+        parse_mode: 'HTML',
+        reply_markup: expect.any(InlineKeyboard),
+      });
+    });
+
+    it('строка без модератора не показывает @username', async () => {
+      const ctx = makeCtx();
+      postSchedulerService.countUpcoming.mockResolvedValue(1);
+      postSchedulerService.getUpcomingPage.mockResolvedValue([
+        {
+          id: 5,
+          requestChannelMessageId: 9,
+          publishDate: new Date('2026-09-15T09:30:00Z'),
+          processedByModerator: null,
+        },
+      ]);
+
+      await service.sendSchedulePage(ctx, 0);
+
+      const text = ctx.editMessageText.mock.calls[0][0];
+      expect(text).toContain('15.09 12:30');
+      expect(text).not.toContain('@');
+    });
+
+    it('без from новое сообщение уходит владельцу', async () => {
+      const ctx = makeCtx({ callbackQuery: undefined, from: undefined });
+      postSchedulerService.countUpcoming.mockResolvedValue(0);
+      postSchedulerService.getUpcomingPage.mockResolvedValue([]);
+
+      await service.sendSchedulePage(ctx, 0);
+
+      expect(bot.api.sendMessage).toHaveBeenCalledWith(
+        baseConfigService.ownerId,
+        expect.any(String),
+        expect.any(Object)
+      );
+    });
+
+    it('p без match трактуется как первая страница', async () => {
+      const handlers = callbacks();
+      const ctx = makeCtx({ match: undefined });
+      postSchedulerService.countUpcoming.mockResolvedValue(0);
+      postSchedulerService.getUpcomingPage.mockResolvedValue([]);
+
+      await handlers['^sched:p:(\\d+)$'](ctx);
+
+      expect(postSchedulerService.getUpcomingPage).toHaveBeenCalledWith(8, 0);
+    });
+
+    it('ошибка перерисовки сетки не роняет', async () => {
+      const ctx = makeCtx();
+      ctx.editMessageText.mockRejectedValue(new Error('message is not modified'));
+      const warnSpy = jest.spyOn(Logger, 'warn').mockImplementation(() => undefined as any);
+      postSchedulerService.countUpcoming.mockResolvedValue(0);
+      postSchedulerService.getUpcomingPage.mockResolvedValue([]);
+
+      await expect(service.sendSchedulePage(ctx, 0)).resolves.toBeUndefined();
+      expect(warnSpy).toHaveBeenCalled();
+    });
+
+    it('ошибка клавиатуры confirm-снятия не роняет', async () => {
+      const handlers = callbacks();
+      const ctx = makeCtx({ match: ['sched:off:77:0', '77', '0'] });
+      ctx.editMessageReplyMarkup.mockRejectedValue(new Error('message is not modified'));
+      const warnSpy = jest.spyOn(Logger, 'warn').mockImplementation(() => undefined as any);
+
+      await expect(handlers['^sched:off:(\\d+):(\\d+)$'](ctx)).resolves.toBeUndefined();
+      expect(warnSpy).toHaveBeenCalled();
+    });
+
+    it('sched:off рисует confirm-клавиатуру', async () => {
+      const handlers = callbacks();
+      const ctx = makeCtx({ match: ['sched:off:77:0', '77', '0'] });
+
+      await handlers['^sched:off:(\\d+):(\\d+)$'](ctx);
+
+      expect(ctx.answerCallbackQuery).toHaveBeenCalledWith('Снять с публикации?');
+      const keyboard = ctx.editMessageReplyMarkup.mock.calls[0][0].reply_markup as InlineKeyboard;
+      expect(keyboard.inline_keyboard.flat().map((b: any) => b.callback_data)).toEqual([
+        'sched:offok:77:0',
+        'sched:offno:77:0',
+      ]);
+    });
+
+    it('sched:offok снимает по id и перерисовывает сетку', async () => {
+      const handlers = callbacks();
+      const ctx = makeCtx({ match: ['sched:offok:77:0', '77', '0'] });
+      postSchedulerService.removeById.mockResolvedValue(1);
+
+      await handlers['^sched:offok:(\\d+):(\\d+)$'](ctx);
+
+      expect(postSchedulerService.removeById).toHaveBeenCalledWith(77);
+      expect(ctx.answerCallbackQuery).toHaveBeenCalledWith('Снято с публикации');
+      expect(ctx.editMessageText).toHaveBeenCalled();
+    });
+
+    it('sched:offok с messageId снимает через parserModeration', async () => {
+      const handlers = callbacks();
+      const ctx = makeCtx({ match: ['sched:offok:77:0', '77', '0'] });
+      postSchedulerService.getScheduledPostById.mockResolvedValue({
+        id: 77,
+        requestChannelMessageId: 55,
+      });
+      parserModeration.unscheduleByMessageId.mockResolvedValue(true);
+
+      await handlers['^sched:offok:(\\d+):(\\d+)$'](ctx);
+
+      expect(postSchedulerService.getScheduledPostById).toHaveBeenCalledWith(77);
+      expect(parserModeration.unscheduleByMessageId).toHaveBeenCalledWith(55);
+      expect(postSchedulerService.removeById).not.toHaveBeenCalled();
+      expect(ctx.answerCallbackQuery).toHaveBeenCalledWith('Снято с публикации');
+    });
+
+    it('sched:offok с messageId: уже снято → «Уже снято»', async () => {
+      const handlers = callbacks();
+      const ctx = makeCtx({ match: ['sched:offok:77:0', '77', '0'] });
+      postSchedulerService.getScheduledPostById.mockResolvedValue({
+        id: 77,
+        requestChannelMessageId: '55',
+      });
+      parserModeration.unscheduleByMessageId.mockResolvedValue(false);
+
+      await handlers['^sched:offok:(\\d+):(\\d+)$'](ctx);
+
+      expect(parserModeration.unscheduleByMessageId).toHaveBeenCalledWith(55);
+      expect(ctx.answerCallbackQuery).toHaveBeenCalledWith('Уже снято');
+    });
+
+    it('sched:offok: запись уже снята → «Уже снято»', async () => {
+      const handlers = callbacks();
+      const ctx = makeCtx({ match: ['sched:offok:77:0', '77', '0'] });
+      postSchedulerService.removeById.mockResolvedValue(0);
+
+      await handlers['^sched:offok:(\\d+):(\\d+)$'](ctx);
+
+      expect(ctx.answerCallbackQuery).toHaveBeenCalledWith('Уже снято');
+      expect(ctx.answerCallbackQuery).toHaveBeenCalledTimes(1);
+    });
+
+    it('sched:offok: ошибка удаления отвечает и логируется', async () => {
+      const handlers = callbacks();
+      const ctx = makeCtx({ match: ['sched:offok:77:0', '77', '0'] });
+      postSchedulerService.removeById.mockRejectedValue(new Error('db down'));
+      const warnSpy = jest.spyOn(Logger, 'warn').mockImplementation(() => undefined as any);
+      postSchedulerService.countUpcoming.mockResolvedValue(0);
+      postSchedulerService.getUpcomingPage.mockResolvedValue([]);
+
+      await expect(handlers['^sched:offok:(\\d+):(\\d+)$'](ctx)).resolves.toBeUndefined();
+
+      expect(ctx.answerCallbackQuery).toHaveBeenCalledWith('Ошибка снятия');
+      expect(warnSpy).toHaveBeenCalled();
+      expect(ctx.editMessageText).toHaveBeenCalled();
+    });
+
+    it('sched:offno перерисовывает сетку', async () => {
+      const handlers = callbacks();
+      const ctx = makeCtx({ match: ['sched:offno:77:0', '77', '0'] });
+      postSchedulerService.countUpcoming.mockResolvedValue(0);
+      postSchedulerService.getUpcomingPage.mockResolvedValue([]);
+
+      await handlers['^sched:offno:(\\d+):(\\d+)$'](ctx);
+
+      expect(ctx.answerCallbackQuery).toHaveBeenCalledWith('Оставлено');
+      expect(ctx.editMessageText).toHaveBeenCalled();
+    });
+
+    it('sched:off без match не роняет и подменяет клавиатуру', async () => {
+      const handlers = callbacks();
+      const ctx = makeCtx({ match: undefined });
+
+      await expect(handlers['^sched:off:(\\d+):(\\d+)$'](ctx)).resolves.toBeUndefined();
+
+      expect(ctx.answerCallbackQuery).toHaveBeenCalledWith('Снять с публикации?');
+      expect(ctx.editMessageReplyMarkup).toHaveBeenCalled();
+    });
+
+    it('sched:offno без match уходит на первую страницу', async () => {
+      const handlers = callbacks();
+      const ctx = makeCtx({ match: undefined });
+      postSchedulerService.countUpcoming.mockResolvedValue(0);
+      postSchedulerService.getUpcomingPage.mockResolvedValue([]);
+
+      await expect(handlers['^sched:offno:(\\d+):(\\d+)$'](ctx)).resolves.toBeUndefined();
+
+      expect(postSchedulerService.getUpcomingPage).toHaveBeenCalledWith(8, 0);
+      expect(ctx.answerCallbackQuery).toHaveBeenCalledWith('Оставлено');
+    });
+
+    it('sched:offok без match снимает NaN-id и отвечает', async () => {
+      const handlers = callbacks();
+      const ctx = makeCtx({ match: undefined });
+      postSchedulerService.countUpcoming.mockResolvedValue(0);
+      postSchedulerService.getUpcomingPage.mockResolvedValue([]);
+
+      await expect(handlers['^sched:offok:(\\d+):(\\d+)$'](ctx)).resolves.toBeUndefined();
+
+      expect(postSchedulerService.removeById).toHaveBeenCalledWith(NaN);
+      expect(ctx.answerCallbackQuery).toHaveBeenCalledWith('Снято с публикации');
+    });
+
+    it('sendScheduleMessage без forceSend редактирует сообщение (default-параметр)', async () => {
+      const ctx = makeCtx();
+      const keyboard = new InlineKeyboard();
+
+      await (service as any).sendScheduleMessage(ctx, 'txt', keyboard);
+
+      expect(ctx.editMessageText).toHaveBeenCalledWith('txt', {
+        parse_mode: 'HTML',
+        reply_markup: keyboard,
+      });
+      expect(bot.api.sendMessage).not.toHaveBeenCalled();
+    });
+
+    it('не-владелец не может листать и снимать', async () => {
+      const handlers = callbacks();
+      const ctx = makeCtx({ config: { isOwner: false, user: {} }, match: [] });
+
+      await handlers['^sched:p:(\\d+)$'](ctx);
+      await handlers['^sched:off:(\\d+):(\\d+)$'](ctx);
+      await handlers['^sched:offno:(\\d+):(\\d+)$'](ctx);
+      await handlers['^sched:offok:(\\d+):(\\d+)$'](ctx);
+
+      expect(ctx.answerCallbackQuery).toHaveBeenCalledTimes(4);
+      expect(ctx.answerCallbackQuery).toHaveBeenCalledWith('Только владелец');
+      expect(ctx.editMessageText).not.toHaveBeenCalled();
+      expect(ctx.editMessageReplyMarkup).not.toHaveBeenCalled();
+      expect(postSchedulerService.removeById).not.toHaveBeenCalled();
+    });
+
+    it('отсутствие config считается не-владельцем', async () => {
+      const handlers = callbacks();
+      const ctx = makeCtx({ config: undefined, match: [] });
+
+      await handlers['^sched:p:(\\d+)$'](ctx);
+      await handlers['^sched:off:(\\d+):(\\d+)$'](ctx);
+      await handlers['^sched:offno:(\\d+):(\\d+)$'](ctx);
+      await handlers['^sched:offok:(\\d+):(\\d+)$'](ctx);
+
+      expect(ctx.answerCallbackQuery).toHaveBeenCalledWith('Только владелец');
+      expect(postSchedulerService.removeById).not.toHaveBeenCalled();
     });
   });
 

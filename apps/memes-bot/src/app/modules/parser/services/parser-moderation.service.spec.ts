@@ -49,11 +49,16 @@ const makeUserService = (allowed = true): any => ({
 
 const makeScheduler = (): any => ({
   addPostToSchedule: jest.fn().mockResolvedValue(new Date('2026-09-20T03:00:00Z')),
+  findByRequestMessageId: jest.fn().mockResolvedValue(null),
+  removeByRequestMessageId: jest.fn().mockResolvedValue(1),
   formatToMsk: (date: Date) => date,
 });
 
 const makeCringe = (): any => ({
-  repository: { insert: jest.fn().mockResolvedValue(undefined) },
+  repository: {
+    insert: jest.fn().mockResolvedValue(undefined),
+    delete: jest.fn().mockResolvedValue({ affected: 1 }),
+  },
 });
 
 const makeDedup = (): any => ({
@@ -69,6 +74,7 @@ const makeConfig = (): any => ({
 const makeDelivery = (): any => ({
   buildKeyboard: jest.fn().mockReturnValue({ keyboard: 'main' }),
   buildExcludeConfirmKeyboard: jest.fn().mockReturnValue({ keyboard: 'confirm' }),
+  buildUnscheduleConfirmKeyboard: jest.fn().mockReturnValue({ keyboard: 'unsched-confirm' }),
 });
 
 const makeRegistry = (): any => ({
@@ -202,6 +208,17 @@ describe('ParserModerationService', () => {
     await service.handleAction(ctx, 'now', 10);
 
     expect(ctx.answerCallbackQuery).toHaveBeenCalledWith('Уже обработано');
+  });
+
+  it('done: кнопка-заглушка просто гасит спиннер, клавиатура не меняется', async () => {
+    const { service, observedRepo } = setup();
+    const ctx = makeCtx();
+
+    await service.handleAction(ctx, 'done', 10);
+
+    expect(ctx.answerCallbackQuery).toHaveBeenCalledWith('Уже обработано');
+    expect(ctx.editMessageReplyMarkup).not.toHaveBeenCalled();
+    expect(observedRepo.save).not.toHaveBeenCalled();
   });
 
   describe('исключение источника', () => {
@@ -339,6 +356,21 @@ describe('ParserModerationService', () => {
       expect(ctx.editMessageReplyMarkup).toHaveBeenCalled();
     });
 
+    it('кнопка запланированной карточки ведёт на снятие (prs:unsched)', async () => {
+      const { service } = setup();
+      const ctx = makeCtx();
+
+      await service.handleAction(ctx, 'q', 10);
+
+      const keyboard = ctx.editMessageReplyMarkup.mock.calls[0][0].reply_markup as unknown as {
+        inline_keyboard: Array<Array<{ text: string; callback_data: string }>>;
+      };
+      const button = keyboard.inline_keyboard.flat()[0];
+      expect(button.callback_data).toBe('prs:unsched:10');
+      expect(button.text).toContain('· снять');
+      expect(button.text).toContain('Запланировано');
+    });
+
     it('уже запланирован → ответ без изменений', async () => {
       const { service, observedRepo, scheduler } = setup();
       scheduler.addPostToSchedule.mockResolvedValue(undefined);
@@ -379,6 +411,21 @@ describe('ParserModerationService', () => {
       expect(ctx.answerCallbackQuery).toHaveBeenCalledWith('В ночной кринж');
     });
 
+    it('ночная карточка тоже ставит кнопку снятия (prs:unsched)', async () => {
+      const { service } = setup();
+      const ctx = makeCtx();
+
+      await service.handleAction(ctx, 'night', 10);
+
+      const keyboard = ctx.editMessageReplyMarkup.mock.calls[0][0].reply_markup as unknown as {
+        inline_keyboard: Array<Array<{ text: string; callback_data: string }>>;
+      };
+      const button = keyboard.inline_keyboard.flat()[0];
+      expect(button.callback_data).toBe('prs:unsched:10');
+      expect(button.text).toContain('🌙 Ночь:');
+      expect(button.text).toContain('· снять');
+    });
+
     it('не планируем второй раз → cringe-запись не создаётся', async () => {
       const { service, cringe, scheduler } = setup();
       scheduler.addPostToSchedule.mockResolvedValue(undefined);
@@ -399,6 +446,133 @@ describe('ParserModerationService', () => {
       expect(scheduler.addPostToSchedule).toHaveBeenCalledWith(
         expect.objectContaining({ processedByModerator: 1 })
       );
+    });
+  });
+
+  describe('снятие с публикации', () => {
+    it('unsched: запрашивает подтверждение и подменяет клавиатуру', async () => {
+      const { service, delivery } = setup();
+      const ctx = makeCtx();
+
+      await service.handleAction(ctx, 'unsched', 10);
+
+      expect(delivery.buildUnscheduleConfirmKeyboard).toHaveBeenCalledWith(10);
+      expect(ctx.answerCallbackQuery).toHaveBeenCalledWith('Снять с публикации?');
+      expect(ctx.editMessageReplyMarkup).toHaveBeenCalledWith({
+        reply_markup: delivery.buildUnscheduleConfirmKeyboard(),
+      });
+    });
+
+    it('unsched: без прав не подтверждает', async () => {
+      const { service, delivery } = setup({ allowed: false });
+      const ctx = makeCtx();
+
+      await service.handleAction(ctx, 'unsched', 10);
+
+      expect(delivery.buildUnscheduleConfirmKeyboard).not.toHaveBeenCalled();
+      expect(ctx.answerCallbackQuery).toHaveBeenCalledWith('Нет прав');
+    });
+
+    it('unschedno: восстанавливает клавиатуру с датой и режимом', async () => {
+      const { service, scheduler } = setup();
+      scheduler.findByRequestMessageId.mockResolvedValue({
+        publishDate: new Date('2026-09-20T03:00:00Z'),
+        mode: PublicationModesEnum.NEXT_INTERVAL,
+      });
+      const ctx = makeCtx();
+
+      await service.handleAction(ctx, 'unschedno', 10);
+
+      expect(scheduler.findByRequestMessageId).toHaveBeenCalledWith(7777);
+      expect(ctx.answerCallbackQuery).toHaveBeenCalledWith('Оставлено');
+      const keyboard = ctx.editMessageReplyMarkup.mock.calls[0][0].reply_markup as unknown as {
+        inline_keyboard: Array<Array<{ text: string; callback_data: string }>>;
+      };
+      const button = keyboard.inline_keyboard.flat()[0];
+      expect(button.callback_data).toBe('prs:unsched:10');
+      expect(button.text).toContain('📋 Запланировано на');
+      expect(button.text).toContain('· снять');
+    });
+
+    it('unschedno: ночной режим помечается луной', async () => {
+      const { service, scheduler } = setup();
+      scheduler.findByRequestMessageId.mockResolvedValue({
+        publishDate: new Date('2026-09-20T03:00:00Z'),
+        mode: PublicationModesEnum.NIGHT_CRINGE,
+      });
+      const ctx = makeCtx();
+
+      await service.handleAction(ctx, 'unschedno', 10);
+
+      const keyboard = ctx.editMessageReplyMarkup.mock.calls[0][0].reply_markup as unknown as {
+        inline_keyboard: Array<Array<{ text: string; callback_data: string }>>;
+      };
+      expect(keyboard.inline_keyboard.flat()[0].text).toContain('🌙 Ночь:');
+    });
+
+    it('unschedno: без записи в сетке — дефолтная подпись', async () => {
+      const { service, scheduler } = setup();
+      scheduler.findByRequestMessageId.mockResolvedValue(null);
+      const ctx = makeCtx();
+
+      await service.handleAction(ctx, 'unschedno', 10);
+
+      const keyboard = ctx.editMessageReplyMarkup.mock.calls[0][0].reply_markup as unknown as {
+        inline_keyboard: Array<Array<{ text: string; callback_data: string }>>;
+      };
+      expect(keyboard.inline_keyboard.flat()[0]).toEqual({
+        text: '📋 Запланировано · снять',
+        callback_data: 'prs:unsched:10',
+      });
+    });
+
+    it('unschedok: снимает из сетки, возвращает карточку в модерацию', async () => {
+      const { service, observedRepo, scheduler, cringe, delivery } = setup({
+        candidate: { status: ObservedStatus.QUEUED },
+      });
+      scheduler.removeByRequestMessageId.mockResolvedValue(1);
+      const ctx = makeCtx();
+
+      await service.handleAction(ctx, 'unschedok', 10);
+
+      expect(scheduler.removeByRequestMessageId).toHaveBeenCalledWith(7777);
+      expect(cringe.repository.delete).toHaveBeenCalledWith({ requestChannelMessageId: 7777 });
+      expect(observedRepo.save).toHaveBeenCalledWith(
+        expect.objectContaining({ status: ObservedStatus.DELIVERED })
+      );
+      expect(delivery.buildKeyboard).toHaveBeenCalledWith(10);
+      expect(ctx.answerCallbackQuery).toHaveBeenCalledWith('Снято с публикации');
+    });
+
+    it('unschedok: без прав не снимает', async () => {
+      const { service, scheduler } = setup({ allowed: false });
+      const ctx = makeCtx();
+
+      await service.handleAction(ctx, 'unschedok', 10);
+
+      expect(scheduler.removeByRequestMessageId).not.toHaveBeenCalled();
+      expect(ctx.answerCallbackQuery).toHaveBeenCalledWith('Нет прав');
+    });
+
+    it('unschedule: записи уже нет → «Уже не в сетке»', async () => {
+      const { service, observedRepo, scheduler } = setup();
+      scheduler.removeByRequestMessageId.mockResolvedValue(0);
+      const ctx = makeCtx();
+
+      await service.unschedule(ctx, candidate());
+
+      expect(ctx.answerCallbackQuery).toHaveBeenCalledWith('Уже не в сетке');
+      expect(observedRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('unschedule: ошибка удаления cringe-записи не ломает снятие', async () => {
+      const { service, cringe, scheduler } = setup();
+      scheduler.removeByRequestMessageId.mockResolvedValue(1);
+      cringe.repository.delete.mockRejectedValue(new Error('db down'));
+      const ctx = makeCtx();
+
+      await expect(service.unschedule(ctx, candidate())).resolves.toBeUndefined();
+      expect(ctx.answerCallbackQuery).toHaveBeenCalledWith('Снято с публикации');
     });
   });
 
@@ -467,5 +641,49 @@ describe('ParserModerationService', () => {
 
     await expect(service.handleAction(ctx, 'q', 10)).resolves.toBeUndefined();
     expect(ctx.answerCallbackQuery).toHaveBeenCalledWith('Запланировано');
+  });
+
+  describe('граничные ветки', () => {
+    it('queue без callbackQuery и без хеша использует владельца', async () => {
+      const { service, scheduler } = setup();
+      const ctx = makeCtx({ callbackQuery: undefined });
+
+      await service.queue(
+        ctx,
+        candidate({ imageHash: null }),
+        PublicationModesEnum.NEXT_INTERVAL,
+        '📋'
+      );
+
+      expect(scheduler.addPostToSchedule).toHaveBeenCalledWith(
+        expect.objectContaining({ processedByModerator: 1, hash: '' })
+      );
+    });
+
+    it('publishNight без callbackQuery и без хеша использует владельца', async () => {
+      const { service, scheduler } = setup();
+      const ctx = makeCtx({ callbackQuery: undefined });
+
+      await service.publishNight(ctx, candidate({ imageHash: null }));
+
+      expect(scheduler.addPostToSchedule).toHaveBeenCalledWith(
+        expect.objectContaining({ processedByModerator: 1, hash: '' })
+      );
+    });
+
+    it('unschedno: запись без publishDate даёт дефолтную подпись', async () => {
+      const { service, scheduler } = setup();
+      scheduler.findByRequestMessageId.mockResolvedValue({
+        mode: PublicationModesEnum.NEXT_INTERVAL,
+      });
+      const ctx = makeCtx();
+
+      await service.handleAction(ctx, 'unschedno', 10);
+
+      const keyboard = ctx.editMessageReplyMarkup.mock.calls[0][0].reply_markup as unknown as {
+        inline_keyboard: Array<Array<{ text: string }>>;
+      };
+      expect(keyboard.inline_keyboard.flat()[0].text).toBe('📋 Запланировано · снять');
+    });
   });
 });

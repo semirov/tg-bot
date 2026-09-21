@@ -429,6 +429,13 @@ export class ParserDeliveryService {
     }
   }
 
+  /** Клавиатура подтверждения снятия с публикации. */
+  public buildUnscheduleConfirmKeyboard(candidateId: number): InlineKeyboard {
+    return new InlineKeyboard()
+      .text('✅ Снять с публикации', `${CARD_CB_PREFIX}:unschedok:${candidateId}`)
+      .text('↩️ Отмена', `${CARD_CB_PREFIX}:unschedno:${candidateId}`);
+  }
+
   /** Клавиатура подтверждения исключения источника. */
   public buildExcludeConfirmKeyboard(candidateId: number): InlineKeyboard {
     return new InlineKeyboard()

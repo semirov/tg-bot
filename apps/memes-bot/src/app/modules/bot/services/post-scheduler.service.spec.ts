@@ -12,6 +12,7 @@ function setup() {
     create: jest.fn().mockImplementation((value) => value),
     save: jest.fn().mockResolvedValue(undefined),
     update: jest.fn().mockResolvedValue({ affected: 1 }),
+    delete: jest.fn().mockResolvedValue({ affected: 1 }),
   } as any;
   const service = new PostSchedulerService(repo);
   return { service, repo };
@@ -281,6 +282,102 @@ describe('PostSchedulerService', () => {
       });
       const arg = repo.find.mock.calls[0][0];
       expect(arg.where.publishDate.value).toBeInstanceOf(Date);
+    });
+  });
+
+  describe('getUpcomingPage', () => {
+    it('берёт страницу предстоящих постов с модератором, стабильным порядком и пропуском', async () => {
+      const { service, repo } = setup();
+      const now = msk(2026, 1, 15, 10, 0);
+      withNow(now);
+      const posts = [{ id: 1 }];
+      repo.find.mockResolvedValue(posts);
+
+      await expect(service.getUpcomingPage(8, 16)).resolves.toBe(posts);
+      expect(repo.find).toHaveBeenCalledWith({
+        where: { publishDate: expect.anything(), isPublished: false },
+        relations: { processedByModerator: true },
+        order: { publishDate: 'ASC', id: 'ASC' },
+        take: 8,
+        skip: 16,
+        cache: false,
+      });
+      const arg = repo.find.mock.calls[0][0];
+      // cutoff — «сейчас» хоста (UTC), без сдвига в московскую зону.
+      expect(arg.where.publishDate.value).toBeInstanceOf(Date);
+      expect(arg.where.publishDate.value.getTime()).toBe(now.getTime());
+    });
+  });
+
+  describe('countUpcoming', () => {
+    it('считает будущие неопубликованные записи от текущего момента', async () => {
+      const { service, repo } = setup();
+      const now = msk(2026, 1, 15, 10, 0);
+      withNow(now);
+      repo.count.mockResolvedValue(17);
+
+      await expect(service.countUpcoming()).resolves.toBe(17);
+      expect(repo.count).toHaveBeenCalledWith({
+        where: { publishDate: expect.anything(), isPublished: false },
+      });
+      const arg = repo.count.mock.calls[0][0];
+      expect(arg.where.publishDate.value).toBeInstanceOf(Date);
+      expect(arg.where.publishDate.value.getTime()).toBe(now.getTime());
+    });
+  });
+
+  describe('findByRequestMessageId', () => {
+    it('ищет неопубликованную запись по сообщению, свежую первой', async () => {
+      const { service, repo } = setup();
+      const post = { id: 4 };
+      repo.findOne.mockResolvedValue(post);
+
+      await expect(service.findByRequestMessageId(7777)).resolves.toBe(post);
+      expect(repo.findOne).toHaveBeenCalledWith({
+        where: { requestChannelMessageId: 7777, isPublished: false },
+        order: { id: 'DESC' },
+      });
+    });
+  });
+
+  describe('removeByRequestMessageId', () => {
+    it('удаляет записи по сообщению и возвращает число affected', async () => {
+      const { service, repo } = setup();
+      repo.delete.mockResolvedValue({ affected: 2 });
+
+      await expect(service.removeByRequestMessageId(7777)).resolves.toBe(2);
+      expect(repo.delete).toHaveBeenCalledWith({
+        requestChannelMessageId: 7777,
+        isPublished: false,
+      });
+    });
+
+    it('приводит id к числу и при отсутствии affected отдаёт 0', async () => {
+      const { service, repo } = setup();
+      repo.delete.mockResolvedValue({});
+
+      await expect(service.removeByRequestMessageId('5' as never)).resolves.toBe(0);
+      expect(repo.delete).toHaveBeenCalledWith({
+        requestChannelMessageId: 5,
+        isPublished: false,
+      });
+    });
+  });
+
+  describe('removeById', () => {
+    it('удаляет запись по id и возвращает число affected', async () => {
+      const { service, repo } = setup();
+      repo.delete.mockResolvedValue({ affected: 1 });
+
+      await expect(service.removeById(12)).resolves.toBe(1);
+      expect(repo.delete).toHaveBeenCalledWith({ id: 12, isPublished: false });
+    });
+
+    it('при отсутствии affected отдаёт 0', async () => {
+      const { service, repo } = setup();
+      repo.delete.mockResolvedValue({ affected: undefined });
+
+      await expect(service.removeById(12)).resolves.toBe(0);
     });
   });
 });

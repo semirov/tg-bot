@@ -19,6 +19,7 @@ import { channelInternalId } from '../../shared/publication/telegram-link';
 import { formatUsd } from '../troll/constants/deepseek-pricing';
 import { DeepSeekService } from '../troll/services/deepseek.service';
 import { ParserMenuService } from '../parser/services/parser-menu.service';
+import { ParserModerationService } from '../parser/services/parser-moderation.service';
 import { TrollSettingsService } from '../troll/services/troll-settings.service';
 import { TrollService } from '../troll/services/troll.service';
 import {
@@ -48,7 +49,8 @@ export class AdminMenuService implements OnModuleInit {
     private trollService: TrollService,
     private trollSettings: TrollSettingsService,
     private deepSeek: DeepSeekService,
-    private parserMenuService: ParserMenuService
+    private parserMenuService: ParserMenuService,
+    private parserModeration: ParserModerationService
   ) {}
 
   /** Пропускает действие только для владельца; остальным пишет отказ. */
@@ -62,6 +64,7 @@ export class AdminMenuService implements OnModuleInit {
   }
 
   onModuleInit() {
+    this.registerScheduleCallbacks();
     this.bot.errorBoundary(
       (err) => Logger.log(err),
       createConversation(
@@ -98,15 +101,23 @@ export class AdminMenuService implements OnModuleInit {
     moderatorStartMenu: Menu<BotContext>
   ): Menu<BotContext> {
     const menu = new Menu<BotContext>(AdminMenusEnum.ADMIN_START_MENU)
-      .text('Модераторы', (ctx) => ctx.menu.nav('moderators-list'))
+      .text('👥 Модераторы', (ctx) => ctx.menu.nav('moderators-list'))
       .row()
-      .text('Добавить модератора', async (ctx) =>
+      .text('➕ Добавить модератора', async (ctx) =>
         ctx.conversation.enter(ConversationsEnum.ADD_MODERATOR_CONVERSATION)
       )
       .row()
-      .text('Управление лимитом мемов', (ctx) => ctx.menu.nav('meme-limit-control'))
+      .text('🎚 Управление лимитом мемов', (ctx) => ctx.menu.nav('meme-limit-control'))
       .row()
-      .text('Управление лимитом мемов', (ctx) => ctx.menu.nav('meme-limit-control'))
+      .text(
+        '🧭 Парсер мемов',
+        this.ownerGuard((ctx) => ctx.menu.nav(AdminMenusEnum.PARSER_SETTINGS_MENU))
+      )
+      .row()
+      .text(
+        '📅 Сетка публикаций',
+        this.ownerGuard(async (ctx) => this.showPublicationGrid(ctx))
+      )
       .row()
       .text(
         '🤖 Тролль-бот',
@@ -114,33 +125,25 @@ export class AdminMenuService implements OnModuleInit {
       )
       .row()
       .text(
-        '🧭 Парсер',
-        this.ownerGuard((ctx) => ctx.menu.nav(AdminMenusEnum.PARSER_SETTINGS_MENU))
-      )
-      .row()
-      .text('Сетка публикаций', async (ctx) => this.showPublicationGrid(ctx))
-      .row()
-      .text(
         async () => {
           const status = await this.clientBaseService.lastObserverStatus();
-          return status ? 'Остановить обсерваторию' : 'Запустить обсерваторию';
+          return status ? '👁 Обсерватория: остановить' : '👁 Обсерватория: запустить';
         },
-        async (ctx) => {
+        this.ownerGuard(async (ctx) => {
           await this.clientBaseService.toggleChannelObserver();
           ctx.menu.update();
-        }
+        })
       )
       .row()
-      .text('Опубликовать промо бота', async (ctx) => {
-        await this.publishBotPromo(ctx);
-      })
+      .text(
+        '🏆 Лучший пост в «Лучшее»',
+        this.ownerGuard(async (ctx) => {
+          await this.clientBaseService.postDailyBestMeme(this.baseConfigService.bestMemeChanelId);
+          await ctx.answerCallbackQuery('Лучший пост опубликован в «Лучшее»');
+        })
+      )
       .row()
-      .text('Лучший пост в канал', async (ctx) => {
-        // Публикуем в канал «Лучшее». Раньше сюда передавался ctx.from.id —
-        // пост уходил в личку владельцу, а не в канал.
-        await this.clientBaseService.postDailyBestMeme(this.baseConfigService.bestMemeChanelId);
-        await ctx.answerCallbackQuery('Лучший пост опубликован в «Лучшее»');
-      })
+      .text('📣 Промо бота', this.ownerGuard(async (ctx) => this.publishBotPromo(ctx)))
       .row()
       .text('Меню модератора', this.menuPresenter.switchToMenu(moderatorStartMenu))
       .row()
@@ -748,25 +751,127 @@ export class AdminMenuService implements OnModuleInit {
     );
   }
 
-  private async showPublicationGrid(ctx: BotContext): Promise<void> {
-    const scheduledPost = await this.postSchedulerService.getScheduledPost();
-    let message = '';
-    const mapped = scheduledPost.reduce((acc, post) => {
-      if (!acc[post.mode]?.length) {
-        acc[post.mode] = [];
-      }
-      acc[post.mode].push(post);
-      return acc;
-    }, {});
-    message += '<b>Сетка публикаций</b>\n\n';
-    message += this.getPostMessagesGrid('Кринж', PublicationModesEnum.NIGHT_CRINGE, mapped);
-    message += this.getPostMessagesGrid('Ночь', PublicationModesEnum.NEXT_NIGHT, mapped);
-    message += this.getPostMessagesGrid('Утро', PublicationModesEnum.NEXT_MORNING, mapped);
-    message += this.getPostMessagesGrid('День', PublicationModesEnum.NEXT_MIDDAY, mapped);
-    message += this.getPostMessagesGrid('Вечер', PublicationModesEnum.NEXT_EVENING, mapped);
+  /** Callback-и пагинированной сетки публикаций и снятия с публикации. */
+  private registerScheduleCallbacks(): void {
+    this.bot.callbackQuery(/^sched:p:(\d+)$/, async (ctx) => {
+      if (!ctx.config?.isOwner) return ctx.answerCallbackQuery('Только владелец');
+      await ctx.answerCallbackQuery();
+      await this.sendSchedulePage(ctx, Number(ctx.match?.[1]));
+    });
 
-    await ctx.api.sendMessage(ctx.callbackQuery.from.id, message, { parse_mode: 'HTML' });
-    return;
+    this.bot.callbackQuery(/^sched:off:(\d+):(\d+)$/, async (ctx) => {
+      if (!ctx.config?.isOwner) return ctx.answerCallbackQuery('Только владелец');
+      await ctx.answerCallbackQuery('Снять с публикации?');
+      await this.editScheduleKeyboard(
+        ctx,
+        new InlineKeyboard()
+          .text('✅ Снять с публикации', `sched:offok:${ctx.match?.[1]}:${ctx.match?.[2]}`)
+          .text('↩️ Отмена', `sched:offno:${ctx.match?.[1]}:${ctx.match?.[2]}`)
+      );
+    });
+
+    this.bot.callbackQuery(/^sched:offno:(\d+):(\d+)$/, async (ctx) => {
+      if (!ctx.config?.isOwner) return ctx.answerCallbackQuery('Только владелец');
+      await ctx.answerCallbackQuery('Оставлено');
+      await this.sendSchedulePage(ctx, Number(ctx.match?.[2]));
+    });
+
+    this.bot.callbackQuery(/^sched:offok:(\d+):(\d+)$/, async (ctx) => {
+      if (!ctx.config?.isOwner) return ctx.answerCallbackQuery('Только владелец');
+      try {
+        const id = Number(ctx.match?.[1]);
+        const entry = await this.postSchedulerService.getScheduledPostById(id);
+        const messageId = entry?.requestChannelMessageId
+          ? Number(entry.requestChannelMessageId)
+          : null;
+        const removed = messageId
+          ? await this.parserModeration.unscheduleByMessageId(messageId)
+          : (await this.postSchedulerService.removeById(id)) > 0;
+        await ctx.answerCallbackQuery(removed ? 'Снято с публикации' : 'Уже снято');
+      } catch (error) {
+        Logger.warn(`Schedule remove failed: ${error}`);
+        await ctx.answerCallbackQuery('Ошибка снятия');
+      }
+      await this.sendSchedulePage(ctx, Number(ctx.match?.[2]));
+    });
+  }
+
+  /** Рисует страницу сетки: ближайшие публикации первыми. */
+  public async sendSchedulePage(ctx: BotContext, page: number, forceSend = false): Promise<void> {
+    const PAGE = 8;
+    const safePage = Number.isFinite(page) && page > 0 ? Math.floor(page) : 0;
+    const total = await this.postSchedulerService.countUpcoming();
+    const pages = Math.max(1, Math.ceil(total / PAGE));
+    const current = Math.min(safePage, pages - 1);
+    const rows = await this.postSchedulerService.getUpcomingPage(PAGE, current * PAGE);
+
+    const channelId = channelInternalId(this.baseConfigService.userRequestMemeChannel);
+    const lines = [`📅 <b>Сетка публикаций</b> · стр. ${current + 1}/${pages} · всего ${total}`];
+    if (!rows.length) {
+      lines.push('— пусто —');
+    } else {
+      rows.forEach((row, index) => {
+        const date = utcToZonedTime(row.publishDate, 'Europe/Moscow');
+        const when = format(date, 'dd.MM HH:mm');
+        const link = `https://t.me/c/${channelId}/${row.requestChannelMessageId}`;
+        const who = row.processedByModerator?.username ? ` · @${row.processedByModerator.username}` : '';
+        lines.push(`${current * PAGE + index + 1}. ${when} · <a href="${link}">пост</a>${who}`);
+      });
+    }
+
+    const matrix: Array<Array<{ text: string; callback_data: string }>> = [];
+    let rowButtons: Array<{ text: string; callback_data: string }> = [];
+    rows.forEach((row) => {
+      const date = utcToZonedTime(row.publishDate, 'Europe/Moscow');
+      rowButtons.push({
+        text: `🚫 Снять ${format(date, 'dd.MM HH:mm')}`,
+        callback_data: `sched:off:${row.id}:${current}`,
+      });
+      if (rowButtons.length === 2) {
+        matrix.push(rowButtons);
+        rowButtons = [];
+      }
+    });
+    if (rowButtons.length) matrix.push(rowButtons);
+    const nav: Array<{ text: string; callback_data: string }> = [];
+    if (current > 0) nav.push({ text: '⬅️', callback_data: `sched:p:${current - 1}` });
+    if (current < pages - 1) nav.push({ text: '➡️', callback_data: `sched:p:${current + 1}` });
+    if (nav.length) matrix.push(nav);
+    const keyboard = InlineKeyboard.from(matrix);
+
+    await this.sendScheduleMessage(ctx, lines.join('\n'), keyboard, forceSend);
+  }
+
+  private async sendScheduleMessage(
+    ctx: BotContext,
+    text: string,
+    keyboard: InlineKeyboard,
+    forceSend = false
+  ): Promise<void> {
+    try {
+      if (ctx.callbackQuery && !forceSend) {
+        await ctx.editMessageText(text, { parse_mode: 'HTML', reply_markup: keyboard });
+        return;
+      }
+      await this.bot.api.sendMessage(ctx.from?.id ?? this.baseConfigService.ownerId, text, {
+        parse_mode: 'HTML',
+        reply_markup: keyboard,
+      });
+    } catch (error) {
+      Logger.warn(`Schedule grid render failed: ${error}`);
+    }
+  }
+
+  private async editScheduleKeyboard(ctx: BotContext, keyboard: InlineKeyboard): Promise<void> {
+    try {
+      await ctx.editMessageReplyMarkup({ reply_markup: keyboard });
+    } catch (error) {
+      Logger.warn(`Schedule grid keyboard failed: ${error}`);
+    }
+  }
+
+  private async showPublicationGrid(ctx: BotContext): Promise<void> {
+    await this.sendSchedulePage(ctx, 0, true);
   }
 
   public getPostMessagesGrid(

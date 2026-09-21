@@ -671,6 +671,17 @@ describe('ParserDeliveryService', () => {
         'prs:exclno:7',
       ]);
     });
+
+    it('buildUnscheduleConfirmKeyboard', () => {
+      const { service } = setup();
+      const keyboard = service.buildUnscheduleConfirmKeyboard(7) as unknown as {
+        inline_keyboard: Array<Array<{ text: string; callback_data: string }>>;
+      };
+      expect(keyboard.inline_keyboard.flat()).toEqual([
+        { text: '✅ Снять с публикации', callback_data: 'prs:unschedok:7' },
+        { text: '↩️ Отмена', callback_data: 'prs:unschedno:7' },
+      ]);
+    });
   });
 
   describe('кнопка «Ещё 20»', () => {

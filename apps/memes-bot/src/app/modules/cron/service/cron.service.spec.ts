@@ -21,6 +21,7 @@ import { PublicationModesEnum } from '../../post-management/constants/publicatio
 function createService() {
   const postSchedulerService = {
     nextScheduledPost: jest.fn(),
+    getScheduledPostById: jest.fn().mockResolvedValue({ id: 5, isPublished: false }),
     markPostAsPublished: jest.fn().mockResolvedValue(undefined),
     nowIsMode: jest.fn(),
   };
@@ -141,6 +142,31 @@ describe('CronService.handleNextScheduledPost', () => {
 
     expect(postSchedulerService.markPostAsPublished).not.toHaveBeenCalled();
     expect(postSchedulerService.nextScheduledPost).toHaveBeenCalledTimes(1);
+  });
+
+  it('не публикует снятый пост: записи в сетке уже нет', async () => {
+    const { service, postSchedulerService, userPostManagementService, observatoryService } =
+      createService();
+    postSchedulerService.nextScheduledPost.mockResolvedValue(makePost());
+    postSchedulerService.getScheduledPostById.mockResolvedValue(null);
+
+    await service.handleNextScheduledPost();
+
+    expect(postSchedulerService.getScheduledPostById).toHaveBeenCalledWith(5);
+    expect(userPostManagementService.onPublishNow).not.toHaveBeenCalled();
+    expect(observatoryService.onPublishNow).not.toHaveBeenCalled();
+    expect(postSchedulerService.markPostAsPublished).not.toHaveBeenCalled();
+  });
+
+  it('не публикует уже опубликованный пост (isPublished)', async () => {
+    const { service, postSchedulerService, observatoryService } = createService();
+    postSchedulerService.nextScheduledPost.mockResolvedValue(makePost({ isUserPost: false }));
+    postSchedulerService.getScheduledPostById.mockResolvedValue({ id: 5, isPublished: true });
+
+    await service.handleNextScheduledPost();
+
+    expect(observatoryService.onPublishNow).not.toHaveBeenCalled();
+    expect(postSchedulerService.markPostAsPublished).not.toHaveBeenCalled();
   });
 
   it('публикует пользовательский пост через UserPostManagementService', async () => {
