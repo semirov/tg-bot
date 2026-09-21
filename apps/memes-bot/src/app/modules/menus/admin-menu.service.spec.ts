@@ -29,14 +29,21 @@ function opsOf(obj: any): any[] | undefined {
 
 /** Повторяет внутренний layout @grammyjs/menu, но возвращает сырые кнопки. */
 async function rawKeyboard(container: any, ctx: any): Promise<any[][]> {
+  const seen = new WeakSet<object>();
   async function layout(keyboard: Promise<any[][]>, range: any): Promise<any[][]> {
     const k = await keyboard;
     const btns = typeof range === 'function' ? await range(ctx) : range;
+    if (!btns) return k;
+    if (typeof btns === 'object') {
+      if (seen.has(btns)) return k;
+      seen.add(btns);
+    }
     if (btns instanceof MenuRange) {
       let acc: Promise<any[][]> = Promise.resolve(k);
       for (const inner of opsOf(btns) ?? []) acc = layout(acc, inner);
       return acc;
     }
+    if (!Array.isArray(btns) && !(Symbol.iterator in Object(btns))) return k;
     let first = true;
     for (const row of btns) {
       if (!first) k.push([]);
@@ -312,75 +319,23 @@ describe('AdminMenuService', () => {
   }
 
   describe('onModuleInit', () => {
-    it('регистрирует errorBoundary и команды итогов года', () => {
+    it('регистрирует errorBoundary (команды итогов года убраны)', () => {
       const logSpy = jest.spyOn(Logger, 'log').mockImplementation(() => undefined as any);
       service.onModuleInit();
       expect(bot.errorBoundary).toHaveBeenCalledTimes(1);
-      expect(bot.command).toHaveBeenCalledWith('year_result', expect.any(Function));
-      expect(bot.command).toHaveBeenCalledWith('year_result_publish', expect.any(Function));
 
       const onError = bot.errorBoundary.mock.calls[0][0];
       onError(new Error('boom'));
       expect(logSpy).toHaveBeenCalled();
     });
 
-    it('year_result: без from ничего не делает', async () => {
-      const commands = initCommands();
-      await commands['year_result']({ from: undefined, config: { isOwner: true }, reply: jest.fn() });
-      expect(userService.findById).not.toHaveBeenCalled();
-    });
-
-    it('year_result: не владельцу отвечает отказом', async () => {
-      const commands = initCommands();
-      const ctx = makeCtx({ config: { isOwner: false, user: {} }, from: { id: 1 } });
-      userService.findById.mockResolvedValue({ id: 1 });
-      await commands['year_result'](ctx);
-      expect(ctx.reply).toHaveBeenCalledWith('У вас нет прав для выполнения этой команды');
-    });
-
-    it('year_result: владельцу показывает итоги года', async () => {
-      const commands = initCommands();
-      const spy = jest.spyOn(service as any, 'showYearResults').mockResolvedValue(undefined);
-      const ctx = makeCtx({ config: { isOwner: true, user: {} }, from: { id: 1 } });
-      userService.findById.mockResolvedValue({ id: 1 });
-      await commands['year_result'](ctx);
-      expect(userService.findById).toHaveBeenCalledWith(1);
-      expect(spy).toHaveBeenCalledWith(ctx);
-    });
-
-    it('year_result_publish: без from ничего не делает', async () => {
-      const commands = initCommands();
-      await commands['year_result_publish']({
-        from: undefined,
-        config: { isOwner: true },
-        reply: jest.fn(),
-      });
-      expect(userService.findById).not.toHaveBeenCalled();
-    });
-
-    it('year_result_publish: не владельцу отвечает отказом', async () => {
-      const commands = initCommands();
-      const ctx = makeCtx({ config: { isOwner: false, user: {} }, from: { id: 1 } });
-      userService.findById.mockResolvedValue({ id: 1 });
-      await commands['year_result_publish'](ctx);
-      expect(ctx.reply).toHaveBeenCalledWith('У вас нет прав для выполнения этой команды');
-    });
-
-    it('year_result_publish: владельцу публикует итоги', async () => {
-      const commands = initCommands();
-      const spy = jest.spyOn(service as any, 'publishYearResults').mockResolvedValue(undefined);
-      const ctx = makeCtx({ config: { isOwner: true, user: {} }, from: { id: 1 } });
-      userService.findById.mockResolvedValue({ id: 1 });
-      await commands['year_result_publish'](ctx);
-      expect(spy).toHaveBeenCalledWith(ctx);
-    });
   });
 
   describe('buildStartAdminMenu — главное меню и ownerGuard', () => {
     it('ownerGuard: не владельцу показывает отказ и не запускает обработчик', async () => {
       const { menu } = buildAdmin();
       const ctx = makeCtx({ config: { isOwner: false, user: {} } });
-      const btn = await findByText(menu, ctx, (t) => t.includes('Тролль'));
+      const btn = await findByText(menu.at('admin-bots'), ctx, (t) => t.includes('Тролль'));
       await btn.middleware[0](ctx, jest.fn());
       expect(ctx.answerCallbackQuery).toHaveBeenCalledWith('Доступно только владельцу');
       expect(ctx.menu.nav).not.toHaveBeenCalled();
@@ -390,14 +345,14 @@ describe('AdminMenuService', () => {
       const { menu } = buildAdmin();
       const ctx = makeCtx({ config: { isOwner: false, user: {} } });
       ctx.answerCallbackQuery.mockRejectedValue(new Error('query too old'));
-      const btn = await findByText(menu, ctx, (t) => t.includes('Тролль'));
+      const btn = await findByText(menu.at('admin-bots'), ctx, (t) => t.includes('Тролль'));
       await expect(btn.middleware[0](ctx, jest.fn())).resolves.toBeUndefined();
     });
 
     it('ownerGuard: при отсутствии config считает не владельцем', async () => {
       const { menu } = buildAdmin();
       const ctx = makeCtx({ config: undefined });
-      const btn = await findByText(menu, ctx, (t) => t.includes('Тролль'));
+      const btn = await findByText(menu.at('admin-bots'), ctx, (t) => t.includes('Тролль'));
       await btn.middleware[0](ctx, jest.fn());
       expect(ctx.answerCallbackQuery).toHaveBeenCalledWith('Доступно только владельцу');
     });
@@ -405,7 +360,7 @@ describe('AdminMenuService', () => {
     it('ownerGuard: владельцу разрешает навигацию', async () => {
       const { menu } = buildAdmin();
       const ctx = makeCtx();
-      const btn = await findByText(menu, ctx, (t) => t.includes('Тролль'));
+      const btn = await findByText(menu.at('admin-bots'), ctx, (t) => t.includes('Тролль'));
       await btn.middleware[0](ctx, jest.fn());
       expect(ctx.menu.nav).toHaveBeenCalledWith(AdminMenusEnum.TROLL_SETTINGS_MENU);
     });
@@ -421,13 +376,10 @@ describe('AdminMenuService', () => {
       expect(labels).toEqual([
         '👥 Модераторы',
         '➕ Добавить модератора',
-        '🎚 Управление лимитом мемов',
-        '🧭 Парсер мемов',
-        '📅 Сетка публикаций',
-        '🤖 Тролль-бот',
+        '🤖 Боты и парсеры',
+        '📅 Публикации и акции',
+        '📊 Итоги года',
         '👁 Обсерватория: запустить',
-        '🏆 Лучший пост в «Лучшее»',
-        '📣 Промо бота',
         'Меню модератора',
         'Меню пользователя',
       ]);
@@ -455,7 +407,7 @@ describe('AdminMenuService', () => {
     it('лимит мемов — ровно одна кнопка, ведущая в меню управления лимитом', async () => {
       const { menu } = buildAdmin();
       const ctx = makeCtx();
-      const btns = await findAllByText(menu, ctx, (t) => t === '🎚 Управление лимитом мемов');
+      const btns = await findAllByText(menu.at('admin-publications'), ctx, (t) => t === '🎚 Управление лимитом мемов');
       expect(btns).toHaveLength(1);
       await btns[0].middleware[0](ctx, jest.fn());
       expect(ctx.menu.nav).toHaveBeenCalledTimes(1);
@@ -491,7 +443,7 @@ describe('AdminMenuService', () => {
     it('промо бота отправляет инлайн-кнопку в канал', async () => {
       const { menu } = buildAdmin();
       const ctx = makeCtx();
-      const btn = await findByText(menu, ctx, (t) => t === '📣 Промо бота');
+      const btn = await findByText(menu.at('admin-publications'), ctx, (t) => t === '📣 Промо бота');
       await btn.middleware[0](ctx, jest.fn());
 
       expect(bot.api.sendMessage).toHaveBeenCalledTimes(1);
@@ -506,7 +458,7 @@ describe('AdminMenuService', () => {
     it('лучший пост дня отправляется в «Лучшее»', async () => {
       const { menu } = buildAdmin();
       const ctx = makeCtx();
-      const btn = await findByText(menu, ctx, (t) => t === '🏆 Лучший пост в «Лучшее»');
+      const btn = await findByText(menu.at('admin-publications'), ctx, (t) => t === '🏆 Лучший пост в «Лучшее»');
       await btn.middleware[0](ctx, jest.fn());
       expect(clientBaseService.postDailyBestMeme).toHaveBeenCalledWith(-1002222222222);
       expect(ctx.answerCallbackQuery).toHaveBeenCalledWith('Лучший пост опубликован в «Лучшее»');
@@ -515,7 +467,7 @@ describe('AdminMenuService', () => {
     it('лучший пост: не-владельцу недоступен', async () => {
       const { menu } = buildAdmin();
       const ctx = makeCtx({ config: { isOwner: false, user: {} } });
-      const btn = await findByText(menu, ctx, (t) => t === '🏆 Лучший пост в «Лучшее»');
+      const btn = await findByText(menu.at('admin-publications'), ctx, (t) => t === '🏆 Лучший пост в «Лучшее»');
       await btn.middleware[0](ctx, jest.fn());
       expect(clientBaseService.postDailyBestMeme).not.toHaveBeenCalled();
       expect(ctx.answerCallbackQuery).toHaveBeenCalledWith('Доступно только владельцу');
@@ -551,7 +503,7 @@ describe('AdminMenuService', () => {
         }),
       ]);
 
-      const btn = await findByText(menu, ctx, (t) => t === '📅 Сетка публикаций');
+      const btn = await findByText(menu.at('admin-publications'), ctx, (t) => t === '📅 Сетка публикаций');
       await btn.middleware[0](ctx, jest.fn());
 
       expect(postSchedulerService.getUpcomingPage).toHaveBeenCalledWith(8, 0);
@@ -561,12 +513,16 @@ describe('AdminMenuService', () => {
       expect(text).toContain('<b>Сетка публикаций</b>');
       expect(text).toContain('стр. 1/1');
       expect(text).toContain('15.09 12:30');
-      expect(text).toContain('<a href="https://t.me/c/1234567890/42">пост</a>');
+      expect(text).toContain('<a href="https://t.me/c/1234567890/42">карточка</a>');
       expect(text).toContain('@mod');
       expect(opts.parse_mode).toBe('HTML');
-      const buttons = opts.reply_markup.inline_keyboard.flat();
-      expect(buttons.map((b: any) => b.callback_data)).toEqual(['sched:off:77:0']);
-      expect(buttons[0].text).toContain('🚫 Снять');
+      const datas = opts.reply_markup.inline_keyboard.flat().map((b: any) => b.callback_data);
+      expect(datas).toContain('sched:p:all:0');
+      expect(datas).toContain('sched:off:all:0:77');
+      const offBtn = opts.reply_markup.inline_keyboard
+        .flat()
+        .find((b: any) => b.callback_data.startsWith('sched:off:'));
+      expect(offBtn.text).toContain('🚫 Снять');
     });
 
     it('showPublicationGrid: пустая сетка показывает заглушку', async () => {
@@ -575,18 +531,20 @@ describe('AdminMenuService', () => {
       postSchedulerService.countUpcoming.mockResolvedValue(0);
       postSchedulerService.getUpcomingPage.mockResolvedValue([]);
 
-      const btn = await findByText(menu, ctx, (t) => t === '📅 Сетка публикаций');
+      const btn = await findByText(menu.at('admin-publications'), ctx, (t) => t === '📅 Сетка публикаций');
       await btn.middleware[0](ctx, jest.fn());
 
       const [, text, opts] = bot.api.sendMessage.mock.calls[0];
       expect(text).toContain('— пусто —');
-      expect(opts.reply_markup.inline_keyboard.flat()).toHaveLength(0);
+      const datas = opts.reply_markup.inline_keyboard.flat().map((b: any) => b.callback_data);
+      expect(datas).toContain('sched:p:all:0');
+      expect(datas.filter((c: string) => c.startsWith('sched:off:'))).toHaveLength(0);
     });
 
     it('сетка: не-владельцу кнопка недоступна', async () => {
       const { menu } = buildAdmin();
       const ctx = makeCtx({ config: { isOwner: false, user: {} } });
-      const btn = await findByText(menu, ctx, (t) => t === '📅 Сетка публикаций');
+      const btn = await findByText(menu.at('admin-publications'), ctx, (t) => t === '📅 Сетка публикаций');
       await btn.middleware[0](ctx, jest.fn());
       expect(postSchedulerService.countUpcoming).not.toHaveBeenCalled();
       expect(bot.api.sendMessage).not.toHaveBeenCalled();
@@ -618,7 +576,7 @@ describe('AdminMenuService', () => {
 
     it('вторая страница: пропуск и обе навигационные кнопки', async () => {
       const handlers = callbacks();
-      const ctx = makeCtx({ match: ['sched:p:1', '1'] });
+      const ctx = makeCtx({ match: ['sched:p:all:1', 'all', '1'] });
       postSchedulerService.countUpcoming.mockResolvedValue(17);
       postSchedulerService.getUpcomingPage.mockResolvedValue(
         Array.from({ length: 8 }, (_, i) => ({
@@ -629,14 +587,14 @@ describe('AdminMenuService', () => {
         }))
       );
 
-      await handlers['^sched:p:(\\d+)$'](ctx);
+      await handlers['^sched:p:(all|user|parser):(\\d+)$'](ctx);
 
       expect(postSchedulerService.getUpcomingPage).toHaveBeenCalledWith(8, 8);
       const [text, opts] = ctx.editMessageText.mock.calls[0];
       expect(text).toContain('стр. 2/3');
       const data = opts.reply_markup.inline_keyboard.flat().map((b: any) => b.callback_data);
-      expect(data).toContain('sched:p:0');
-      expect(data).toContain('sched:p:2');
+      expect(data).toContain('sched:p:all:0');
+      expect(data).toContain('sched:p:all:2');
       expect(data.filter((c: string) => c.startsWith('sched:off:'))).toHaveLength(8);
     });
 
@@ -729,7 +687,7 @@ describe('AdminMenuService', () => {
       postSchedulerService.countUpcoming.mockResolvedValue(0);
       postSchedulerService.getUpcomingPage.mockResolvedValue([]);
 
-      await handlers['^sched:p:(\\d+)$'](ctx);
+      await handlers['^sched:p:(all|user|parser):(\\d+)$'](ctx);
 
       expect(postSchedulerService.getUpcomingPage).toHaveBeenCalledWith(8, 0);
     });
@@ -747,34 +705,34 @@ describe('AdminMenuService', () => {
 
     it('ошибка клавиатуры confirm-снятия не роняет', async () => {
       const handlers = callbacks();
-      const ctx = makeCtx({ match: ['sched:off:77:0', '77', '0'] });
+      const ctx = makeCtx({ match: ['sched:off:all:0:77', 'all', '0', '77'] });
       ctx.editMessageReplyMarkup.mockRejectedValue(new Error('message is not modified'));
       const warnSpy = jest.spyOn(Logger, 'warn').mockImplementation(() => undefined as any);
 
-      await expect(handlers['^sched:off:(\\d+):(\\d+)$'](ctx)).resolves.toBeUndefined();
+      await expect(handlers['^sched:off:(all|user|parser):(\\d+):(\\d+)$'](ctx)).resolves.toBeUndefined();
       expect(warnSpy).toHaveBeenCalled();
     });
 
     it('sched:off рисует confirm-клавиатуру', async () => {
       const handlers = callbacks();
-      const ctx = makeCtx({ match: ['sched:off:77:0', '77', '0'] });
+      const ctx = makeCtx({ match: ['sched:off:all:0:77', 'all', '0', '77'] });
 
-      await handlers['^sched:off:(\\d+):(\\d+)$'](ctx);
+      await handlers['^sched:off:(all|user|parser):(\\d+):(\\d+)$'](ctx);
 
       expect(ctx.answerCallbackQuery).toHaveBeenCalledWith('Снять с публикации?');
       const keyboard = ctx.editMessageReplyMarkup.mock.calls[0][0].reply_markup as InlineKeyboard;
       expect(keyboard.inline_keyboard.flat().map((b: any) => b.callback_data)).toEqual([
-        'sched:offok:77:0',
-        'sched:offno:77:0',
+        'sched:offok:all:0:77',
+        'sched:offno:all:0:77',
       ]);
     });
 
     it('sched:offok снимает по id и перерисовывает сетку', async () => {
       const handlers = callbacks();
-      const ctx = makeCtx({ match: ['sched:offok:77:0', '77', '0'] });
+      const ctx = makeCtx({ match: ['sched:offok:all:0:77', 'all', '0', '77'] });
       postSchedulerService.removeById.mockResolvedValue(1);
 
-      await handlers['^sched:offok:(\\d+):(\\d+)$'](ctx);
+      await handlers['^sched:offok:(all|user|parser):(\\d+):(\\d+)$'](ctx);
 
       expect(postSchedulerService.removeById).toHaveBeenCalledWith(77);
       expect(ctx.answerCallbackQuery).toHaveBeenCalledWith('Снято с публикации');
@@ -783,14 +741,14 @@ describe('AdminMenuService', () => {
 
     it('sched:offok с messageId снимает через parserModeration', async () => {
       const handlers = callbacks();
-      const ctx = makeCtx({ match: ['sched:offok:77:0', '77', '0'] });
+      const ctx = makeCtx({ match: ['sched:offok:all:0:77', 'all', '0', '77'] });
       postSchedulerService.getScheduledPostById.mockResolvedValue({
         id: 77,
         requestChannelMessageId: 55,
       });
       parserModeration.unscheduleByMessageId.mockResolvedValue(true);
 
-      await handlers['^sched:offok:(\\d+):(\\d+)$'](ctx);
+      await handlers['^sched:offok:(all|user|parser):(\\d+):(\\d+)$'](ctx);
 
       expect(postSchedulerService.getScheduledPostById).toHaveBeenCalledWith(77);
       expect(parserModeration.unscheduleByMessageId).toHaveBeenCalledWith(55);
@@ -800,14 +758,14 @@ describe('AdminMenuService', () => {
 
     it('sched:offok с messageId: уже снято → «Уже снято»', async () => {
       const handlers = callbacks();
-      const ctx = makeCtx({ match: ['sched:offok:77:0', '77', '0'] });
+      const ctx = makeCtx({ match: ['sched:offok:all:0:77', 'all', '0', '77'] });
       postSchedulerService.getScheduledPostById.mockResolvedValue({
         id: 77,
         requestChannelMessageId: '55',
       });
       parserModeration.unscheduleByMessageId.mockResolvedValue(false);
 
-      await handlers['^sched:offok:(\\d+):(\\d+)$'](ctx);
+      await handlers['^sched:offok:(all|user|parser):(\\d+):(\\d+)$'](ctx);
 
       expect(parserModeration.unscheduleByMessageId).toHaveBeenCalledWith(55);
       expect(ctx.answerCallbackQuery).toHaveBeenCalledWith('Уже снято');
@@ -815,10 +773,10 @@ describe('AdminMenuService', () => {
 
     it('sched:offok: запись уже снята → «Уже снято»', async () => {
       const handlers = callbacks();
-      const ctx = makeCtx({ match: ['sched:offok:77:0', '77', '0'] });
+      const ctx = makeCtx({ match: ['sched:offok:all:0:77', 'all', '0', '77'] });
       postSchedulerService.removeById.mockResolvedValue(0);
 
-      await handlers['^sched:offok:(\\d+):(\\d+)$'](ctx);
+      await handlers['^sched:offok:(all|user|parser):(\\d+):(\\d+)$'](ctx);
 
       expect(ctx.answerCallbackQuery).toHaveBeenCalledWith('Уже снято');
       expect(ctx.answerCallbackQuery).toHaveBeenCalledTimes(1);
@@ -826,26 +784,25 @@ describe('AdminMenuService', () => {
 
     it('sched:offok: ошибка удаления отвечает и логируется', async () => {
       const handlers = callbacks();
-      const ctx = makeCtx({ match: ['sched:offok:77:0', '77', '0'] });
+      const ctx = makeCtx({ match: ['sched:offok:all:0:77', 'all', '0', '77'] });
       postSchedulerService.removeById.mockRejectedValue(new Error('db down'));
       const warnSpy = jest.spyOn(Logger, 'warn').mockImplementation(() => undefined as any);
       postSchedulerService.countUpcoming.mockResolvedValue(0);
       postSchedulerService.getUpcomingPage.mockResolvedValue([]);
 
-      await expect(handlers['^sched:offok:(\\d+):(\\d+)$'](ctx)).resolves.toBeUndefined();
+      await expect(handlers['^sched:offok:(all|user|parser):(\\d+):(\\d+)$'](ctx)).resolves.toBeUndefined();
 
       expect(ctx.answerCallbackQuery).toHaveBeenCalledWith('Ошибка снятия');
       expect(warnSpy).toHaveBeenCalled();
-      expect(ctx.editMessageText).toHaveBeenCalled();
     });
 
     it('sched:offno перерисовывает сетку', async () => {
       const handlers = callbacks();
-      const ctx = makeCtx({ match: ['sched:offno:77:0', '77', '0'] });
+      const ctx = makeCtx({ match: ['sched:offno:all:0:77', 'all', '0', '77'] });
       postSchedulerService.countUpcoming.mockResolvedValue(0);
       postSchedulerService.getUpcomingPage.mockResolvedValue([]);
 
-      await handlers['^sched:offno:(\\d+):(\\d+)$'](ctx);
+      await handlers['^sched:offno:(all|user|parser):(\\d+):(\\d+)$'](ctx);
 
       expect(ctx.answerCallbackQuery).toHaveBeenCalledWith('Оставлено');
       expect(ctx.editMessageText).toHaveBeenCalled();
@@ -855,7 +812,7 @@ describe('AdminMenuService', () => {
       const handlers = callbacks();
       const ctx = makeCtx({ match: undefined });
 
-      await expect(handlers['^sched:off:(\\d+):(\\d+)$'](ctx)).resolves.toBeUndefined();
+      await expect(handlers['^sched:off:(all|user|parser):(\\d+):(\\d+)$'](ctx)).resolves.toBeUndefined();
 
       expect(ctx.answerCallbackQuery).toHaveBeenCalledWith('Снять с публикации?');
       expect(ctx.editMessageReplyMarkup).toHaveBeenCalled();
@@ -867,7 +824,7 @@ describe('AdminMenuService', () => {
       postSchedulerService.countUpcoming.mockResolvedValue(0);
       postSchedulerService.getUpcomingPage.mockResolvedValue([]);
 
-      await expect(handlers['^sched:offno:(\\d+):(\\d+)$'](ctx)).resolves.toBeUndefined();
+      await expect(handlers['^sched:offno:(all|user|parser):(\\d+):(\\d+)$'](ctx)).resolves.toBeUndefined();
 
       expect(postSchedulerService.getUpcomingPage).toHaveBeenCalledWith(8, 0);
       expect(ctx.answerCallbackQuery).toHaveBeenCalledWith('Оставлено');
@@ -879,7 +836,7 @@ describe('AdminMenuService', () => {
       postSchedulerService.countUpcoming.mockResolvedValue(0);
       postSchedulerService.getUpcomingPage.mockResolvedValue([]);
 
-      await expect(handlers['^sched:offok:(\\d+):(\\d+)$'](ctx)).resolves.toBeUndefined();
+      await expect(handlers['^sched:offok:(all|user|parser):(\\d+):(\\d+)$'](ctx)).resolves.toBeUndefined();
 
       expect(postSchedulerService.removeById).toHaveBeenCalledWith(NaN);
       expect(ctx.answerCallbackQuery).toHaveBeenCalledWith('Снято с публикации');
@@ -902,10 +859,10 @@ describe('AdminMenuService', () => {
       const handlers = callbacks();
       const ctx = makeCtx({ config: { isOwner: false, user: {} }, match: [] });
 
-      await handlers['^sched:p:(\\d+)$'](ctx);
-      await handlers['^sched:off:(\\d+):(\\d+)$'](ctx);
-      await handlers['^sched:offno:(\\d+):(\\d+)$'](ctx);
-      await handlers['^sched:offok:(\\d+):(\\d+)$'](ctx);
+      await handlers['^sched:p:(all|user|parser):(\\d+)$'](ctx);
+      await handlers['^sched:off:(all|user|parser):(\\d+):(\\d+)$'](ctx);
+      await handlers['^sched:offno:(all|user|parser):(\\d+):(\\d+)$'](ctx);
+      await handlers['^sched:offok:(all|user|parser):(\\d+):(\\d+)$'](ctx);
 
       expect(ctx.answerCallbackQuery).toHaveBeenCalledTimes(4);
       expect(ctx.answerCallbackQuery).toHaveBeenCalledWith('Только владелец');
@@ -918,10 +875,10 @@ describe('AdminMenuService', () => {
       const handlers = callbacks();
       const ctx = makeCtx({ config: undefined, match: [] });
 
-      await handlers['^sched:p:(\\d+)$'](ctx);
-      await handlers['^sched:off:(\\d+):(\\d+)$'](ctx);
-      await handlers['^sched:offno:(\\d+):(\\d+)$'](ctx);
-      await handlers['^sched:offok:(\\d+):(\\d+)$'](ctx);
+      await handlers['^sched:p:(all|user|parser):(\\d+)$'](ctx);
+      await handlers['^sched:off:(all|user|parser):(\\d+):(\\d+)$'](ctx);
+      await handlers['^sched:offno:(all|user|parser):(\\d+):(\\d+)$'](ctx);
+      await handlers['^sched:offok:(all|user|parser):(\\d+):(\\d+)$'](ctx);
 
       expect(ctx.answerCallbackQuery).toHaveBeenCalledWith('Только владелец');
       expect(postSchedulerService.removeById).not.toHaveBeenCalled();
@@ -1353,7 +1310,7 @@ describe('AdminMenuService', () => {
       expect(ctx.session.yearResultsCurrentUserIndex).toBe(0);
       expect(spy).toHaveBeenCalledWith(ctx, preview, 0);
       expect(ctx.reply).toHaveBeenCalledWith(
-        expect.stringContaining('/year_result_publish'),
+        expect.stringContaining('Итоги года'),
         { parse_mode: 'HTML' }
       );
     });

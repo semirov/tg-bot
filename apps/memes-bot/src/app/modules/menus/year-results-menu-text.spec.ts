@@ -34,7 +34,7 @@ describe('YearResultsMenuText', () => {
     );
     expect(text.generationError()).toBe('Произошла ошибка при генерации итогов года');
     expect(text.publishHint()).toBe(
-      'Для публикации итогов используйте команду /year_result_publish'
+      'Для публикации итогов используйте команду 📊 Итоги года → 🚀 Опубликовать'
     );
   });
 
