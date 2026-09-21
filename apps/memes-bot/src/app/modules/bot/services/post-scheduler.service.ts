@@ -220,11 +220,13 @@ export class PostSchedulerService {
     });
   }
 
-  /** Страница предстоящих публикаций: ближайшие первыми. */
+  /**
+   * Страница неопубликованных постов сетки: ближайшие (и уже просроченные,
+   * ждущие тика cron) первыми — их тоже можно снять.
+   */
   public async getUpcomingPage(limit: number, offset: number): Promise<PostSchedulerEntity[]> {
-    const now = new Date();
     return this.postSchedulerEntity.find({
-      where: { publishDate: MoreThanOrEqual(now), isPublished: false },
+      where: { isPublished: false },
       relations: { processedByModerator: true },
       order: { publishDate: 'ASC', id: 'ASC' },
       take: limit,
@@ -233,11 +235,9 @@ export class PostSchedulerService {
     });
   }
 
-  /** Сколько предстоящих публикаций в сетке. */
+  /** Сколько неопубликованных постов в сетке. */
   public countUpcoming(): Promise<number> {
-    return this.postSchedulerEntity.count({
-      where: { publishDate: MoreThanOrEqual(new Date()), isPublished: false },
-    });
+    return this.postSchedulerEntity.count({ where: { isPublished: false } });
   }
 
   /** Запланированный пост по сообщению карточки в предложке. */

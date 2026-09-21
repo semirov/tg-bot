@@ -295,17 +295,13 @@ describe('PostSchedulerService', () => {
 
       await expect(service.getUpcomingPage(8, 16)).resolves.toBe(posts);
       expect(repo.find).toHaveBeenCalledWith({
-        where: { publishDate: expect.anything(), isPublished: false },
+        where: { isPublished: false },
         relations: { processedByModerator: true },
         order: { publishDate: 'ASC', id: 'ASC' },
         take: 8,
         skip: 16,
         cache: false,
       });
-      const arg = repo.find.mock.calls[0][0];
-      // cutoff — «сейчас» хоста (UTC), без сдвига в московскую зону.
-      expect(arg.where.publishDate.value).toBeInstanceOf(Date);
-      expect(arg.where.publishDate.value.getTime()).toBe(now.getTime());
     });
   });
 
@@ -317,12 +313,7 @@ describe('PostSchedulerService', () => {
       repo.count.mockResolvedValue(17);
 
       await expect(service.countUpcoming()).resolves.toBe(17);
-      expect(repo.count).toHaveBeenCalledWith({
-        where: { publishDate: expect.anything(), isPublished: false },
-      });
-      const arg = repo.count.mock.calls[0][0];
-      expect(arg.where.publishDate.value).toBeInstanceOf(Date);
-      expect(arg.where.publishDate.value.getTime()).toBe(now.getTime());
+      expect(repo.count).toHaveBeenCalledWith({ where: { isPublished: false } });
     });
   });
 
