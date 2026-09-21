@@ -42,6 +42,7 @@
     "bull": "4.10.3",
     "date-fns": "2.29.3",
     "date-fns-tz": "2.0.0",
+    "form-data": "3.0.1",
     "grammy": "1.46.0",
     "imghash": "0.0.9",
     "lodash-es": "4.17.21",
