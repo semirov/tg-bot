@@ -99,7 +99,51 @@ export class PostSchedulerService {
     });
   }
 
+  /** Слоты ночного кринжа (МСК): шаг 90 минут — интервал не больше 1.5ч. */
+  private static readonly CRINGE_SLOTS_HOURS = [2, 3.5, 5];
+
+  /**
+   * Ближайший свободный ночной слот кринжа: до 3 постов за ночь (02:00, 03:30,
+   * 05:00), излишек уезжает на следующие ночи. Промежуток не больше 1.5ч.
+   */
+  private async nextCringeSlot(now: Date): Promise<Date> {
+    const STEP_MIN = 89;
+    for (let dayOffset = 0; dayOffset < 60; dayOffset += 1) {
+      const day = add(now, { days: dayOffset });
+      for (const hours of PostSchedulerService.CRINGE_SLOTS_HOURS) {
+        const slot = zonedTimeToUtc(
+          set(day, {
+            hours: Math.floor(hours),
+            minutes: (hours - Math.floor(hours)) * 60,
+            seconds: 0,
+            milliseconds: 0,
+          }),
+          'Europe/Moscow'
+        );
+        if (slot.getTime() <= now.getTime()) continue;
+        const clash = await this.postSchedulerEntity.findOne({
+          where: {
+            isPublished: false,
+            publishDate: Between(
+              add(slot, { minutes: -STEP_MIN }),
+              add(slot, { minutes: STEP_MIN })
+            ),
+          },
+          select: ['id'],
+          cache: false,
+        });
+        if (!clash) return slot;
+      }
+    }
+    return add(now, { days: 1 });
+  }
+
   private async nextScheduledTimeByMode(mode: PublicationModesEnum): Promise<Date> {
+    const now = new Date();
+    // Ночной кринж раскладываем по слотам (≤1.5ч) и переносим излишек на другие ночи.
+    if (mode === PublicationModesEnum.NIGHT_CRINGE) {
+      return this.nextCringeSlot(now);
+    }
     const interval = SchedulerCommonService.timeIntervalByMode(mode);
     const MIN_INTERVAL_MINUTES = 89; // Минимальный интервал в 90 минут
 
@@ -162,7 +206,7 @@ export class PostSchedulerService {
       });
 
       if (validSlots.length > 0) {
-        if (mode === PublicationModesEnum.NOW_SILENT || mode === PublicationModesEnum.NIGHT_CRINGE || mode === PublicationModesEnum.NEXT_INTERVAL) {
+        if (mode === PublicationModesEnum.NOW_SILENT || mode === PublicationModesEnum.NEXT_INTERVAL) {
           // Для этих режимов берем первый доступный слот
           validSlots.sort((a, b) => a.getTime() - b.getTime());
           return validSlots[0];
@@ -195,15 +239,9 @@ export class PostSchedulerService {
       }
     }
 
-    // Если не нашли подходящий слот в течение 14 дней, возвращаем дату через 14 дней,
-    // также кратную 30 минутам
-    const fallbackDate = add(nowTimeStamp, { days: 14, hours: 12 });
-    const fallbackMinutes = fallbackDate.getMinutes();
-    const fallbackRemainder = fallbackMinutes % 30;
-    return set(
-      add(fallbackDate, { minutes: fallbackRemainder ? 30 - fallbackRemainder : 0 }),
-      { seconds: 0, milliseconds: 0 }
-    );
+    // Свободных слотов не нашли за 30 дней — не прыгаем далеко, берём начало
+    // интервала на следующие сутки.
+    return add(zonedTimeToUtc(set(nowTimeStamp, interval.from), 'Europe/Moscow'), { days: 1 });
   }
   async markPostAsPublished(id: number): Promise<UpdateResult> {
     return this.postSchedulerEntity.update({ id }, { isPublished: true });

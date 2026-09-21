@@ -976,6 +976,7 @@ export class UserPostManagementService implements OnModuleInit {
 
     this.moderatedPostMenu = menu;
     this.bot.use(this.moderatedPostMenu);
+    this.registerScheduleCallbacks();
 
     // Создаем и регистрируем меню для дубликатов отдельно
     this.duplicateMenu = this.buildDuplicateMenu();
@@ -1276,9 +1277,12 @@ export class UserPostManagementService implements OnModuleInit {
       where: { id: publishContext.processedByModerator },
     });
 
-    const inlineKeyboard = new InlineKeyboard()
-      .text(this.formatter.scheduledTimeLabel(dateFormatted, user.username))
-      .row();
+    const inlineKeyboard = this.scheduledStatusKeyboard(
+      Number(publishContext.requestChannelMessageId),
+      dateFormatted,
+      user.username,
+      publishContext.mode === PublicationModesEnum.NIGHT_CRINGE
+    );
 
     await this.bot.api.editMessageReplyMarkup(
       this.baseConfigService.userRequestMemeChannel,
@@ -1384,6 +1388,75 @@ export class UserPostManagementService implements OnModuleInit {
         },
       });
       return !!message;
+    });
+  }
+
+  /** Статусная клавиатура запланированного поста: время, куда, снять. */
+  public scheduledStatusKeyboard(
+    messageId: number,
+    dateFormatted: string,
+    username: string | null,
+    isCringe: boolean
+  ): InlineKeyboard {
+    const who = username ? ` · @${username}` : '';
+    const where = isCringe ? '📍 кринж (ночь)' : '📍 основной';
+    return new InlineKeyboard()
+      .text(`⏰ ${dateFormatted}${who} · ${where}`)
+      .row()
+      .text('🚫 Снять с публикации', `upsched:unsch:${messageId}`);
+  }
+
+  /** Снятие с публикации: подтверждение и возврат карточки в модерацию. */
+  private registerScheduleCallbacks(): void {
+    const channel = this.baseConfigService.userRequestMemeChannel;
+    const allowed = (ctx: BotContext): boolean =>
+      this.userService.checkPermission(ctx, UserPermissionEnum.IS_BASE_MODERATOR);
+
+    this.bot.callbackQuery(/^upsched:unsch:(\d+)$/, async (ctx) => {
+      if (!allowed(ctx)) return ctx.answerCallbackQuery('Нет прав');
+      await ctx.answerCallbackQuery('Снять с публикации?');
+      const id = ctx.match?.[1];
+      await this.bot.api.editMessageReplyMarkup(channel, Number(id), {
+        reply_markup: new InlineKeyboard()
+          .text('✅ Снять', `upsched:unschok:${id}`)
+          .text('↩️ Отмена', `upsched:unschcancel:${id}`),
+      });
+    });
+
+    this.bot.callbackQuery(/^upsched:unschcancel:(\d+)$/, async (ctx) => {
+      if (!allowed(ctx)) return ctx.answerCallbackQuery('Нет прав');
+      const id = Number(ctx.match?.[1]);
+      await ctx.answerCallbackQuery('Оставлено');
+      const entry = await this.postSchedulerService.findByRequestMessageId(id);
+      if (entry?.publishDate) {
+        const dateFormatted = format(
+          PostSchedulerService.formatToMsk(entry.publishDate),
+          'dd.LL.yy в ~HH:mm'
+        );
+        await this.bot.api.editMessageReplyMarkup(channel, id, {
+          reply_markup: this.scheduledStatusKeyboard(
+            id,
+            dateFormatted,
+            null,
+            entry.mode === PublicationModesEnum.NIGHT_CRINGE
+          ),
+        });
+      }
+    });
+
+    this.bot.callbackQuery(/^upsched:unschok:(\d+)$/, async (ctx) => {
+      if (!allowed(ctx)) return ctx.answerCallbackQuery('Нет прав');
+      const id = Number(ctx.match?.[1]);
+      const removed = await this.postSchedulerService.removeByRequestMessageId(id);
+      if (removed) {
+        await this.cringeManagementService.repository
+          .delete({ requestChannelMessageId: id })
+          .catch(() => undefined);
+      }
+      await this.bot.api.editMessageReplyMarkup(channel, id, {
+        reply_markup: this.moderatedPostMenu,
+      });
+      await ctx.answerCallbackQuery(removed ? 'Снято с публикации' : 'Уже снято');
     });
   }
 }

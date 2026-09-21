@@ -97,6 +97,8 @@ function createHarness() {
     getAllScheduledPosts: jest.fn().mockResolvedValue([]),
     getScheduledPostById: jest.fn().mockResolvedValue(null),
     addPostToSchedule: jest.fn().mockResolvedValue(new Date('2026-01-01T10:00:00Z')),
+    findByRequestMessageId: jest.fn().mockResolvedValue(null),
+    removeByRequestMessageId: jest.fn().mockResolvedValue(1),
   };
   const settingsService: any = {
     channelBestLinkUrl: jest.fn().mockResolvedValue('https://best'),
@@ -108,6 +110,7 @@ function createHarness() {
     repository: {
       insert: jest.fn().mockResolvedValue(undefined),
       update: jest.fn().mockResolvedValue(undefined),
+      delete: jest.fn().mockResolvedValue(undefined),
     },
   };
   const deduplicationService: any = {
@@ -232,13 +235,13 @@ describe('UserPostManagementService', () => {
         expect.any(Function)
       );
       expect(h.clientBaseService.bestMemesDaily$.subscribe).toHaveBeenCalledTimes(1);
-      expect(h.bot.callbackQuery).toHaveBeenCalledTimes(1);
+      expect(h.bot.callbackQuery).toHaveBeenCalledTimes(4);
     });
 
     it('снятие лимита отклоняется без прав модератора', async () => {
       const h = initHarness();
       h.userService.checkPermission.mockReturnValueOnce(false);
-      const handler = h.bot.callbackQuery.mock.calls[0][1];
+      const handler = h.bot.callbackQuery.mock.calls.find((c: any[]) => String(c[0]).includes('admin_lift_limit'))[1];
       const ctx = makeCtx();
 
       await handler(ctx);
@@ -251,7 +254,7 @@ describe('UserPostManagementService', () => {
 
     it('снятие лимита снимает ограничение и редактирует сообщение', async () => {
       const h = initHarness();
-      const handler = h.bot.callbackQuery.mock.calls[0][1];
+      const handler = h.bot.callbackQuery.mock.calls.find((c: any[]) => String(c[0]).includes('admin_lift_limit'))[1];
       const ctx = makeCtx();
 
       await handler(ctx);
@@ -267,13 +270,44 @@ describe('UserPostManagementService', () => {
     it('ошибка снятия лимита ловится и сообщается модератору', async () => {
       const h = initHarness();
       h.userService.disableMemeLimitForUser.mockRejectedValueOnce(new Error('db down'));
-      const handler = h.bot.callbackQuery.mock.calls[0][1];
+      const handler = h.bot.callbackQuery.mock.calls.find((c: any[]) => String(c[0]).includes('admin_lift_limit'))[1];
       const ctx = makeCtx();
 
       await handler(ctx);
 
       expect(ctx.answerCallbackQuery).toHaveBeenCalledWith('Ошибка при снятии лимита');
       expect(Logger.error).toHaveBeenCalled();
+    });
+
+    it('статусная клавиатура расписания: время, куда и снять', () => {
+      const h = initHarness();
+      const kb = h.service.scheduledStatusKeyboard(5, '21.09.26 в ~03:30', 'mod', true);
+      const flat = kb.inline_keyboard.flat() as any[];
+      expect(String(flat[0].text)).toContain('21.09.26 в ~03:30');
+      expect(String(flat[0].text)).toContain('кринж');
+      expect(flat[1].callback_data).toBe('upsched:unsch:5');
+    });
+
+    it('снятие с публикации: подтверждение, отмена и возврат в меню', async () => {
+      const h = initHarness();
+      h.userService.checkPermission.mockReturnValue(true);
+      const ctx = makeCtx();
+      const find = (needle: string) =>
+        h.bot.callbackQuery.mock.calls.find((c: any[]) => String(c[0]).includes(needle))[1];
+
+      await find('upsched:unschok')({ ...ctx, match: ['upsched:unschok:11', '11'] });
+      expect(h.postSchedulerService.removeByRequestMessageId).toHaveBeenCalledWith(11);
+      expect(h.bot.api.editMessageReplyMarkup).toHaveBeenCalled();
+
+      h.postSchedulerService.findByRequestMessageId.mockResolvedValue({
+        publishDate: new Date(),
+        mode: PublicationModesEnum.NIGHT_CRINGE,
+      });
+      await find('upsched:unschcancel')({ ...ctx, match: ['upsched:unschcancel:11', '11'] });
+      expect(h.bot.api.editMessageReplyMarkup).toHaveBeenCalled();
+
+      await find('upsched:unsch')({ ...ctx, match: ['upsched:unsch:11', '11'] });
+      expect(ctx.answerCallbackQuery).toHaveBeenCalledWith('Снять с публикации?');
     });
   });
 

@@ -48,13 +48,19 @@ function setup() {
     save: jest.fn().mockResolvedValue(undefined),
     update: jest.fn().mockResolvedValue(undefined),
   };
-  const postSchedulerService = { addPostToSchedule: jest.fn() };
+  const postSchedulerService = {
+    addPostToSchedule: jest.fn(),
+    findByRequestMessageId: jest.fn().mockResolvedValue(null),
+    removeByRequestMessageId: jest.fn().mockResolvedValue(1),
+  };
   const settingsService = {
     cringeChannelHtmlLink: jest.fn(),
     channelHtmlLinkIfPrivate: jest.fn(),
     channelLinkUrl: jest.fn(),
   };
-  const cringeManagementService = { repository: { update: jest.fn(), insert: jest.fn() } };
+  const cringeManagementService = {
+    repository: { update: jest.fn(), insert: jest.fn(), delete: jest.fn().mockResolvedValue(undefined) },
+  };
   const deduplicationService = {
     getPostImageHash: jest.fn(),
     checkDuplicate: jest.fn(),
@@ -773,6 +779,53 @@ describe('ObservatoryService', () => {
 
       await expect((service as any).sendToMattermost(11, 'x')).resolves.toBeUndefined();
       expect(loggerSpy).toHaveBeenCalledWith('Failed to send to Mattermost:', expect.any(Error));
+    });
+  });
+
+  describe('статус расписания и снятие', () => {
+    it('статусная клавиатура: время, куда и снять', () => {
+      const { service } = setup();
+      const kb = service.scheduledStatusKeyboard(5, '21.09.26 в ~03:30', 'mod', true);
+      const flat = kb.inline_keyboard.flat() as any[];
+      expect(String(flat[0].text)).toContain('21.09.26 в ~03:30');
+      expect(String(flat[0].text)).toContain('кринж');
+      expect(flat[1].callback_data).toBe('obsched:unsch:5');
+      const main = service.scheduledStatusKeyboard(6, '21.09.26 в ~12:00', null, false);
+      expect(String(main.inline_keyboard[0][0].text)).toContain('основной');
+    });
+
+    it('снятие: подтверждение, отмена и возврат в меню', async () => {
+      const { service, bot, userService, postSchedulerService } = setup();
+      service.onModuleInit();
+      userService.checkPermission.mockReturnValue(true);
+      const ctx = { ...makeCtx(), answerCallbackQuery: jest.fn() } as any;
+
+      const calls: any[] = bot.callbackQuery.mock.calls;
+      const find = (needle: string) => calls.find((c) => String(c[0]).includes(needle))[1];
+
+      await find('obsched:unschok').call(null, { ...ctx, match: ['obsched:unschok:11', '11'] });
+      expect(postSchedulerService.removeByRequestMessageId).toHaveBeenCalledWith(11);
+      expect(bot.api.editMessageReplyMarkup).toHaveBeenCalled();
+
+      postSchedulerService.findByRequestMessageId.mockResolvedValue({
+        publishDate: new Date(),
+        mode: PublicationModesEnum.NIGHT_CRINGE,
+      });
+      await find('obsched:unschcancel').call(null, { ...ctx, match: ['obsched:unschcancel:11', '11'] });
+      expect(bot.api.editMessageReplyMarkup).toHaveBeenCalled();
+
+      await find('obsched:unsch').call(null, { ...ctx, match: ['obsched:unsch:11', '11'] });
+      expect(ctx.answerCallbackQuery).toHaveBeenCalledWith('Снять с публикации?');
+    });
+
+    it('снятие: без прав — отказ', async () => {
+      const { service, bot, userService } = setup();
+      service.onModuleInit();
+      userService.checkPermission.mockReturnValue(false);
+      const ctx = { ...makeCtx(), answerCallbackQuery: jest.fn() } as any;
+      const handler = bot.callbackQuery.mock.calls.find((c) => String(c[0]).includes('obsched:unsch'))[1];
+      await handler(ctx, undefined);
+      expect(ctx.answerCallbackQuery).toHaveBeenCalledWith('Нет прав');
     });
   });
 });

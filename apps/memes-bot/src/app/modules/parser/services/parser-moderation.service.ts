@@ -241,7 +241,7 @@ export class ParserModerationService {
 
     await this.replaceKeyboard(
       ctx,
-      new InlineKeyboard().text(`${icon} Запланировано на ${formatted} · снять`, `${CARD_CB_PREFIX}:unsched:${candidate.id}`)
+      new InlineKeyboard().text(`${icon} Запланировано на ${formatted} · 📍 основной · снять`, `${CARD_CB_PREFIX}:unsched:${candidate.id}`)
     );
     await ctx.answerCallbackQuery('Запланировано');
   }
@@ -277,7 +277,7 @@ export class ParserModerationService {
 
     await this.replaceKeyboard(
       ctx,
-      new InlineKeyboard().text(`🌙 Ночь: ${formatted} · снять`, `${CARD_CB_PREFIX}:unsched:${candidate.id}`)
+      new InlineKeyboard().text(`🌙 Ночь: ${formatted} · 📍 кринж · снять`, `${CARD_CB_PREFIX}:unsched:${candidate.id}`)
     );
     await ctx.answerCallbackQuery('В ночной кринж');
   }
@@ -326,8 +326,13 @@ export class ParserModerationService {
     }
     const date = PostSchedulerService.formatToMsk(entry.publishDate);
     const formatted = `${String(date.getDate()).padStart(2, '0')}.${String(date.getMonth() + 1).padStart(2, '0')} ~${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
-    const icon = entry.mode === PublicationModesEnum.NIGHT_CRINGE ? '🌙 Ночь:' : '📋 Запланировано на';
-    return new InlineKeyboard().text(`${icon} ${formatted} · снять`, `${CARD_CB_PREFIX}:unsched:${candidate.id}`);
+    const isCringe = entry.mode === PublicationModesEnum.NIGHT_CRINGE;
+    const icon = isCringe ? '🌙 Ночь:' : '📋 Запланировано на';
+    const where = isCringe ? '📍 кринж' : '📍 основной';
+    return new InlineKeyboard().text(
+      `${icon} ${formatted} · ${where} · снять`,
+      `${CARD_CB_PREFIX}:unsched:${candidate.id}`
+    );
   }
 
   /** Исключение источника карточки в чёрный список (с подтверждением). */
