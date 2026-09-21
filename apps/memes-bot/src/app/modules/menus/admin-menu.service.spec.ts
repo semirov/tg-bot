@@ -378,7 +378,6 @@ describe('AdminMenuService', () => {
         '🤖 Боты и парсеры',
         '📅 Публикации и акции',
         '📊 Итоги года',
-        '👁 Обсерватория: запустить',
         'Меню модератора',
         'Меню пользователя',
       ]);
@@ -413,27 +412,27 @@ describe('AdminMenuService', () => {
       expect(ctx.menu.nav).toHaveBeenCalledWith('meme-limit-control');
     });
 
-    it('обсерватория: текст зависит от статуса, клик переключает', async () => {
+    it('юзербот: текст зависит от статуса, клик переключает', async () => {
       const { menu } = buildAdmin();
       const ctx = makeCtx();
 
       clientBaseService.lastObserverStatus.mockResolvedValue(true);
-      let btn = await findByText(menu, ctx, (t) => t.includes('Обсерватория'));
-      expect(await buttonText(btn, ctx)).toBe('👁 Обсерватория: остановить');
+      let btn = await findByText(menu.at('admin-bots'), ctx, (t) => t.includes('Юзербот'));
+      expect(await buttonText(btn, ctx)).toBe('👁 Юзербот: остановить');
 
       clientBaseService.lastObserverStatus.mockResolvedValue(false);
-      btn = await findByText(menu, ctx, (t) => t.includes('Обсерватория'));
-      expect(await buttonText(btn, ctx)).toBe('👁 Обсерватория: запустить');
+      btn = await findByText(menu.at('admin-bots'), ctx, (t) => t.includes('Юзербот'));
+      expect(await buttonText(btn, ctx)).toBe('👁 Юзербот: запустить');
 
       await btn.middleware[0](ctx, jest.fn());
       expect(clientBaseService.toggleChannelObserver).toHaveBeenCalledTimes(1);
       expect(ctx.menu.update).toHaveBeenCalledTimes(1);
     });
 
-    it('обсерватория: не-владельцу недоступна', async () => {
+    it('юзербот: не-владельцу недоступен', async () => {
       const { menu } = buildAdmin();
       const ctx = makeCtx({ config: { isOwner: false, user: {} } });
-      const btn = await findByText(menu, ctx, (t) => t.includes('Обсерватория'));
+      const btn = await findByText(menu.at('admin-bots'), ctx, (t) => t.includes('Юзербот'));
       await btn.middleware[0](ctx, jest.fn());
       expect(clientBaseService.toggleChannelObserver).not.toHaveBeenCalled();
       expect(ctx.answerCallbackQuery).toHaveBeenCalledWith('Доступно только владельцу');

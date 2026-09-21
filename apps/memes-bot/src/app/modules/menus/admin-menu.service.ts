@@ -93,17 +93,6 @@ export class AdminMenuService implements OnModuleInit {
       .row()
       .text('📊 Итоги года', this.ownerGuard((ctx) => ctx.menu.nav('admin-year-results')))
       .row()
-      .text(
-        async () => {
-          const status = await this.clientBaseService.lastObserverStatus();
-          return status ? '👁 Обсерватория: остановить' : '👁 Обсерватория: запустить';
-        },
-        this.ownerGuard(async (ctx) => {
-          await this.clientBaseService.toggleChannelObserver();
-          ctx.menu.update();
-        })
-      )
-      .row()
       .text('Меню модератора', this.menuPresenter.switchToMenu(moderatorStartMenu))
       .row()
       .text('Меню пользователя', this.menuPresenter.switchToMenu(userStartMenu))
@@ -113,6 +102,17 @@ export class AdminMenuService implements OnModuleInit {
       .text('🧭 Парсер мемов', this.ownerGuard((ctx) => ctx.menu.nav(AdminMenusEnum.PARSER_SETTINGS_MENU)))
       .row()
       .text('🤖 Тролль-бот', this.ownerGuard((ctx) => ctx.menu.nav(AdminMenusEnum.TROLL_SETTINGS_MENU)))
+      .row()
+      .text(
+        async () => {
+          const status = await this.clientBaseService.lastObserverStatus();
+          return status ? '👁 Юзербот: остановить' : '👁 Юзербот: запустить';
+        },
+        this.ownerGuard(async (ctx) => {
+          await this.clientBaseService.toggleChannelObserver();
+          ctx.menu.update();
+        })
+      )
       .row()
       .back('Назад');
 
