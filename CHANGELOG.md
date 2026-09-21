@@ -1,3 +1,10 @@
+# [0.24.0](https://github.com/semirov/tg-bot/compare/v0.23.2...v0.24.0) (2026-09-21)
+
+
+### Features
+
+* **admin:** подменю, фильтр сетки, итоги года кнопкой ([71ccb47](https://github.com/semirov/tg-bot/commit/71ccb47a409a165922b9867976925c7a12dfa865))
+
 ## [0.23.2](https://github.com/semirov/tg-bot/compare/v0.23.1...v0.23.2) (2026-09-21)
 
 
