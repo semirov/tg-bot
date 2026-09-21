@@ -11,7 +11,7 @@ import { SCAN_WINDOW_HOURS, SourceCategory, SourceStatus } from '../constants/pa
 import { ObservedPostEntity } from '../entities/observed-post.entity';
 import { SourceChannelEntity, StoredBaseline } from '../entities/source-channel.entity';
 import { computeBaseline, ChannelBaseline } from '../domain/parser-scoring';
-import { COOLDOWN_DAYS, computeSourceInterest } from '../domain/parser-source-weight';
+import { COOLDOWN_DAYS, TAKEN_STALE_DAYS, computeSourceInterest } from '../domain/parser-source-weight';
 import { POSITIVE_REACTIONS } from '../constants/parser.constants';
 import { ParserMtprotoGuard } from './parser-mtproto-guard.service';
 import { ParserClientService } from './parser-client.service';
@@ -191,6 +191,12 @@ export class ParserRegistryService {
     await this.sourceRepository.save(source);
   }
 
+  /** Эффективная дата последнего взятия: у старых источников — дата создания. */
+  private effectiveLastTakenAt(source: SourceChannelEntity): Date | null {
+    if (source.lastTakenAt) return source.lastTakenAt;
+    return (source.takenTotal ?? 0) > 0 ? source.createdAt : null;
+  }
+
   /** Пересчитывает вес и cooldown по накопленному интересу (с гистерезисом). */
   private applyInterest(source: SourceChannelEntity): void {
     const now = this.clock.now();
@@ -200,6 +206,7 @@ export class ParserRegistryService {
         ignoredTotal: source.ignoredTotal ?? 0,
         softIgnoredTotal: source.softIgnoredTotal ?? 0,
         lastIgnoredAt: source.lastIgnoredAt,
+        lastTakenAt: this.effectiveLastTakenAt(source),
       },
       now
     );
@@ -216,9 +223,53 @@ export class ParserRegistryService {
   }
 
   /**
-   * Возврат источников из паузы: когда cooldown истёк, штраф игноров
-   * ослабляется вдвое — канал снова получает шанс попасть в предложку.
+   * Остывание положительного рейтинга: если канал не брали TAKEN_STALE_DAYS,
+   * его история взятий делится пополам; затем вес пересчитывается с учётом
+   * давности последнего взятия (буст тает, а не держится вечно).
    */
+  public async refreshInterest(): Promise<number> {
+    const now = this.clock.now();
+    const staleMs = TAKEN_STALE_DAYS * 86_400_000;
+    const sources = await this.sourceRepository.find({ where: { excluded: false } });
+    let cooled = 0;
+    for (const source of sources) {
+      const beforeTaken = source.takenTotal ?? 0;
+      const beforeWeight = source.weight ?? 1;
+
+      // Делим историю не чаще раза в TAKEN_STALE_DAYS и только при простое.
+      const anchor = (source.lastTakenAt ?? source.createdAt).getTime();
+      const cooledAnchor = (source.lastTakenCooledAt ?? source.createdAt).getTime();
+      if (
+        beforeTaken > 0 &&
+        now.getTime() - anchor >= staleMs &&
+        now.getTime() - cooledAnchor >= staleMs
+      ) {
+        source.takenTotal = Math.floor(beforeTaken / 2);
+        source.lastTakenCooledAt = now;
+        cooled += 1;
+      }
+
+      // Вес пересчитываем без побочек для cooldown (его ведёт refreshCooldowns).
+      const state = computeSourceInterest(
+        {
+          takenTotal: source.takenTotal ?? 0,
+          ignoredTotal: source.ignoredTotal ?? 0,
+          softIgnoredTotal: source.softIgnoredTotal ?? 0,
+          lastIgnoredAt: source.lastIgnoredAt,
+          lastTakenAt: this.effectiveLastTakenAt(source),
+        },
+        now
+      );
+      source.weight = state.weight;
+
+      if (source.takenTotal !== beforeTaken || source.weight !== beforeWeight) {
+        await this.sourceRepository.save(source);
+      }
+    }
+    if (cooled) this.logger.log(`Parser: остыло (прощено взятий) источников: ${cooled}`);
+    return cooled;
+  }
+
   public async refreshCooldowns(): Promise<number> {
     const now = this.clock.now();
     const sources = await this.sourceRepository.find({
@@ -238,6 +289,7 @@ export class ParserRegistryService {
           ignoredTotal: source.ignoredTotal,
           softIgnoredTotal: source.softIgnoredTotal,
           lastIgnoredAt: null,
+          lastTakenAt: this.effectiveLastTakenAt(source),
         },
         now
       );

@@ -9,6 +9,7 @@ import {
   BACKLOG_TTL_DAYS,
   BOOST_MULTIPLIER,
   DUMP_COOLDOWN_MINUTES,
+  DUMP_PER_SOURCE_CAP,
   DUMP_SIZE,
   ObservedStatus,
   POOL_TTL_DAYS,
@@ -16,7 +17,7 @@ import {
 import { ObservedPostEntity } from '../entities/observed-post.entity';
 import { SourceChannelEntity } from '../entities/source-channel.entity';
 import { dedupBatch } from '../domain/parser-quotas';
-import { rankScore } from '../domain/parser-source-weight';
+import { computeSourceInterest, rankScore } from '../domain/parser-source-weight';
 import { ParserDeliveryService } from './parser-delivery.service';
 import { ParserRegistryService } from './parser-registry.service';
 import { ParserSettingsService } from './parser-settings.service';
@@ -64,20 +65,20 @@ export class ParserSelectorService {
     const rows = await this.observedRepository.find({
       where: { status: ObservedStatus.SCORED, forced: true },
       order: { createdAt: 'ASC' },
-      take: DUMP_SIZE,
+      take: DUMP_SIZE * 5,
     });
     if (!rows.length) return 0;
 
     const sources = await this.loadSources(rows.map((row) => row.sourceChatId));
-    const usable = rows.filter((row) => {
+    const eligible = rows.filter((row) => {
       const source = sources.get(row.sourceChatId);
       if (!source || source.excluded) return false;
       if (source.err != null && source.err < config.errMin) return false;
       return true;
     });
-    if (!usable.length) return 0;
+    if (!eligible.length) return 0;
 
-    return this.deliverRows(usable, sources, false);
+    return this.deliverRows(this.pickDiverse(eligible, DUMP_SIZE), sources, false);
   }
 
   /**
@@ -100,21 +101,21 @@ export class ParserSelectorService {
 
     this.busy = true;
     try {
+      // Шире выборка — чтобы кап на источник реально давал разнообразие.
       const rows = await this.observedRepository.find({
         where: { status: ObservedStatus.SCORED, rejectReason: IsNull() },
         order: { createdAt: 'DESC' },
-        take: limit + 20,
+        take: Math.max(limit * 5, limit + 20),
       });
       if (!rows.length) return 0;
 
       const sources = await this.loadSources(rows.map((row) => row.sourceChatId));
       const unique = this.uniqueBest(rows, sources);
-      const usable = unique
-        .filter((row) => {
-          const source = sources.get(row.sourceChatId);
-          return Boolean(source) && !source?.excluded;
-        })
-        .slice(0, limit);
+      const eligible = unique.filter((row) => {
+        const source = sources.get(row.sourceChatId);
+        return Boolean(source) && !source?.excluded;
+      });
+      const usable = this.pickDiverse(eligible, limit);
       if (!usable.length) return 0;
 
       const delivered = await this.deliverRows(usable, sources, true);
@@ -246,8 +247,11 @@ export class ParserSelectorService {
     rows: ObservedPostEntity[],
     sources: Map<string, SourceChannelEntity>
   ): ObservedPostEntity[] {
+    // Вес считаем один раз на пост (дорого пересчитывать в компараторе).
+    const now = this.clock.now();
+    const ranks = new Map(rows.map((row) => [row.id, this.rank(row, sources, now)]));
     const ids = dedupBatch(
-      rows.map((row) => ({ id: row.id, score: this.rank(row, sources), fileKey: row.mediaUniqueId }))
+      rows.map((row) => ({ id: row.id, score: ranks.get(row.id) ?? 0, fileKey: row.mediaUniqueId }))
     );
     const byId = new Map(rows.map((row) => [row.id, row]));
     const ordered = ids.map((id) => byId.get(id)).filter((row): row is ObservedPostEntity => Boolean(row));
@@ -255,12 +259,58 @@ export class ParserSelectorService {
     return ordered.sort((a, b) => {
       const fresh = b.createdAt.getTime() - a.createdAt.getTime();
       if (fresh !== 0) return fresh;
-      return this.rank(b, sources) - this.rank(a, sources);
+      return (ranks.get(b.id) ?? 0) - (ranks.get(a.id) ?? 0);
     });
   }
 
-  private rank(row: ObservedPostEntity, sources: Map<string, SourceChannelEntity>): number {
-    return rankScore(row.score ?? 0, sources.get(row.sourceChatId)?.weight);
+  private rank(
+    row: ObservedPostEntity,
+    sources: Map<string, SourceChannelEntity>,
+    now: Date
+  ): number {
+    const source = sources.get(row.sourceChatId);
+    if (!source) return rankScore(row.score ?? 0, undefined);
+    // Вес считаем на лету: положительный буст остывает от давности последнего взятия.
+    const interest = computeSourceInterest(
+      {
+        takenTotal: source.takenTotal ?? 0,
+        ignoredTotal: source.ignoredTotal ?? 0,
+        softIgnoredTotal: source.softIgnoredTotal ?? 0,
+        lastIgnoredAt: source.lastIgnoredAt,
+        lastTakenAt:
+          source.lastTakenAt ?? ((source.takenTotal ?? 0) > 0 ? source.createdAt : null),
+      },
+      now
+    );
+    return rankScore(row.score ?? 0, interest.weight);
+  }
+
+  /**
+   * Разнообразие выдачи: не больше DUMP_PER_SOURCE_CAP постов одного канала
+   * за раз. Если так не набирается limit — добираем остаток без капа.
+   */
+  private pickDiverse(rows: ObservedPostEntity[], limit: number): ObservedPostEntity[] {
+    const picked: ObservedPostEntity[] = [];
+    const perSource = new Map<string, number>();
+    const rest: ObservedPostEntity[] = [];
+    for (const row of rows) {
+      const key = row.sourceChatId;
+      const used = perSource.get(key) ?? 0;
+      if (used < DUMP_PER_SOURCE_CAP && picked.length < limit) {
+        perSource.set(key, used + 1);
+        picked.push(row);
+      } else {
+        rest.push(row);
+      }
+    }
+    if (picked.length < limit) {
+      // Расширяем добор без капа, по тому же приоритету (свежие/вес).
+      for (const row of rest) {
+        if (picked.length >= limit) break;
+        picked.push(row);
+      }
+    }
+    return picked;
   }
 
   private async loadSources(

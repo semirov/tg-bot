@@ -25,6 +25,7 @@ const setup = (overrides: { enabled?: boolean; activeClient?: unknown } = {}) =>
   const registry = {
     listCollectible: jest.fn().mockResolvedValue([{ id: 1, chatId: '-1001' }]),
     refreshSourceStats: jest.fn().mockResolvedValue(undefined),
+    refreshInterest: jest.fn().mockResolvedValue(0),
     refreshCooldowns: jest.fn().mockResolvedValue(2),
   };
   const collector = { onLiveEvent: jest.fn().mockResolvedValue(undefined), sweepAll: jest.fn().mockResolvedValue(0) };
@@ -318,7 +319,11 @@ describe('ParserService', () => {
     await service.onStats();
 
     expect(registry.refreshSourceStats).toHaveBeenCalledTimes(1);
+    expect(registry.refreshInterest).toHaveBeenCalledTimes(1);
     expect(registry.refreshCooldowns).toHaveBeenCalledTimes(1);
+    expect(registry.refreshInterest.mock.invocationCallOrder[0]).toBeLessThan(
+      registry.refreshCooldowns.mock.invocationCallOrder[0]
+    );
   });
 
   it('onStats без клиента → выход', async () => {

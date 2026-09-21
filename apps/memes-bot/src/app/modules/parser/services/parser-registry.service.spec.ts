@@ -1,10 +1,11 @@
 import * as bigInt from 'big-integer';
 import { Api } from 'telegram';
-import { COOLDOWN_DAYS, PAUSE_WEIGHT } from '../domain/parser-source-weight';
+import { COOLDOWN_DAYS, PAUSE_WEIGHT, TAKEN_STALE_DAYS } from '../domain/parser-source-weight';
 import { SourceCategory, SourceStatus } from '../constants/parser.constants';
 import { ParserRegistryService } from './parser-registry.service';
 
 const NOW = new Date('2026-09-19T12:00:00Z');
+const daysAgo = (days: number): Date => new Date(NOW.getTime() - days * 86_400_000);
 
 const makeSourceRepo = (): any => ({
   find: jest.fn().mockResolvedValue([]),
@@ -490,6 +491,59 @@ describe('ParserRegistryService', () => {
       expect(await service.refreshCooldowns()).toBe(1);
       expect(row.ignoredTotal).toBe(0);
       expect(row.softIgnoredTotal).toBe(0);
+    });
+  });
+
+  describe('refreshInterest', () => {
+    it('старый источник худеет по takenTotal, свежий — нет', async () => {
+      const old = source({ id: 1, takenTotal: 10 });
+      const fresh = source({ id: 2, takenTotal: 10, lastTakenAt: daysAgo(2) });
+      const idle = source({ id: 3, takenTotal: 0 });
+      sourceRepo.find.mockResolvedValue([old, fresh, idle]);
+
+      expect(await service.refreshInterest()).toBe(1);
+      expect(sourceRepo.find).toHaveBeenCalledWith({ where: { excluded: false } });
+      expect(old.takenTotal).toBe(5);
+      expect(fresh.takenTotal).toBe(10);
+      expect(idle.takenTotal).toBe(0);
+      expect(sourceRepo.save).toHaveBeenCalledTimes(2);
+      expect(sourceRepo.save).toHaveBeenCalledWith(old);
+      // Метка остывания ставится — повторно историю не делим.
+      expect(old.lastTakenCooledAt).toBeTruthy();
+    });
+
+    it('повторный прогон не делит историю снова', async () => {
+      const old = source({ id: 9, takenTotal: 10, lastTakenCooledAt: daysAgo(1) });
+      sourceRepo.find.mockResolvedValue([old]);
+      expect(await service.refreshInterest()).toBe(0);
+      expect(old.takenTotal).toBe(10);
+    });
+
+    it('не трогает активную паузу (cooldown ведёт refreshCooldowns)', async () => {
+      const paused = source({
+        id: 8,
+        takenTotal: 4,
+        ignoredTotal: 5,
+        weight: 0.4,
+        cooldownUntil: new Date(Date.now() + 86_400_000),
+      });
+      sourceRepo.find.mockResolvedValue([paused]);
+      await service.refreshInterest();
+      expect(paused.cooldownUntil).toBeInstanceOf(Date);
+    });
+
+    it('давний lastTakenAt тоже стареет', async () => {
+      const row = source({ id: 4, takenTotal: 9, lastTakenAt: daysAgo(TAKEN_STALE_DAYS + 5) });
+      sourceRepo.find.mockResolvedValue([row]);
+      expect(await service.refreshInterest()).toBe(1);
+      expect(row.takenTotal).toBe(4);
+    });
+
+    it('источник свежее порога не стареет', async () => {
+      const row = source({ id: 5, takenTotal: 8, lastTakenAt: daysAgo(TAKEN_STALE_DAYS - 1) });
+      sourceRepo.find.mockResolvedValue([row]);
+      expect(await service.refreshInterest()).toBe(0);
+      expect(row.takenTotal).toBe(8);
     });
   });
 

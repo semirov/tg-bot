@@ -1,4 +1,11 @@
-import { BACKLOG_TTL_DAYS, DUMP_COOLDOWN_MINUTES, ObservedStatus, POOL_TTL_DAYS } from '../constants/parser.constants';
+import {
+  BACKLOG_TTL_DAYS,
+  DUMP_COOLDOWN_MINUTES,
+  DUMP_PER_SOURCE_CAP,
+  DUMP_SIZE,
+  ObservedStatus,
+  POOL_TTL_DAYS,
+} from '../constants/parser.constants';
 import { ParserSelectorService } from './parser-selector.service';
 
 jest.mock('axios', () => ({
@@ -185,6 +192,30 @@ describe('ParserSelectorService', () => {
       expect(await service.deliverForced()).toBe(0);
       expect(delivery.deliver).not.toHaveBeenCalled();
     });
+
+    it('применяет кап по источнику в пределах DUMP_SIZE', async () => {
+      const { service, observedRepo, registry, delivery } = setup();
+      const chatIds = Array.from({ length: 7 }, (_, i) => `-1000${i}`);
+      const rows: any[] = [];
+      let id = 0;
+      for (const chatId of chatIds) {
+        for (let i = 0; i < 4; i += 1) {
+          id += 1;
+          rows.push(scoredRow({ id, forced: true, sourceChatId: chatId, mediaUniqueId: `m-${id}` }));
+        }
+      }
+      observedRepo.find.mockResolvedValue(rows);
+      registry.repository.find.mockResolvedValue(chatIds.map((chatId) => source({ chatId })));
+
+      expect(await service.deliverForced()).toBe(DUMP_SIZE);
+      const counts = new Map<string, number>();
+      for (const call of delivery.deliver.mock.calls) {
+        const key = call[0].sourceChatId;
+        counts.set(key, (counts.get(key) ?? 0) + 1);
+      }
+      expect(Math.max(...counts.values())).toBeLessThanOrEqual(DUMP_PER_SOURCE_CAP);
+      expect(counts.get('-10000')).toBe(DUMP_PER_SOURCE_CAP);
+    });
   });
 
   describe('dumpMore', () => {
@@ -215,7 +246,7 @@ describe('ParserSelectorService', () => {
       await service.dumpMore(5);
 
       expect(observedRepo.find).toHaveBeenCalledWith(
-        expect.objectContaining({ take: 5 * 4 + 20 })
+        expect.objectContaining({ take: Math.max(20 * 5, 20 + 20) })
       );
     });
 
@@ -293,6 +324,68 @@ describe('ParserSelectorService', () => {
 
       expect(delivery.deliver).toHaveBeenCalledTimes(1);
       expect(delivery.deliver).toHaveBeenCalledWith(expect.objectContaining({ id: 3 }));
+    });
+  });
+
+  describe('pickDiverse', () => {
+    const pick = (service: ParserSelectorService, rows: any[], limit: number): any[] =>
+      (service as never as { pickDiverse: (r: any[], l: number) => any[] }).pickDiverse(rows, limit);
+
+    it('не более DUMP_PER_SOURCE_CAP постов одного источника, остаток из других', () => {
+      const { service } = setup();
+      const rows = [
+        scoredRow({ id: 1, sourceChatId: '-100A' }),
+        scoredRow({ id: 2, sourceChatId: '-100A' }),
+        scoredRow({ id: 3, sourceChatId: '-100A' }),
+        scoredRow({ id: 4, sourceChatId: '-100B' }),
+        scoredRow({ id: 5, sourceChatId: '-100C' }),
+        scoredRow({ id: 6, sourceChatId: '-100A' }),
+        scoredRow({ id: 7, sourceChatId: '-100A' }),
+        scoredRow({ id: 8, sourceChatId: '-100A' }),
+      ];
+
+      const picked = pick(service, rows, 5);
+
+      expect(picked.map((row) => row.id)).toEqual([1, 2, 3, 4, 5]);
+      expect(picked.filter((row) => row.sourceChatId === '-100A')).toHaveLength(DUMP_PER_SOURCE_CAP);
+    });
+
+    it('если кап не даёт набрать limit — добирает из того же источника', () => {
+      const { service } = setup();
+      const rows = [
+        scoredRow({ id: 1, sourceChatId: '-100A' }),
+        scoredRow({ id: 2, sourceChatId: '-100A' }),
+        scoredRow({ id: 3, sourceChatId: '-100A' }),
+        scoredRow({ id: 4, sourceChatId: '-100A' }),
+        scoredRow({ id: 5, sourceChatId: '-100A' }),
+        scoredRow({ id: 6, sourceChatId: '-100A' }),
+      ];
+
+      const picked = pick(service, rows, 5);
+
+      expect(picked).toHaveLength(5);
+      expect(picked.map((row) => row.id)).toEqual([1, 2, 3, 4, 5]);
+    });
+
+    it('кандидатов меньше limit — отдаёт всё', () => {
+      const { service } = setup();
+      const rows = [scoredRow({ id: 1 }), scoredRow({ id: 2 })];
+      expect(pick(service, rows, 5)).toHaveLength(2);
+    });
+
+    it('останавливается, когда limit уже набран', () => {
+      const { service } = setup();
+      const rows = [
+        scoredRow({ id: 1, sourceChatId: '-100A' }),
+        scoredRow({ id: 2, sourceChatId: '-100A' }),
+        scoredRow({ id: 3, sourceChatId: '-100A' }),
+        scoredRow({ id: 4, sourceChatId: '-100B' }),
+        scoredRow({ id: 5, sourceChatId: '-100C' }),
+      ];
+
+      const picked = pick(service, rows, 3);
+
+      expect(picked.map((row) => row.id)).toEqual([1, 2, 3]);
     });
   });
 

@@ -182,6 +182,7 @@ export class ParserService implements OnModuleInit {
             this.logger.warn(`Parser stats: источник ${source.chatId}: ${error}`);
           }
         }
+        await this.registry.refreshInterest();
         const released = await this.registry.refreshCooldowns();
         if (released) this.logger.log(`Parser stats: вернулось из паузы источников: ${released}`);
       });
