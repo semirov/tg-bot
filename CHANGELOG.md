@@ -1,3 +1,10 @@
+## [0.22.1](https://github.com/semirov/tg-bot/compare/v0.22.0...v0.22.1) (2026-09-21)
+
+
+### Bug Fixes
+
+* **parser:** строгий кап 3/канал, убран boost, синонимы /more ([07728c7](https://github.com/semirov/tg-bot/commit/07728c78d8ff207dbc1a4c463efb07c296cacb22))
+
 # [0.22.0](https://github.com/semirov/tg-bot/compare/v0.21.0...v0.22.0) (2026-09-21)
 
 
