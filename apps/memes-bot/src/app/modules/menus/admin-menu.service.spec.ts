@@ -618,6 +618,18 @@ describe('AdminMenuService', () => {
       expect(ctx.editMessageText.mock.calls[0][0]).toContain('стр. 1/1');
     });
 
+    it('фильтры сетки: активный помечен primary', async () => {
+      for (const filter of ['all', 'user', 'parser'] as const) {
+        const ctx = makeCtx();
+        postSchedulerService.countUpcoming.mockResolvedValue(0);
+        postSchedulerService.getUpcomingPage.mockResolvedValue([]);
+        await service.sendSchedulePage(ctx, 0, false, filter);
+        const kb = ctx.editMessageText.mock.calls[0][1].reply_markup as any;
+        const active = kb.inline_keyboard[0].find((b: any) => b.callback_data === `sched:p:${filter}:0`);
+        expect(active.style).toBe('primary');
+      }
+    });
+
     it('sendSchedulePage без callbackQuery шлёт новое сообщение', async () => {
       const ctx = makeCtx({ callbackQuery: undefined });
       postSchedulerService.countUpcoming.mockResolvedValue(0);

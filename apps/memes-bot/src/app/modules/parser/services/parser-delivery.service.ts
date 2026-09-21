@@ -373,6 +373,7 @@ export class ParserDeliveryService {
     const name = escapeHtml(item.title ?? item.username ?? 'источник');
     if (item.username) return `<a href="https://t.me/${item.username}">${name}</a>`;
     const chatId = Number(item.chatId);
+    if (!item.chatId || !Number.isFinite(chatId) || chatId === 0) return name;
     const url = buildPostUrl({ id: chatId, username: undefined }, null);
     if (url) return `<a href="${url}">${name}</a>`;
     const internal = channelInternalId(chatId);

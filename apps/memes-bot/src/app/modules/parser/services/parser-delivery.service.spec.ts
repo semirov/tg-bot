@@ -586,7 +586,15 @@ describe('ParserDeliveryService', () => {
       expect(caption).toContain('4.2');
     });
 
-    it('кринж-категория меняет метку', () => {
+    it('buildExtraSourceLink: без username — внутренняя ссылка или имя', () => {
+    const { service } = setup({});
+    const withChat = service.buildExtraSourceLink({ chatId: '-1001234567890', title: 'Канал', username: null });
+    expect(withChat).toContain('https://t.me/c/1234567890');
+    const noLink = service.buildExtraSourceLink({ chatId: '0', title: 'Без ссылки', username: null });
+    expect(noLink).toBe('Без ссылки');
+  });
+
+  it('кринж-категория меняет метку', () => {
       const { service } = setup();
       const caption = service.buildCaption(candidate(), source({ category: 'cringe' }));
       expect(caption).toContain('кринж');
@@ -628,9 +636,10 @@ describe('ParserDeliveryService', () => {
       expect(
         service.buildExtraSourceLink({ chatId: '-1000000000123', title: null, username: null })
       ).toContain('https://t.me/c/123');
+      // Нечисловой chatId — без битой ссылки, только имя.
       expect(
         service.buildExtraSourceLink({ chatId: 'not-a-number', title: null, username: null })
-      ).toContain('https://t.me/c/');
+      ).toBe('источник');
     });
 
     it('buildSourceLink: username и внутренняя форма', () => {
