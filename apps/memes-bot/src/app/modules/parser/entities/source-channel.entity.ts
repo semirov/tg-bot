@@ -66,6 +66,10 @@ export class SourceChannelEntity {
   @Column('timestamp', { nullable: true })
   lastTakenAt: Date | null;
 
+  /** Когда последний раз «прощали» историю взятий (остывание +). */
+  @Column('timestamp', { nullable: true })
+  lastTakenCooledAt: Date | null;
+
   /** Сколько карточек жёстко проигнорировано (отклонено владельцем). */
   @Column('int', { default: 0 })
   ignoredTotal: number;

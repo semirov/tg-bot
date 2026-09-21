@@ -90,6 +90,9 @@ export const DUMP_SIZE = 20;
 /** Минимальная пауза между доборами, минут. */
 export const DUMP_COOLDOWN_MINUTES = 5;
 
+/** Максимум постов одного канала за одну выдачу (разнообразие). */
+export const DUMP_PER_SOURCE_CAP = 3;
+
 /** TTL карточки в предложке (бэклога), дней: старше — удаляем. */
 export const BACKLOG_TTL_DAYS = 7;
 

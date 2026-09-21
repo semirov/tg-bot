@@ -25,6 +25,12 @@ export const COOLDOWN_DAYS = 7;
 /** За сколько дней штраф от игноров полностью «тает». */
 export const RECOVER_DAYS = 7;
 
+/** Период полураспада положительного буста (взятые посты), дней. */
+export const TAKEN_HALF_LIFE_DAYS = 21;
+
+/** Через сколько дней без взятий история takenTotal делится пополам. */
+export const TAKEN_STALE_DAYS = 45;
+
 const DAY_MS = 86_400_000;
 
 /**
@@ -43,6 +49,7 @@ export interface SourceInterest {
   ignoredTotal: number;
   softIgnoredTotal?: number;
   lastIgnoredAt?: Date | string | null;
+  lastTakenAt?: Date | string | null;
 }
 
 /** Результат пересчёта веса. */
@@ -68,7 +75,14 @@ export function computeSourceInterest(
   source: SourceInterest,
   now: Date = new Date()
 ): SourceInterestState {
-  const base = computeSourceWeight(source.takenTotal);
+  // Положительный буст остывает: держится, только пока канал продолжают брать.
+  const taken = Number.isFinite(source.takenTotal) ? Math.max(0, Math.floor(source.takenTotal)) : 0;
+  const boost = Math.min(WEIGHT_TAKEN_CAP, Math.log2(1 + taken));
+  const lastTakenAt = parseDate(source.lastTakenAt);
+  const recency = lastTakenAt
+    ? Math.pow(0.5, Math.max(0, now.getTime() - lastTakenAt.getTime()) / DAY_MS / TAKEN_HALF_LIFE_DAYS)
+    : 0;
+  const base = 1 + boost * recency;
   const ignored = Number.isFinite(source.ignoredTotal) ? Math.max(0, source.ignoredTotal) : 0;
   const soft = Number.isFinite(source.softIgnoredTotal) ? Math.max(0, source.softIgnoredTotal ?? 0) : 0;
   let penalty = Math.min(

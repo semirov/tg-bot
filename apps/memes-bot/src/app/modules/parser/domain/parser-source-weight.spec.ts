@@ -5,6 +5,7 @@ import {
   MIN_WEIGHT,
   PAUSE_WEIGHT,
   SOFT_IGNORE_PENALTY_STEP,
+  TAKEN_HALF_LIFE_DAYS,
   WEIGHT_TAKEN_CAP,
   computeSourceInterest,
   computeSourceWeight,
@@ -41,9 +42,46 @@ describe('parser-source-weight', () => {
       expect(state.cooldownUntil).toBeNull();
     });
 
-    it('взятые посты поднимают вес', () => {
-      const state = computeSourceInterest({ takenTotal: 5, ignoredTotal: 0 }, NOW);
+    it('взятые посты поднимают вес, пока взятие свежее', () => {
+      const state = computeSourceInterest({ takenTotal: 5, ignoredTotal: 0, lastTakenAt: NOW }, NOW);
       expect(state.weight).toBeGreaterThan(1);
+    });
+
+    it('без lastTakenAt положительный буст не применяется', () => {
+      const state = computeSourceInterest({ takenTotal: 5, ignoredTotal: 0 }, NOW);
+      expect(state.weight).toBe(1);
+    });
+
+    it('буст затухает вдвое за TAKEN_HALF_LIFE_DAYS', () => {
+      const takenTotal = 5; // boost = min(WEIGHT_TAKEN_CAP, log2(6)) = 2
+      const fresh = computeSourceInterest({ takenTotal, ignoredTotal: 0, lastTakenAt: NOW }, NOW);
+      const half = computeSourceInterest(
+        { takenTotal, ignoredTotal: 0, lastTakenAt: daysAgo(TAKEN_HALF_LIFE_DAYS) },
+        NOW
+      );
+      const quarter = computeSourceInterest(
+        { takenTotal, ignoredTotal: 0, lastTakenAt: daysAgo(TAKEN_HALF_LIFE_DAYS * 2) },
+        NOW
+      );
+
+      expect(fresh.weight).toBeCloseTo(3, 5);
+      expect(half.weight).toBeCloseTo(2, 5);
+      expect(quarter.weight).toBeCloseTo(1.5, 5);
+      expect(half.weight).toBeLessThan(fresh.weight);
+      expect(quarter.weight).toBeLessThan(half.weight);
+    });
+
+    it('lastTakenAt принимает строку; мусорная дата = буста нет', () => {
+      const asString = computeSourceInterest(
+        { takenTotal: 5, ignoredTotal: 0, lastTakenAt: NOW.toISOString() },
+        NOW
+      );
+      const invalid = computeSourceInterest(
+        { takenTotal: 5, ignoredTotal: 0, lastTakenAt: 'не-дата' },
+        NOW
+      );
+      expect(asString.weight).toBeCloseTo(3, 5);
+      expect(invalid.weight).toBe(1);
     });
 
     it('жёсткий игнор в одиночку не включает паузу', () => {
