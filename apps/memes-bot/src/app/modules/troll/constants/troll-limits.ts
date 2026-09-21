@@ -91,10 +91,10 @@ export const TROLL_SUMMARY_FALLBACK_MESSAGES = 200;
 export const TROLL_SUMMARY_MAX_CHARS = 200000;
 
 /** Потолок max_tokens для запроса саммари. */
-export const TROLL_SUMMARY_MAX_TOKENS = 700;
+export const TROLL_SUMMARY_MAX_TOKENS = 1000;
 
 /** Потолок длины ответа-саммари, символов. */
-export const TROLL_SUMMARY_MAX_REPLY_CHARS = 700;
+export const TROLL_SUMMARY_MAX_REPLY_CHARS = 2000;
 
 /** Максимум сообщений, накапливаемых в одном окне «мудак»-ответа. */
 export const TROLL_MAX_BATCH_MESSAGES = 20;
