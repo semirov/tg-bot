@@ -17,7 +17,10 @@ const makeSettings = (enabled = true): any => ({
 const makeBot = (): any => ({
   callbackQuery: jest.fn(),
   on: jest.fn(),
-  api: { deleteMessage: jest.fn().mockResolvedValue(undefined) },
+  api: {
+    deleteMessage: jest.fn().mockResolvedValue(undefined),
+    sendMessage: jest.fn().mockResolvedValue({ message_id: 321 }),
+  },
 });
 
 const setup = (overrides: { enabled?: boolean; activeClient?: unknown } = {}) => {
@@ -118,6 +121,41 @@ describe('ParserService', () => {
     expect(ctx.answerCallbackQuery).toHaveBeenCalledWith('Только владелец');
   });
 
+  it('кнопка prs:more при нуле доставки пишет уведомление и удаляет его через 15с', async () => {
+    jest.useFakeTimers();
+    const { service, bot, selector } = setup();
+    selector.dumpMore.mockResolvedValue(0);
+    service.onModuleInit();
+    const handler = bot.callbackQuery.mock.calls[0][1];
+    const ctx = { config: { isOwner: true }, answerCallbackQuery: jest.fn() };
+
+    await handler(ctx);
+
+    expect(bot.api.sendMessage).toHaveBeenCalledWith(
+      -1004444444444,
+      expect.stringContaining('Пока нечего показать'),
+      { disable_notification: true }
+    );
+
+    expect(bot.api.deleteMessage).not.toHaveBeenCalled();
+    jest.advanceTimersByTime(15_000);
+    await flush();
+
+    expect(bot.api.deleteMessage).toHaveBeenCalledWith(-1004444444444, 321);
+  });
+
+  it('кнопка prs:more при ненулевой доставке не пишет уведомление', async () => {
+    const { service, bot, selector } = setup();
+    selector.dumpMore.mockResolvedValue(2);
+    service.onModuleInit();
+    const handler = bot.callbackQuery.mock.calls[0][1];
+    const ctx = { config: { isOwner: true }, answerCallbackQuery: jest.fn() };
+
+    await handler(ctx);
+
+    expect(bot.api.sendMessage).not.toHaveBeenCalled();
+  });
+
   it('channel_post /more в предложке запускает dumpMore и удаляет команду', async () => {
     const { service, bot, selector } = setup();
     service.onModuleInit();
@@ -148,6 +186,51 @@ describe('ParserService', () => {
     expect(selector.dumpMore).toHaveBeenCalledTimes(1);
   });
 
+  it('channel_post /more при нуле доставки шлёт уведомление и удаляет его через 15с', async () => {
+    jest.useFakeTimers();
+    const { service, bot, selector } = setup();
+    selector.dumpMore.mockResolvedValue(0);
+    service.onModuleInit();
+    const handler = bot.on.mock.calls[0][1];
+    const deleteMessage = jest.fn().mockResolvedValue(undefined);
+    const ctx = {
+      chat: { id: -1004444444444 },
+      channelPost: { text: '/more', message_id: 9 },
+      api: { deleteMessage, sendMessage: jest.fn().mockResolvedValue({ message_id: 123 }) },
+    };
+
+    await handler(ctx);
+
+    expect(ctx.api.sendMessage).toHaveBeenCalledWith(
+      -1004444444444,
+      expect.stringContaining('Пока нечего показать'),
+      { disable_notification: true }
+    );
+    expect(deleteMessage).toHaveBeenCalledWith(-1004444444444, 9);
+
+    jest.advanceTimersByTime(15_000);
+    await flush();
+
+    expect(deleteMessage).toHaveBeenCalledWith(-1004444444444, 123);
+  });
+
+  it('channel_post /more при ненулевой доставке уведомление не шлёт', async () => {
+    const { service, bot, selector } = setup();
+    selector.dumpMore.mockResolvedValue(2);
+    service.onModuleInit();
+    const handler = bot.on.mock.calls[0][1];
+    const sendMessage = jest.fn().mockResolvedValue({ message_id: 1 });
+    const ctx = {
+      chat: { id: -1004444444444 },
+      channelPost: { text: '/more', message_id: 9 },
+      api: { deleteMessage: jest.fn().mockResolvedValue(undefined), sendMessage },
+    };
+
+    await handler(ctx);
+
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+
   it('кнопка prs:more без config считается чужой', async () => {
     const { service, bot, selector } = setup();
     service.onModuleInit();
@@ -167,6 +250,43 @@ describe('ParserService', () => {
 
     await expect(handler({ channelPost: {}, api: {} })).resolves.toBeUndefined();
     expect(selector.dumpMore).not.toHaveBeenCalled();
+  });
+
+  it('channel_post c совпадающим чатом, но без текста игнорируется', async () => {
+    const { service, bot, selector } = setup();
+    service.onModuleInit();
+    const handler = bot.on.mock.calls[0][1];
+
+    await handler({ chat: { id: -1004444444444 }, channelPost: {}, api: {} });
+
+    expect(selector.dumpMore).not.toHaveBeenCalled();
+  });
+
+  it('channel_post /more: setTimeout без unref не роняет', async () => {
+    const { service, bot, selector } = setup();
+    selector.dumpMore.mockResolvedValue(0);
+    const timeoutSpy = jest.spyOn(global, 'setTimeout').mockReturnValue({} as never);
+    service.onModuleInit();
+    const handler = bot.on.mock.calls[0][1];
+    const ctx = {
+      chat: { id: -1004444444444 },
+      channelPost: { text: '/more', message_id: 9 },
+      api: {
+        deleteMessage: jest.fn().mockResolvedValue(undefined),
+        sendMessage: jest.fn().mockResolvedValue({ message_id: 1 }),
+      },
+    };
+
+    await expect(handler(ctx)).resolves.toBeUndefined();
+    timeoutSpy.mockRestore();
+  });
+
+  it('scheduleLiveAttach: setInterval без unref не роняет', () => {
+    const { service } = setup();
+    const intervalSpy = jest.spyOn(global, 'setInterval').mockReturnValue({} as never);
+
+    expect(() => service.onModuleInit()).not.toThrow();
+    intervalSpy.mockRestore();
   });
 
   it('повторный тик с тем же клиентом не переподключается', async () => {

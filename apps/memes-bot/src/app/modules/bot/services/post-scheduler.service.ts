@@ -219,4 +219,49 @@ export class PostSchedulerService {
       cache: false,
     });
   }
+
+  /** Страница предстоящих публикаций: ближайшие первыми. */
+  public async getUpcomingPage(limit: number, offset: number): Promise<PostSchedulerEntity[]> {
+    const now = new Date();
+    return this.postSchedulerEntity.find({
+      where: { publishDate: MoreThanOrEqual(now), isPublished: false },
+      relations: { processedByModerator: true },
+      order: { publishDate: 'ASC', id: 'ASC' },
+      take: limit,
+      skip: offset,
+      cache: false,
+    });
+  }
+
+  /** Сколько предстоящих публикаций в сетке. */
+  public countUpcoming(): Promise<number> {
+    return this.postSchedulerEntity.count({
+      where: { publishDate: MoreThanOrEqual(new Date()), isPublished: false },
+    });
+  }
+
+  /** Запланированный пост по сообщению карточки в предложке. */
+  public findByRequestMessageId(
+    requestChannelMessageId: number
+  ): Promise<PostSchedulerEntity | null> {
+    return this.postSchedulerEntity.findOne({
+      where: { requestChannelMessageId, isPublished: false },
+      order: { id: 'DESC' },
+    });
+  }
+
+  /** Снять с публикации по сообщению карточки (вернуть число снятых). */
+  public async removeByRequestMessageId(requestChannelMessageId: number): Promise<number> {
+    const result = await this.postSchedulerEntity.delete({
+      requestChannelMessageId: Number(requestChannelMessageId),
+      isPublished: false,
+    });
+    return result.affected ?? 0;
+  }
+
+  /** Снять конкретную запись сетки по id (вернуть число снятых). */
+  public async removeById(id: number): Promise<number> {
+    const result = await this.postSchedulerEntity.delete({ id, isPublished: false });
+    return result.affected ?? 0;
+  }
 }

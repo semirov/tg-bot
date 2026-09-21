@@ -60,6 +60,18 @@ export class ParserService implements OnModuleInit {
       await ctx.answerCallbackQuery('Насыпаю…');
       const delivered = await this.selector.dumpMore();
       this.logger.log(`Parser selector: /more по кнопке → ${delivered}`);
+      if (delivered === 0) {
+        const notice = await this.bot.api.sendMessage(
+          this.config.userRequestMemeChannel,
+          '🍲 Пока нечего показать: свежих оценённых постов нет (пул наполняется ~2ч после сбора).',
+          { disable_notification: true }
+        );
+        setTimeout(() => {
+          void this.bot.api
+            .deleteMessage(this.config.userRequestMemeChannel, notice.message_id)
+            .catch(() => undefined);
+        }, 15_000).unref?.();
+      }
     });
 
     this.bot.on('channel_post:text', async (ctx) => {
@@ -74,6 +86,16 @@ export class ParserService implements OnModuleInit {
         await ctx.api.deleteMessage(chatId, ctx.channelPost.message_id);
       } catch {
         // сообщение могло уже улететь — не критично
+      }
+      if (delivered === 0) {
+        const notice = await ctx.api.sendMessage(
+          chatId,
+          '🍲 Пока нечего показать: свежих оценённых постов нет.',
+          { disable_notification: true }
+        );
+        setTimeout(() => {
+          void ctx.api.deleteMessage(chatId, notice.message_id).catch(() => undefined);
+        }, 15_000).unref?.();
       }
     });
   }

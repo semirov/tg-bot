@@ -1,4 +1,5 @@
 import { Menu } from '@grammyjs/menu';
+import { InlineKeyboard } from 'grammy';
 import { SourceStatus, ObservedStatus } from '../constants/parser.constants';
 import { ParserMenuService } from './parser-menu.service';
 
@@ -16,6 +17,7 @@ const makeCtx = (overrides: Record<string, unknown> = {}): any => ({
   menu: { update: jest.fn().mockReturnThis() },
   answerCallbackQuery: jest.fn().mockResolvedValue(undefined),
   editMessageText: jest.fn().mockResolvedValue(undefined),
+  editMessageReplyMarkup: jest.fn().mockResolvedValue(undefined),
   from: { id: 1 },
   config: { isOwner: true },
   ...overrides,
@@ -56,7 +58,10 @@ describe('ParserMenuService', () => {
       listExcluded: jest.fn().mockResolvedValue([]),
       listPopular: jest.fn().mockResolvedValue([]),
       countCollectible: jest.fn().mockResolvedValue(0),
+      countPopular: jest.fn().mockResolvedValue(0),
+      countExcluded: jest.fn().mockResolvedValue(0),
       restoreSource: jest.fn().mockResolvedValue({ id: 1 }),
+      excludeSource: jest.fn().mockResolvedValue(true),
       importSubscriptions: jest.fn().mockResolvedValue(3),
     };
     const builder = {
@@ -102,11 +107,19 @@ describe('ParserMenuService', () => {
     throw new Error(`button ${needle} not found`);
   };
 
-  it('onModuleInit строит меню и регистрирует callback пагинации', () => {
+  it('onModuleInit строит меню и регистрирует callbacks пагинации/возврата/исключения', () => {
     const { service, bot } = makeDeps();
     service.onModuleInit();
 
-    expect(bot.callbackQuery).toHaveBeenCalledTimes(2);
+    expect(bot.callbackQuery).toHaveBeenCalledTimes(5);
+    const sources = bot.callbackQuery.mock.calls.map((call: any[]) => call[0].source);
+    expect(sources).toEqual([
+      '^pl:(pop|exc|src):(\\d+)$',
+      '^pl:restore:(\\d+):(\\d+)$',
+      '^pl:excl:(\\d+):(pop|src):(\\d+)$',
+      '^pl:exclno:(\\d+):(pop|src):(\\d+)$',
+      '^pl:exclok:(\\d+):(pop|src):(\\d+)$',
+    ]);
     expect(service.getMenu()).toBeDefined();
     expect(captured.length).toBeGreaterThanOrEqual(8);
   });
@@ -218,29 +231,36 @@ describe('ParserMenuService', () => {
     const { service, registry } = makeDeps();
     const rows = Array.from({ length: 10 }, (_, index) => source({ id: index + 1 }));
     registry.listExcluded.mockResolvedValue(rows);
+    registry.countExcluded.mockResolvedValue(18);
     service.onModuleInit();
     const ctx = makeCtx({ callbackQuery: { message: { message_id: 5 } } });
 
     await service.sendList(ctx, 'exc', 1);
 
+    expect(registry.countExcluded).toHaveBeenCalled();
     const keyboard = ctx.editMessageText.mock.calls[0][1].reply_markup as unknown as {
-      inline_keyboard: Array<Array<{ callback_data: string }>>;
+      inline_keyboard: Array<Array<{ callback_data: string; text: string }>>;
     };
     const data = keyboard.inline_keyboard.flat().map((button) => button.callback_data);
     expect(data).toContain('pl:exc:0');
     expect(data.some((value) => value.startsWith('pl:restore:'))).toBe(true);
-    expect(ctx.editMessageText.mock.calls[0][0]).toContain('стр. 2/');
+    expect(ctx.editMessageText.mock.calls[0][0]).toContain('стр. 2/3');
+    const labels = keyboard.inline_keyboard.flat().map((button) => button.text);
+    expect(labels).toContain('↩️ Вернуть 9');
   });
 
-  it('пагинация: неполная страница popular', async () => {
+  it('пагинация: неполная вторая страница popular', async () => {
     const { service, registry } = makeDeps();
     registry.listPopular.mockResolvedValue([source()]);
+    registry.countPopular.mockResolvedValue(9);
     service.onModuleInit();
     const ctx = makeCtx({ callbackQuery: { message: { message_id: 5 } } });
 
-    await service.sendList(ctx, 'pop', 2);
+    await service.sendList(ctx, 'pop', 1);
 
-    expect(ctx.editMessageText).toHaveBeenCalled();
+    expect(registry.listPopular).toHaveBeenCalledWith(8, 8);
+    expect(registry.countPopular).toHaveBeenCalled();
+    expect(ctx.editMessageText.mock.calls[0][0]).toContain('стр. 2/2');
   });
 
   it('callback пагинации вызывает sendList', async () => {
@@ -310,6 +330,7 @@ describe('ParserMenuService', () => {
   it('полная страница popular и пагинация на страницы вперёд/назад', async () => {
     const { service, registry } = makeDeps();
     registry.listPopular.mockResolvedValue(Array.from({ length: 8 }, (_, index) => source({ id: index + 1 })));
+    registry.countPopular.mockResolvedValue(17);
     service.onModuleInit();
     const ctx = makeCtx({ callbackQuery: { message: { message_id: 5 } } });
 
@@ -322,6 +343,29 @@ describe('ParserMenuService', () => {
     expect(data).toContain('pl:pop:0');
     expect(data).toContain('pl:pop:2');
     expect(ctx.editMessageText.mock.calls[0][0]).toContain('стр. 2/3');
+  });
+
+  it('популярные: кнопки исключения pl:excl идут матрицей по 4 и содержат номер', async () => {
+    const { service, registry } = makeDeps();
+    registry.listPopular.mockResolvedValue(
+      Array.from({ length: 6 }, (_, index) => source({ id: index + 1 }))
+    );
+    service.onModuleInit();
+    const ctx = makeCtx({ callbackQuery: { message: { message_id: 5 } } });
+
+    await service.sendList(ctx, 'pop', 0);
+
+    const keyboard = ctx.editMessageText.mock.calls[0][1].reply_markup as unknown as {
+      inline_keyboard: Array<Array<{ callback_data: string; text: string }>>;
+    };
+    const actionRows = keyboard.inline_keyboard.filter((row) =>
+      row.every((button) => button.callback_data.startsWith('pl:excl:'))
+    );
+    expect(actionRows).toHaveLength(2);
+    expect(actionRows[0]).toHaveLength(4);
+    expect(actionRows[1]).toHaveLength(2);
+    expect(actionRows[0][0]).toEqual({ text: '🚫 1', callback_data: 'pl:excl:1:pop:0' });
+    expect(actionRows[1][1]).toEqual({ text: '🚫 6', callback_data: 'pl:excl:6:pop:0' });
   });
 
   it('исключённые: кнопки возврата переносятся по строкам', async () => {
@@ -352,6 +396,211 @@ describe('ParserMenuService', () => {
     await service.sendList(ctx, 'src', 0);
 
     expect(ctx.editMessageText.mock.calls[0][0]).toContain('-100999');
+  });
+
+  it('sourceLine: заголовок оборачивается ссылкой (username и приватный канал)', async () => {
+    const { service, registry } = makeDeps();
+    registry.listCollectible.mockResolvedValue([
+      source({ id: 1, username: 'memes', title: 'Public', chatId: '-1001' }),
+      source({ id: 2, username: null, title: 'Private', chatId: '-1001234567890' }),
+      source({ id: 3, username: null, title: 'NoChat', chatId: null }),
+    ]);
+    service.onModuleInit();
+    const ctx = makeCtx({ callbackQuery: { message: { message_id: 5 } } });
+
+    await service.sendList(ctx, 'src', 0);
+
+    const text = ctx.editMessageText.mock.calls[0][0] as string;
+    expect(text).toContain('<a href="https://t.me/memes"><b>Public</b></a>');
+    expect(text).toContain('<a href="https://t.me/c/1234567890"><b>Private</b></a>');
+    expect(text).toContain('<b>NoChat</b>');
+  });
+
+  it('channelLink: username → t.me, приватный → t.me/c', () => {
+    const { service } = makeDeps();
+
+    expect(service.channelLink(source({ username: 'chan' }))).toBe('https://t.me/chan');
+    expect(service.channelLink(source({ username: null, chatId: '-1001234567890' }))).toBe(
+      'https://t.me/c/1234567890'
+    );
+  });
+
+  it('channelLink: пустой/нулевой/нечисловой chatId → null (без <a>)', async () => {
+    const { service, registry } = makeDeps();
+    registry.listCollectible.mockResolvedValue([
+      source({ id: 1, username: null, title: 'Empty', chatId: '' }),
+      source({ id: 2, username: null, title: 'Zero', chatId: '0' }),
+      source({ id: 3, username: null, title: 'NaN', chatId: 'not-a-number' }),
+    ]);
+
+    expect(service.channelLink(source({ username: null, chatId: '' }))).toBeNull();
+    expect(service.channelLink(source({ username: null, chatId: '0' }))).toBeNull();
+    expect(service.channelLink(source({ username: null, chatId: 'abc' }))).toBeNull();
+
+    service.onModuleInit();
+    const ctx = makeCtx({ callbackQuery: { message: { message_id: 5 } } });
+    await service.sendList(ctx, 'src', 0);
+
+    const text = ctx.editMessageText.mock.calls[0][0] as string;
+    expect(text).toContain('<b>Empty</b>');
+    expect(text).toContain('<b>Zero</b>');
+    expect(text).toContain('<b>NaN</b>');
+    expect(text).not.toContain('<a href');
+  });
+
+  it('заголовок «Популярные» берёт счётчик из registry.countPopular', async () => {
+    const { service, registry } = makeDeps();
+    registry.countPopular.mockResolvedValue(7);
+    service.onModuleInit();
+
+    expect(await (captured[7].label as () => Promise<string>)()).toBe('🏆 Популярные (7)');
+  });
+
+  it('callbacks pl:* отклоняют не-владельца', async () => {
+    const { service, bot, registry } = makeDeps();
+    service.onModuleInit();
+    const ctx = makeCtx({
+      config: { isOwner: false },
+      match: ['pl:pop:0', 'pop', '0'],
+    });
+
+    for (let index = 0; index < 5; index += 1) {
+      ctx.answerCallbackQuery.mockClear();
+      await bot.callbackQuery.mock.calls[index][1](ctx);
+      expect(ctx.answerCallbackQuery).toHaveBeenCalledWith('Только владелец');
+    }
+    expect(registry.restoreSource).not.toHaveBeenCalled();
+    expect(registry.excludeSource).not.toHaveBeenCalled();
+    expect(ctx.editMessageText).not.toHaveBeenCalled();
+  });
+
+  it('callbacks pl:* при отсутствии config считают чужаком', async () => {
+    const { service, bot } = makeDeps();
+    service.onModuleInit();
+    const ctx = makeCtx({ config: undefined, match: [] });
+
+    for (let index = 0; index < 5; index += 1) {
+      ctx.answerCallbackQuery.mockClear();
+      await bot.callbackQuery.mock.calls[index][1](ctx);
+      expect(ctx.answerCallbackQuery).toHaveBeenCalledWith('Только владелец');
+    }
+  });
+
+  it('pl:excl запрашивает подтверждение и подменяет клавиатуру', async () => {
+    const { service, bot } = makeDeps();
+    service.onModuleInit();
+    const handler = bot.callbackQuery.mock.calls[2][1];
+    const ctx = makeCtx({
+      match: ['pl:excl:7:pop:2', '7', 'pop', '2'],
+    });
+
+    await handler(ctx);
+
+    expect(ctx.answerCallbackQuery).toHaveBeenCalledWith('Исключить источник?');
+    const keyboard = ctx.editMessageReplyMarkup.mock.calls[0][0].reply_markup as InlineKeyboard;
+    expect(keyboard.inline_keyboard.flat().map((b: any) => b.callback_data)).toEqual([
+      'pl:exclok:7:pop:2',
+      'pl:exclno:7:pop:2',
+    ]);
+  });
+
+  it('pl:exclno отменяет и перерисовывает список', async () => {
+    const { service, bot, registry } = makeDeps();
+    registry.listPopular.mockResolvedValue([]);
+    service.onModuleInit();
+    const handler = bot.callbackQuery.mock.calls[3][1];
+    const ctx = makeCtx({
+      callbackQuery: { message: { message_id: 5 } },
+      match: ['pl:exclno:7:pop:2', '7', 'pop', '2'],
+    });
+
+    await handler(ctx);
+
+    expect(ctx.answerCallbackQuery).toHaveBeenCalledWith('Отменено');
+    expect(registry.excludeSource).not.toHaveBeenCalled();
+    expect(ctx.editMessageText).toHaveBeenCalled();
+  });
+
+  it('pl:exclok исключает источник и перерисовывает список', async () => {
+    const { service, bot, registry } = makeDeps();
+    registry.excludeSource.mockResolvedValue(true);
+    registry.listPopular.mockResolvedValue([]);
+    service.onModuleInit();
+    const handler = bot.callbackQuery.mock.calls[4][1];
+    const ctx = makeCtx({
+      callbackQuery: { message: { message_id: 5 } },
+      match: ['pl:exclok:7:pop:2', '7', 'pop', '2'],
+    });
+
+    await handler(ctx);
+
+    expect(registry.excludeSource).toHaveBeenCalledWith(7);
+    expect(ctx.answerCallbackQuery).toHaveBeenCalledWith('Источник исключён');
+    expect(ctx.editMessageText).toHaveBeenCalled();
+  });
+
+  it('pl:exclok: источник не найден', async () => {
+    const { service, bot, registry } = makeDeps();
+    registry.excludeSource.mockResolvedValue(null);
+    service.onModuleInit();
+    const handler = bot.callbackQuery.mock.calls[4][1];
+    const ctx = makeCtx({
+      callbackQuery: { message: { message_id: 5 } },
+      match: ['pl:exclok:99:pop:0', '99', 'pop', '0'],
+    });
+
+    await handler(ctx);
+
+    expect(ctx.answerCallbackQuery).toHaveBeenCalledWith('Не найден');
+  });
+
+  it('pl:excl: ошибка замены клавиатуры не роняет', async () => {
+    const { service, bot } = makeDeps();
+    service.onModuleInit();
+    const handler = bot.callbackQuery.mock.calls[2][1];
+    const ctx = makeCtx({
+      match: ['pl:excl:7:pop:2', '7', 'pop', '2'],
+    });
+    ctx.editMessageReplyMarkup.mockRejectedValue(new Error('too old'));
+
+    await expect(handler(ctx)).resolves.toBeUndefined();
+    expect(ctx.answerCallbackQuery).toHaveBeenCalledWith('Исключить источник?');
+  });
+
+  it('pl:excl без match не роняет', async () => {
+    const { service, bot } = makeDeps();
+    service.onModuleInit();
+    const handler = bot.callbackQuery.mock.calls[2][1];
+    const ctx = makeCtx({ match: undefined });
+
+    await expect(handler(ctx)).resolves.toBeUndefined();
+
+    expect(ctx.answerCallbackQuery).toHaveBeenCalledWith('Исключить источник?');
+    expect(ctx.editMessageReplyMarkup).toHaveBeenCalled();
+  });
+
+  it('pl:exclno без match перерисовывает список', async () => {
+    const { service, bot } = makeDeps();
+    service.onModuleInit();
+    const handler = bot.callbackQuery.mock.calls[3][1];
+    const ctx = makeCtx({ callbackQuery: { message: { message_id: 5 } }, match: undefined });
+
+    await expect(handler(ctx)).resolves.toBeUndefined();
+
+    expect(ctx.answerCallbackQuery).toHaveBeenCalledWith('Отменено');
+    expect(ctx.editMessageText).toHaveBeenCalled();
+  });
+
+  it('pl:exclok без match не роняет', async () => {
+    const { service, bot } = makeDeps();
+    service.onModuleInit();
+    const handler = bot.callbackQuery.mock.calls[4][1];
+    const ctx = makeCtx({ callbackQuery: { message: { message_id: 5 } }, match: undefined });
+
+    await expect(handler(ctx)).resolves.toBeUndefined();
+
+    expect(ctx.answerCallbackQuery).toHaveBeenCalledWith('Источник исключён');
+    expect(ctx.editMessageText).toHaveBeenCalled();
   });
 
   it('callback пагинации без match не роняет', async () => {

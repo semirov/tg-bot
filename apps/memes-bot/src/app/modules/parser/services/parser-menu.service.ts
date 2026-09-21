@@ -8,6 +8,7 @@ import { BotContext } from '../../bot/interfaces/bot-context.interface';
 import { AdminMenusEnum } from '../../menus/constants/bot-menus.enum';
 import { MenuPresenter } from '../../menus/menu-presenter';
 import { ObservedStatus, SourceStatus } from '../constants/parser.constants';
+import { channelInternalId } from '../../../shared/publication/telegram-link';
 import { ObservedPostEntity } from '../entities/observed-post.entity';
 import { SourceChannelEntity } from '../entities/source-channel.entity';
 import { ParserRegistryService } from './parser-registry.service';
@@ -50,17 +51,51 @@ export class ParserMenuService implements OnModuleInit {
   /** Callback-и пагинации списков и возврата из чёрного списка. */
   private registerListCallbacks(): void {
     this.bot.callbackQuery(/^pl:(pop|exc|src):(\d+)$/, async (ctx) => {
+      if (!ctx.config?.isOwner) return ctx.answerCallbackQuery('Только владелец');
       await ctx.answerCallbackQuery();
       await this.sendList(ctx, ctx.match?.[1] as ListType, Number(ctx.match?.[2]));
     });
 
     this.bot.callbackQuery(/^pl:restore:(\d+):(\d+)$/, async (ctx) => {
+      if (!ctx.config?.isOwner) return ctx.answerCallbackQuery('Только владелец');
       const sourceId = Number(ctx.match?.[1]);
       const page = Number(ctx.match?.[2]);
       const restored = await this.registry.restoreSource(sourceId);
       await ctx.answerCallbackQuery(restored ? 'Источник возвращён' : 'Не найден');
       await this.sendList(ctx, 'exc', page);
     });
+
+    this.bot.callbackQuery(/^pl:excl:(\d+):(pop|src):(\d+)$/, async (ctx) => {
+      if (!ctx.config?.isOwner) return ctx.answerCallbackQuery('Только владелец');
+      await ctx.answerCallbackQuery('Исключить источник?');
+      await this.editListKeyboard(
+        ctx,
+        new InlineKeyboard()
+          .text('✅ Да, исключить', `pl:exclok:${ctx.match?.[1]}:${ctx.match?.[2]}:${ctx.match?.[3]}`)
+          .text('↩️ Отмена', `pl:exclno:${ctx.match?.[1]}:${ctx.match?.[2]}:${ctx.match?.[3]}`)
+      );
+    });
+
+    this.bot.callbackQuery(/^pl:exclno:(\d+):(pop|src):(\d+)$/, async (ctx) => {
+      if (!ctx.config?.isOwner) return ctx.answerCallbackQuery('Только владелец');
+      await ctx.answerCallbackQuery('Отменено');
+      await this.sendList(ctx, ctx.match?.[2] as ListType, Number(ctx.match?.[3]));
+    });
+
+    this.bot.callbackQuery(/^pl:exclok:(\d+):(pop|src):(\d+)$/, async (ctx) => {
+      if (!ctx.config?.isOwner) return ctx.answerCallbackQuery('Только владелец');
+      const excluded = await this.registry.excludeSource(Number(ctx.match?.[1]));
+      await ctx.answerCallbackQuery(excluded ? 'Источник исключён' : 'Не найден');
+      await this.sendList(ctx, ctx.match?.[2] as ListType, Number(ctx.match?.[3]));
+    });
+  }
+
+  private async editListKeyboard(ctx: BotContext, keyboard: InlineKeyboard): Promise<void> {
+    try {
+      await ctx.editMessageReplyMarkup({ reply_markup: keyboard });
+    } catch (error) {
+      void error;
+    }
   }
 
   private buildMenu(): Menu<BotContext> {
@@ -128,7 +163,7 @@ export class ParserMenuService implements OnModuleInit {
       .row();
 
     menu.text(
-      async () => `🏆 Популярные (${await this.registry.listPopular(1, 0).then((rows) => rows.length)})`,
+      async () => `🏆 Популярные (${await this.registry.countPopular()})`,
       guard(async (ctx) => this.sendList(ctx, 'pop', 0))
     )
       .text('🚫 Исключённые', guard(async (ctx) => this.sendList(ctx, 'exc', 0)))
@@ -187,15 +222,20 @@ export class ParserMenuService implements OnModuleInit {
     page: number
   ): Promise<{ rows: SourceChannelEntity[]; total: number; title: string }> {
     if (type === 'pop') {
-      const rows = await this.registry.listPopular(PAGE_SIZE, page * PAGE_SIZE);
-      const total = rows.length < PAGE_SIZE ? page * PAGE_SIZE + rows.length : (page + 2) * PAGE_SIZE;
+      const [rows, total] = await Promise.all([
+        this.registry.listPopular(PAGE_SIZE, page * PAGE_SIZE),
+        this.registry.countPopular(),
+      ]);
       return { rows, total, title: '🏆 Популярные источники' };
     }
     if (type === 'exc') {
-      const all = await this.registry.listExcluded();
+      const [all, total] = await Promise.all([
+        this.registry.listExcluded(),
+        this.registry.countExcluded(),
+      ]);
       return {
         rows: all.slice(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE),
-        total: all.length,
+        total,
         title: '🚫 Исключённые источники',
       };
     }
@@ -213,28 +253,49 @@ export class ParserMenuService implements OnModuleInit {
     pages: number,
     rows: SourceChannelEntity[]
   ): InlineKeyboard {
-    const keyboard = new InlineKeyboard();
-    if (page > 0) keyboard.text('⬅️', `pl:${type}:${page - 1}`);
-    if (page < pages - 1) keyboard.text('➡️', `pl:${type}:${page + 1}`);
-    if (page > 0 || page < pages - 1) keyboard.row();
+    const matrix: Array<Array<{ text: string; callback_data: string }>> = [];
+    let actions: Array<{ text: string; callback_data: string }> = [];
+    rows.forEach((source, index) => {
+      const label = `${index + 1 + page * PAGE_SIZE}`;
+      if (type === 'exc') {
+        actions.push({ text: `↩️ Вернуть ${label}`, callback_data: `pl:restore:${source.id}:${page}` });
+      } else {
+        actions.push({ text: `🚫 ${label}`, callback_data: `pl:excl:${source.id}:${type}:${page}` });
+      }
+      if (actions.length === 4) {
+        matrix.push(actions);
+        actions = [];
+      }
+    });
+    if (actions.length) matrix.push(actions);
 
-    if (type === 'exc') {
-      rows.forEach((source, index) => {
-        keyboard.text(`↩️ ${index + 1 + page * PAGE_SIZE}`, `pl:restore:${source.id}:${page}`);
-        if ((index + 1) % 4 === 0) keyboard.row();
-      });
-    }
-    return keyboard;
+    const nav: Array<{ text: string; callback_data: string }> = [];
+    if (page > 0) nav.push({ text: '⬅️', callback_data: `pl:${type}:${page - 1}` });
+    if (page < pages - 1) nav.push({ text: '➡️', callback_data: `pl:${type}:${page + 1}` });
+    if (nav.length) matrix.push(nav);
+
+    return InlineKeyboard.from(matrix);
   }
 
   private sourceLine(source: SourceChannelEntity, position: number): string {
     const icon =
       source.excluded ? '🚫' : source.status === SourceStatus.WEB_ONLY ? '🌐' : '🟢';
     const title = escapeHtml((source.title ?? source.username ?? source.chatId).slice(0, 30));
+    const link = this.channelLink(source);
+    const named = link ? `<a href="${link}"><b>${title}</b></a>` : `<b>${title}</b>`;
     const taken = source.takenTotal ?? 0;
     const weight = (source.weight ?? 1).toFixed(2);
     const err = source.err != null ? ` · ERR ${(source.err * 100).toFixed(1)}%` : '';
-    return `${position}. ${icon} <b>${title}</b> — взято ${taken} · вес ${weight}${err}`;
+    return `${position}. ${icon} ${named} — взято ${taken} · вес ${weight}${err}`;
+  }
+
+  /** Публичная ссылка на источник (username или внутренняя форма канала). */
+  public channelLink(source: SourceChannelEntity): string | null {
+    if (source.username) return `https://t.me/${source.username}`;
+    const numeric = Number(source.chatId);
+    if (!source.chatId || !Number.isFinite(numeric) || numeric === 0) return null;
+    const internal = channelInternalId(numeric);
+    return internal ? `https://t.me/c/${internal}` : null;
   }
 
   /** Статистика для заголовка меню (собрано/оценено/доставлено сегодня). */

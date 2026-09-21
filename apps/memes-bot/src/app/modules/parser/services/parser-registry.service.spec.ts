@@ -127,6 +127,16 @@ describe('ParserRegistryService', () => {
     });
   });
 
+  it('countExcluded/countPopular считают по флагу excluded', async () => {
+    sourceRepo.count.mockResolvedValue(5);
+
+    expect(await service.countExcluded()).toBe(5);
+    expect(sourceRepo.count).toHaveBeenLastCalledWith({ where: { excluded: true } });
+
+    expect(await service.countPopular()).toBe(5);
+    expect(sourceRepo.count).toHaveBeenLastCalledWith({ where: { excluded: false } });
+  });
+
     it('listExcluded/listPopular', async () => {
     await service.listExcluded();
     expect(sourceRepo.find).toHaveBeenCalledWith({ where: { excluded: true }, order: { excludedAt: 'DESC' } });
