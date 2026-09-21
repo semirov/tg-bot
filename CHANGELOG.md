@@ -1,3 +1,10 @@
+# [0.23.0](https://github.com/semirov/tg-bot/compare/v0.22.1...v0.23.0) (2026-09-21)
+
+
+### Features
+
+* **admin:** снятие с публикации, пагинированная сетка, списки ([ce5b769](https://github.com/semirov/tg-bot/commit/ce5b769972ba9c59442c640b2fee52d4302d313c))
+
 ## [0.22.1](https://github.com/semirov/tg-bot/compare/v0.22.0...v0.22.1) (2026-09-21)
 
 
