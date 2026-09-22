@@ -247,17 +247,6 @@ export class PostSchedulerService {
     return this.postSchedulerEntity.update({ id }, { isPublished: true });
   }
 
-  public async getScheduledPost(): Promise<PostSchedulerEntity[]> {
-    const nowTimeStamp = new Date();
-    const startTimestamp = zonedTimeToUtc(nowTimeStamp, 'Europe/Moscow');
-    return this.postSchedulerEntity.find({
-      where: { publishDate: MoreThanOrEqual(startTimestamp), isPublished: false },
-      relations: { processedByModerator: true },
-      order: { publishDate: 'ASC' },
-      cache: false,
-    });
-  }
-
   /**
    * Страница неопубликованных постов сетки: ближайшие (и уже просроченные,
    * ждущие тика cron) первыми — их тоже можно снять.

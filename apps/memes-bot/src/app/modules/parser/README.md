@@ -265,7 +265,6 @@ pending ──eval──▶ scored ──dump/force──▶ selected ──deli
 | `EVAL_PAUSE_BACKLOG` | 400 | порог паузы обычной оценки |
 | `QUEUE_MERGE_SIMILARITY` | 0.85 | порог склейки фото |
 | `VIDEO_MERGE_SIMILARITY` | 0.92 | порог склейки видео (по обложке) |
-| `IGNORED_AFTER_HOURS` | 48 | (легаси-константа игнора) |
 | `WEIGHT_TAKEN_CAP` | 2 | макс. буст за взятые |
 | `IGNORE_PENALTY_STEP` | 0.08 | шаг жёсткого игнора |
 | `SOFT_IGNORE_PENALTY_STEP` | 0.02 | шаг мягкого игнора |
