@@ -1,3 +1,10 @@
+## [0.31.1](https://github.com/semirov/tg-bot/compare/v0.31.0...v0.31.1) (2026-09-22)
+
+
+### Bug Fixes
+
+* **parser:** 64-символьные хеши, побитовый дедуп, peer по username ([56e98b4](https://github.com/semirov/tg-bot/commit/56e98b409faea19dfcf3cf3014dd0a4292cd411c))
+
 # [0.31.0](https://github.com/semirov/tg-bot/compare/v0.30.0...v0.31.0) (2026-09-22)
 
 
