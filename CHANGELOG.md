@@ -1,3 +1,10 @@
+# [0.28.0](https://github.com/semirov/tg-bot/compare/v0.27.0...v0.28.0) (2026-09-22)
+
+
+### Features
+
+* **resilience:** auto-retry и transformer-throttler ([0f06a08](https://github.com/semirov/tg-bot/commit/0f06a08a27f368485b9af2c20c2bc048b5c1b40b))
+
 # [0.27.0](https://github.com/semirov/tg-bot/compare/v0.26.3...v0.27.0) (2026-09-21)
 
 
