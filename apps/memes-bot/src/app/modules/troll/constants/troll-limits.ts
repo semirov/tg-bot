@@ -78,16 +78,19 @@ export const TROLL_MEME_MAX_ATTEMPTS = 5;
 /** Пауза между вызовами /sumarize в одном чате (общий кулдаун на весь чат), сек. */
 export const TROLL_SUMMARY_COOLDOWN_SEC = 60 * 60;
 
-/** Сколько последних сообщений брать в саммари. */
-export const TROLL_SUMMARY_MAX_MESSAGES = 1500;
+/**
+ * Аварийный потолок числа реплик для саммари. Окно пересказа — вся история за
+ * TTL (24 часа), поэтому лимит высокий: это предохранитель от патологического
+ * флуда, а не рабочий ограничитель. Реальный ограничитель объёма — TROLL_SUMMARY_MAX_CHARS.
+ */
+export const TROLL_SUMMARY_MAX_MESSAGES = 5000;
 
 /**
- * Сколько последних реплик чата брать в саммари, если окно «с прошлого раза»
- * оказалось пустым (лучше пересказать хоть что-то, чем отказать).
+ * Потолок длины входного текста для саммари, символов. Равен аварийному
+ * потолку контекста диалога (TROLL_CONTEXT_MAX_CHARS), который уже проверен
+ * на боевой модели: столько символов + max_tokens укладываются в её контекст.
+ * Расшифровку собираем от свежих реплик, так что усечение теряет только старое.
  */
-export const TROLL_SUMMARY_FALLBACK_MESSAGES = 200;
-
-/** Потолок длины входного текста для саммари, символов. */
 export const TROLL_SUMMARY_MAX_CHARS = 200000;
 
 /** Потолок max_tokens для запроса саммари. */
@@ -173,3 +176,101 @@ export const TROLL_DEFECT_CONTEXT_CHARS = 12000;
 
 /** Допустимые уровни серьёзности дефекта (ответ диагностики). */
 export const TROLL_DEFECT_SEVERITIES = ['low', 'medium', 'high'];
+
+/**
+ * Теги участников чата (`setChatMemberTag`).
+ * Жёсткий лимит Telegram: 0–16 символов, эмодзи запрещены.
+ */
+export const TROLL_MEMBER_TAG_MAX_CHARS = 16;
+
+/**
+ * Раз в сколько сообщений участника пересматривать его тег: на 10-е, 20-е и т.д.
+ * Событийно, без крона; контекст — вся история за сутки.
+ */
+export const TROLL_MEMBER_TAG_BATCH_MESSAGES = 10;
+
+/** Сколько последних реплик участника отправлять модели. */
+export const TROLL_MEMBER_TAG_MAX_MESSAGES = 40;
+
+/** Потолок длины расшифровки реплик участника, символов. */
+export const TROLL_MEMBER_TAG_TRANSCRIPT_CHARS = 4000;
+
+/** Потолок max_tokens для запроса тегов. */
+export const TROLL_MEMBER_TAG_MAX_TOKENS = 500;
+
+/** Не чаще раза в сутки на человека (антифлуд). */
+export const TROLL_MEMBER_TAG_COOLDOWN_HOURS = 24;
+
+/** Максимум кандидатов-тегов, которые просим у модели. */
+export const TROLL_MEMBER_TAG_CANDIDATES = 5;
+
+/** Сколько занятых в чате тегов передавать модели, чтобы не повторяться. */
+export const TROLL_MEMBER_TAG_OCCUPIED_MAX = 30;
+
+/** Потолок max_tokens для промта-объявления о наречении. */
+export const TROLL_MEMBER_TAG_ANNOUNCE_MAX_TOKENS = 200;
+
+/** Потолок длины объявления о наречении, символов. */
+export const TROLL_MEMBER_TAG_ANNOUNCE_MAX_CHARS = 250;
+
+/**
+ * Биографии участников (внутренняя долгая память, per-chat).
+ * Хранение и впрыск — не более TROLL_MEMBER_BIO_MAX_CHARS символов.
+ */
+export const TROLL_MEMBER_BIO_MAX_CHARS = 1000;
+
+/**
+ * Через сколько новых реплик участника обновлять досье. По эксперименту:
+ * каждые ~20 сообщений — та же полнота, что каждые 10, но вдвое дешевле.
+ */
+export const TROLL_MEMBER_BIO_UPDATE_EVERY = 20;
+
+/** Минимальный интервал между обновлениями одного досье, мс (антифлуд). */
+export const TROLL_MEMBER_BIO_MIN_INTERVAL_MS = 10 * 60 * 1000;
+
+/** Сколько свежих реплик участника отдавать модели за одно обновление. */
+export const TROLL_MEMBER_BIO_MAX_MESSAGES = 40;
+
+/** Потолок длины расшифровки реплик для извлечения фактов, символов. */
+export const TROLL_MEMBER_BIO_TRANSCRIPT_CHARS = 8000;
+
+/** Потолок max_tokens извлечения фактов. */
+export const TROLL_MEMBER_BIO_MAX_TOKENS = 800;
+
+/** Максимум фактов, извлекаемых за одно обновление. */
+export const TROLL_MEMBER_BIO_MAX_FACTS = 6;
+
+/** Сколько подтверждений делают факт ядром. */
+export const TROLL_MEMBER_BIO_CORE_MIN = 2;
+
+/** Порог похожести фактов при слиянии (доля совпавших слов). */
+export const TROLL_MEMBER_BIO_SIMILARITY = 0.6;
+
+/** Вес памяти: старт, прибавка за подтверждение, потолок, порог вымывания. */
+export const TROLL_MEMBER_BIO_WEIGHT_INITIAL = 1;
+export const TROLL_MEMBER_BIO_WEIGHT_BOOST = 1;
+export const TROLL_MEMBER_BIO_WEIGHT_MAX = 4;
+export const TROLL_MEMBER_BIO_DROP_THRESHOLD = 0.3;
+
+/** Базовый и максимальный период полураспада факта, часы. */
+export const TROLL_MEMBER_BIO_HALF_LIFE_BASE_HOURS = 6;
+export const TROLL_MEMBER_BIO_HALF_LIFE_MAX_HOURS = 336; // 14 суток
+
+/** Сколько досье (участников) подмешивать в диалог и их суммарный потолок. */
+export const TROLL_MEMBER_BIO_INJECT_MAX_USERS = 5;
+export const TROLL_MEMBER_BIO_INJECT_MAX_CHARS = 1600;
+
+/** Canary-строка внутри блока памяти: появление в ответе = утечка. */
+export const TROLL_MEMBER_BIO_CANARY = 'ВНУТР_БИО_7F3A9E21';
+
+/** Минимальная длина дословного совпадения с фактом (слов), считающаяся утечкой. */
+export const TROLL_MEMBER_BIO_LEAK_NGRAM = 5;
+
+/**
+ * Взвешивание диалогового контекста по свежести.
+ * Свежий хвост — дословно, чуть постарше — сжимаем, совсем старое — отбрасываем.
+ */
+export const TROLL_DIALOG_HOT_MESSAGES = 20;
+export const TROLL_DIALOG_HOT_MINUTES = 30;
+export const TROLL_DIALOG_WARM_MINUTES = 120;
+export const TROLL_DIALOG_WARM_CHARS = 60;

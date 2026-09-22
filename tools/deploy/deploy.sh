@@ -1,20 +1,14 @@
 #!/usr/bin/env bash
 # Сборка и деплой образа на сервер.
 #
-# Использование: deploy.sh <version>
-# Секреты берутся из read-only каталога DEPLOY_SECRETS_DIR (по умолчанию
-# /deploy-secrets), который монтируется в контейнер раннера. В репозиторий
-# секреты не попадают и в лог не печатаются.
+# Использование: deploy.sh <version> [builtSha]
 #
-# /deploy-secrets/target.env:
-#   DEPLOY_HOST=...
-#   DEPLOY_USER=...
-#   DEPLOY_PASSWORD=...            # либо DEPLOY_SSH_KEY=/deploy-secrets/deploy_ed25519
-#   DEPLOY_IMAGE=cr.yandex/<id>/telegram-bot
-#   DEPLOY_CONTAINER=telegram-bot
-#   DEPLOY_NETWORK=app-net
-#   DEPLOY_ENV_FILE=/root/bot.env
-# /deploy-secrets/docker/config.json  — креды registry для docker push
+# Все параметры окружения (хост, доступы, имена образа/контейнера/сети, файл env)
+# и креды registry берутся из каталога секретов DEPLOY_SECRETS_DIR, который
+# монтируется в контейнер CI read-only. В репозиторий секреты не попадают и в
+# лог не печатаются. Ожидаемые переменные: DEPLOY_HOST, DEPLOY_USER,
+# DEPLOY_PASSWORD или DEPLOY_SSH_KEY, DEPLOY_IMAGE, DEPLOY_CONTAINER,
+# DEPLOY_NETWORK, DEPLOY_ENV_FILE; креды registry — в каталоге секретов.
 set -euo pipefail
 
 export DOCKER_BUILDKIT=1
@@ -90,9 +84,8 @@ echo "--- status ---"
 docker ps --format '{{.Names}} | {{.Image}} | {{.Status}}' | grep "${DEPLOY_CONTAINER}" || true
 echo "--- logs ---"
 docker logs --tail 60 "${DEPLOY_CONTAINER}" 2>&1
-# Диск сервера маленький (20 ГБ): старые теги образов копятся и однажды
-# переполняют раздел (инцидент 2026-09-20 — Postgres не смог писать).
-# Чистим образы старше 72 часов (текущий и предыдущий релиз остаются).
+# На сервере ограниченный диск: старые теги образов копятся и могут забить
+# раздел. Чистим образы старше 72 часов (текущий и предыдущий релиз остаются).
 echo "--- prune старых образов ---"
 docker image prune -af --filter "until=72h" | tail -2
 df -h / | tail -1

@@ -40,6 +40,8 @@ export class AdminMenuService implements OnModuleInit {
   private readonly menuText = new YearResultsMenuText();
   /** Общие хелперы сборки меню (ownerGuard, переходы). */
   private readonly menuPresenter = new MenuPresenter();
+  /** Выбранный в админке чат для просмотра досье участников. */
+  private bioChatId: number | null = null;
 
   constructor(
     @Inject(BOT) private bot: Bot<BotContext>,
@@ -321,6 +323,65 @@ export class AdminMenuService implements OnModuleInit {
         return range;
       }
     );
+
+    const trollBiosChatsMenu = new Menu<BotContext>(AdminMenusEnum.TROLL_BIOS_CHATS_MENU).dynamic(
+      async () => {
+        const chats = (await this.trollService.getAllChats()).slice(0, 40);
+        const range = new MenuRange<BotContext>();
+        if (!chats.length) {
+          range.text(
+            'Чатов пока нет',
+            this.ownerGuard((ctx) => ctx.menu.nav(AdminMenusEnum.TROLL_SETTINGS_MENU))
+          );
+          return range;
+        }
+        for (const chat of chats) {
+          const title = (chat.title || String(chat.chatId)).slice(0, 30);
+          range
+            .text(
+              title,
+              this.ownerGuard(async (ctx) => {
+                this.bioChatId = Number(chat.chatId);
+                await ctx.menu.nav(AdminMenusEnum.TROLL_BIOS_MENU);
+              })
+            )
+            .row();
+        }
+        range.back('Назад');
+        return range;
+      }
+    );
+
+    const trollBiosMenu = new Menu<BotContext>(AdminMenusEnum.TROLL_BIOS_MENU).dynamic(async () => {
+      const range = new MenuRange<BotContext>();
+      const chatId = this.bioChatId;
+      if (chatId === null) {
+        range.text(
+          'Чат не выбран',
+          this.ownerGuard((ctx) => ctx.menu.nav(AdminMenusEnum.TROLL_BIOS_CHATS_MENU))
+        );
+        return range;
+      }
+      const bios = await this.trollService.getChatBiosView(chatId);
+      if (!bios.length) {
+        range.text('Биографий пока нет', this.ownerGuard(async () => undefined));
+        range.row().back('Назад');
+        return range;
+      }
+      for (const item of bios) {
+        const label = item.userName.slice(0, 40);
+        range
+          .text(
+            label,
+            this.ownerGuard(async (ctx) => {
+              await ctx.reply(`📋 ${item.userName}\n\n${item.bio}`);
+            })
+          )
+          .row();
+      }
+      range.back('Назад');
+      return range;
+    });
 
     const trollSettingsMenu = new Menu<BotContext>(AdminMenusEnum.TROLL_SETTINGS_MENU)
       .text(
@@ -619,6 +680,26 @@ export class AdminMenuService implements OnModuleInit {
       )
       .row()
       .text(
+        () => `Темы-теги участников: ${current().memberTagsEnabled ? '🟢 вкл' : '⚪️ выкл'}`,
+        this.ownerGuard(async (ctx) => {
+          await this.trollSettings.update({
+            memberTagsEnabled: AdminSettingsPresets.toggle(current().memberTagsEnabled),
+          });
+          ctx.menu.update();
+        })
+      )
+      .row()
+      .text(
+        () => `Биографии участников: ${current().memberBioEnabled ? '🟢 вкл' : '⚪️ выкл'}`,
+        this.ownerGuard(async (ctx) => {
+          await this.trollSettings.update({
+            memberBioEnabled: AdminSettingsPresets.toggle(current().memberBioEnabled),
+          });
+          ctx.menu.update();
+        })
+      )
+      .row()
+      .text(
         () => {
           const usage = this.deepSeek.usage;
           return `📊 DeepSeek сегодня: ${usage.requests} запр., ${usage.tokens} ток., ≈ ${formatUsd(
@@ -628,6 +709,11 @@ export class AdminMenuService implements OnModuleInit {
         this.ownerGuard(async (ctx) => {
           await ctx.answerCallbackQuery('Обновлено');
         })
+      )
+      .row()
+      .text(
+        '📋 Биографии участников',
+        this.ownerGuard((ctx) => ctx.menu.nav(AdminMenusEnum.TROLL_BIOS_CHATS_MENU))
       )
       .row()
       .text(
@@ -654,6 +740,8 @@ export class AdminMenuService implements OnModuleInit {
     menu.register(memeLimitSelectUserMenu);
     menu.register(memeLimitOptionsMenu);
     menu.register(trollSettingsMenu);
+    menu.register(trollBiosChatsMenu);
+    menu.register(trollBiosMenu);
     menu.register(this.parserMenuService.getMenu());
     menu.register(botsMenu);
     menu.register(publicationsMenu);
@@ -668,7 +756,9 @@ export class AdminMenuService implements OnModuleInit {
   ): Promise<void> {
     let user: UserEntity = null;
 
-    await ctx.reply('Пришли имя пользователя которого хочешь добавить в модераторы');
+    await ctx.reply('Пришли имя пользователя которого хочешь добавить в модераторы', {
+      reply_markup: { force_reply: true, input_field_placeholder: 'username' },
+    });
     while (!user) {
       const messageCtx = await conversation.wait();
 

@@ -1,5 +1,7 @@
 import {
   containsLink,
+  containsProfanity,
+  sanitizeMemberTag,
   sanitizeModelField,
   sanitizeModelStyled,
   sanitizeModelText,
@@ -176,6 +178,61 @@ describe('troll-sanitizer', () => {
 
     it('не трогает текст без ссылок', () => {
       expect(stripLinks('обычное сообщение')).toBe('обычное сообщение');
+    });
+  });
+
+  describe('sanitizeMemberTag', () => {
+    it('обрезает тег до 16 символов по границе слова', () => {
+      expect(sanitizeMemberTag('кальянный лорд и повелитель')).toBe('кальянный лорд');
+      expect(sanitizeMemberTag('гранатовый маньяк')).toBe('гранатовый');
+    });
+
+    it('режет по дефису и подчёркиванию, а не посреди слова', () => {
+      expect(sanitizeMemberTag('цифровой-партизан')).toBe('цифровой');
+      expect(sanitizeMemberTag('очень_длинный_тег_тут')).toBe('очень_длинный');
+    });
+
+    it('режет жёстко, если до границы ничего нет', () => {
+      expect(sanitizeMemberTag('абракадабраабракадабра')).toBe('абракадабраабрак');
+    });
+
+    it('вырезает эмодзи и запрещённые символы', () => {
+      expect(sanitizeMemberTag('подмыхан 🔥😎')).toBe('подмыхан');
+      expect(sanitizeMemberTag('мтс<страдалец>')).toBe('мтс страдалец');
+    });
+
+    it('разрешает пробел, дефис и подчёркивание', () => {
+      expect(sanitizeMemberTag('вася_2000-х')).toBe('вася_2000-х');
+    });
+
+    it('схлопывает пробелы и обрезает края', () => {
+      expect(sanitizeMemberTag('  подмыхан   дня  ')).toBe('подмыхан дня');
+    });
+
+    it('возвращает пустую строку для не-строки или одних эмодзи', () => {
+      expect(sanitizeMemberTag(null)).toBe('');
+      expect(sanitizeMemberTag(42)).toBe('');
+      expect(sanitizeMemberTag('🎉🎉')).toBe('');
+    });
+
+    it('уважает явный лимит', () => {
+      expect(sanitizeMemberTag('подмыхан', 4)).toBe('подм');
+    });
+  });
+
+  describe('containsProfanity', () => {
+    it('ловит оскорбительные корни', () => {
+      expect(containsProfanity('хуеглот')).toBe(true);
+      expect(containsProfanity('долбоёб')).toBe(true);
+      expect(containsProfanity('мудак')).toBe(true);
+      expect(containsProfanity('идиот')).toBe(true);
+    });
+
+    it('не трогает безобидные теги', () => {
+      expect(containsProfanity('докер-обжора')).toBe(false);
+      expect(containsProfanity('мтс-страдалец')).toBe(false);
+      expect(containsProfanity('тспу-летописец')).toBe(false);
+      expect(containsProfanity(null)).toBe(false);
     });
   });
 });

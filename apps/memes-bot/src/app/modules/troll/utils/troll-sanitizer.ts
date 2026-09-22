@@ -9,7 +9,7 @@
  *  - инъекция разметки и фишинга: вырезаем HTML, markdown-ссылки, URL и @упоминания.
  */
 
-import { TROLL_HARD_MAX_INPUT_CHARS } from '../constants/troll-limits';
+import { TROLL_HARD_MAX_INPUT_CHARS, TROLL_MEMBER_TAG_MAX_CHARS } from '../constants/troll-limits';
 
 const ZERO_WIDTH_AND_BIDI = /[\u200B-\u200F\u202A-\u202E\u2060-\u2064\uFEFF]/g;
 // eslint-disable-next-line no-control-regex -- намеренно вычищаем управляющие символы
@@ -199,6 +199,49 @@ function truncateAtBoundary(text: string, limit: number): string {
  * Убирает разметку, ссылки и упоминания; усекает по длине.
  * Предложения разносит по строкам, а точки в концах строк вырезает (чатовый стиль).
  */
+/**
+ * Оскорбительные корни, которых не должно быть в теге участника: тег — это
+ * подколка про привычку или тему, а не обзывательство в лицо.
+ */
+const OFFENSIVE_ROOTS =
+  /(хуй|хуе|хуя|хуи|пизд|бля|еб[аоуы]|ёб|уеб|уёб|муд[ао]|долбо|гандон|пидор|пидар|сука|мраз|шлюх|гнид|дебил|кретин|идиот)/i;
+
+/** true, если строка содержит оскорбительный корень (не годится для тега). */
+export function containsProfanity(input: unknown): boolean {
+  return typeof input === 'string' && OFFENSIVE_ROOTS.test(input);
+}
+
+/**
+ * Приводит тег участника к требованиям Telegram: не длиннее 16 символов,
+ * без эмодзи и разметки. Разрешены буквы (любые алфавиты), цифры, пробел,
+ * дефис и подчёркивание — всё остальное (в т.ч. эмодзи) вырезается.
+ */
+export function sanitizeMemberTag(
+  input: unknown,
+  maxChars: number = TROLL_MEMBER_TAG_MAX_CHARS
+): string {
+  if (typeof input !== 'string') {
+    return '';
+  }
+  const limit = Math.max(1, Math.floor(maxChars));
+  const cleaned = stripInvisible(input)
+    .replace(/[^\p{L}\p{N} _-]/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (cleaned.length <= limit) {
+    return cleaned;
+  }
+  // Не режем посреди слова: если влезает последнее целое слово — оставляем его.
+  // Границами считаем пробел, дефис и подчёркивание.
+  const head = cleaned.slice(0, limit);
+  const boundary = Math.max(
+    head.lastIndexOf(' '),
+    head.lastIndexOf('-'),
+    head.lastIndexOf('_')
+  );
+  return (boundary > 0 ? head.slice(0, boundary) : head).trim();
+}
+
 export function sanitizeModelText(input: string, maxChars: number): string {
   const text = stripLinePeriods(splitSentencesToLines(cleanModelText(input, maxChars)));
   return collapseWhitespace(text);

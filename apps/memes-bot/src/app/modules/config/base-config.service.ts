@@ -254,7 +254,7 @@ export class BaseConfigService {
   /** Минимальная пауза между проверками по УК РФ в одном чате, сек. */
   /** Глобальный лимит запросов к DeepSeek в сутки. */
   get trollDailyRequestLimit(): number {
-    return this.getNumber('TROLL_DAILY_REQUEST_LIMIT', 2000);
+    return this.getNumber('TROLL_DAILY_REQUEST_LIMIT', 4000);
   }
 
   /** Максимальная длина пользовательского текста для модели. */

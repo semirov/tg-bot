@@ -267,25 +267,6 @@ describe('PostSchedulerService', () => {
     });
   });
 
-  describe('getScheduledPost', () => {
-    it('берёт будущие неопубликованные посты с модератором', async () => {
-      const { service, repo } = setup();
-      withNow(msk(2026, 1, 15, 10, 0));
-      const posts = [{ id: 1 }];
-      repo.find.mockResolvedValue(posts);
-
-      await expect(service.getScheduledPost()).resolves.toBe(posts);
-      expect(repo.find).toHaveBeenCalledWith({
-        where: { publishDate: expect.anything(), isPublished: false },
-        relations: { processedByModerator: true },
-        order: { publishDate: 'ASC' },
-        cache: false,
-      });
-      const arg = repo.find.mock.calls[0][0];
-      expect(arg.where.publishDate.value).toBeInstanceOf(Date);
-    });
-  });
-
   describe('getUpcomingPage', () => {
     const baseArgs = {
       relations: { processedByModerator: true },
@@ -326,6 +307,21 @@ describe('PostSchedulerService', () => {
       expect(repo.find).toHaveBeenCalledWith({
         where: { isPublished: false, isUserPost: false },
         ...baseArgs,
+      });
+    });
+  });
+
+  describe('getFurthestUpcoming', () => {
+    it('берёт самый поздний неопубликованный пост', async () => {
+      const { service, repo } = setup();
+      const post = { id: 4, publishDate: msk(2026, 1, 20, 10) };
+      repo.findOne.mockResolvedValue(post);
+
+      await expect(service.getFurthestUpcoming()).resolves.toBe(post);
+      expect(repo.findOne).toHaveBeenCalledWith({
+        where: { isPublished: false },
+        order: { publishDate: 'DESC' },
+        cache: false,
       });
     });
   });

@@ -82,6 +82,14 @@ export class TrollSettingsEntity {
   @Column('boolean', { default: true })
   selfCheckEnabled: boolean;
 
+  /** Придумывать и обновлять смешные теги участников чата. */
+  @Column('boolean', { default: true })
+  memberTagsEnabled: boolean;
+
+  /** Вести внутренние биографии участников (долгая память) и подмешивать в диалог. */
+  @Column('boolean', { default: true })
+  memberBioEnabled: boolean;
+
   /** Порог оценки: ниже него ответ уходит на переписывание. */
   @Column('real', { default: 0.6 })
   selfCheckThreshold: number;

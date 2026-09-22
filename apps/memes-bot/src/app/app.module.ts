@@ -12,7 +12,6 @@ import { SettingsEntity } from './modules/bot/entities/settings.entity';
 import { UserRequestEntity } from './modules/bot/entities/user-request.entity';
 import { UserEntity } from './modules/bot/entities/user.entity';
 import { SessionEntity } from './modules/bot/session/session.entity';
-import { ChannelMonitorModule } from './modules/channel-monitor/channel-monitor.module';
 import { ChannelMemeEntity } from './modules/channel-monitor/entities/channel-meme.entity';
 import { ClientModule } from './modules/client/client.module';
 import { ClientSessionEntity } from './modules/client/entities/client-session.entity';
@@ -36,8 +35,11 @@ import { ParserSettingsEntity } from './modules/parser/entities/parser-settings.
 import { SourceCandidateEntity } from './modules/parser/entities/source-candidate.entity';
 import { SourceChannelEntity } from './modules/parser/entities/source-channel.entity';
 import { TrollMessageEntity } from './modules/troll/entities/troll-message.entity';
+import { TrollMemberBioEntity } from './modules/troll/entities/troll-member-bio.entity';
+import { TrollMemberTagEntity } from './modules/troll/entities/troll-member-tag.entity';
 import { TrollPredictionEntity } from './modules/troll/entities/troll-prediction.entity';
 import { TrollSettingsEntity } from './modules/troll/entities/troll-settings.entity';
+import { QueueAlertStateEntity } from './modules/cron/entities/queue-alert-state.entity';
 import { TrollModule } from './modules/troll/troll.module';
 import { SharedModule } from './shared/shared.module';
 
@@ -47,7 +49,6 @@ import { SharedModule } from './shared/shared.module';
     SharedModule,
     BotModule,
     ObservatoryModule,
-    ChannelMonitorModule,
     ScheduleModule.forRoot(),
     ThrottlerModule.forRoot([
       {
@@ -80,12 +81,15 @@ import { SharedModule } from './shared/shared.module';
           TrollChatEntity,
           TrollSettingsEntity,
           TrollMessageEntity,
+          TrollMemberTagEntity,
+          TrollMemberBioEntity,
           TrollPredictionEntity,
           TrollDefectEntity,
           SourceChannelEntity,
           ObservedPostEntity,
           SourceCandidateEntity,
           ParserSettingsEntity,
+          QueueAlertStateEntity,
         ],
         synchronize: true,
         extra: configService.useSSL

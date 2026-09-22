@@ -1,6 +1,6 @@
 {
   "name": "filipp-tg",
-  "version": "0.27.0",
+  "version": "0.35.0",
   "license": "MIT",
   "scripts": {
     "start:memes-bot": "nx serve memes-bot",
@@ -25,10 +25,12 @@
   "dependencies": {
     "@aws-sdk/client-s3": "3.985.0",
     "@aws-sdk/lib-storage": "3.985.0",
-    "@grammyjs/conversations": "1.2.0",
+    "@grammyjs/auto-retry": "2.0.2",
+    "@grammyjs/conversations": "2.1.1",
     "@grammyjs/menu": "1.5.0",
     "@grammyjs/runner": "2.0.3",
     "@grammyjs/storage-typeorm": "2.6.0",
+    "@grammyjs/transformer-throttler": "1.2.1",
     "@nestjs/axios": "3.0.0",
     "@nestjs/bull": "0.6.2",
     "@nestjs/common": "^9.0.0",

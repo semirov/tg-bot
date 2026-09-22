@@ -8,7 +8,6 @@ import { ParserEvaluatorService } from './parser-evaluator.service';
 import { ParserCollectorService } from './parser-collector.service';
 import { ParserService } from './parser.service';
 import { channelInternalId, buildPostUrl } from '../../../shared/publication/telegram-link';
-import { pickByFairness } from '../domain/parser-quotas';
 
 jest.mock('axios', () => ({
   __esModule: true,
@@ -484,18 +483,6 @@ describe('parser branches round 2', () => {
 
     await (service as never as { onStats(): Promise<void> }).onStats();
     expect(registry.listCollectible).not.toHaveBeenCalled();
-  });
-
-  // ---------- quotas: memesLimit жёсткое резервирование ----------
-  it('quotas: мемы не вылазят за memesLimit при кринж-кандидатах', () => {
-    const rules = { dailyLimit: 2, sourceDailyCap: 5, cringeShare: 0.5 };
-    const candidates = [
-      { id: 1, sourceChatId: 10, category: 'memes', score: 9, stage: 'final' },
-      { id: 2, sourceChatId: 20, category: 'memes', score: 8, stage: 'final' },
-      { id: 3, sourceChatId: 30, category: 'cringe', score: 1, stage: 'final' },
-    ];
-    const picked = pickByFairness(candidates, rules, { perSource: {}, cringe: 0, total: 0 });
-    expect(picked).toEqual([1, 3]);
   });
 
   // ---------- telegram-link ----------

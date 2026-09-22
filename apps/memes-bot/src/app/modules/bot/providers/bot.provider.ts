@@ -1,4 +1,6 @@
 import { conversations } from '@grammyjs/conversations';
+import { autoRetry } from '@grammyjs/auto-retry';
+import { apiThrottler } from '@grammyjs/transformer-throttler';
 import { run, sequentialize } from '@grammyjs/runner';
 import { TypeormAdapter } from '@grammyjs/storage-typeorm';
 import { Logger } from '@nestjs/common';
@@ -35,6 +37,19 @@ const initialSessionData: SessionDataInterface = {
   anonymousPublishing: false,
 };
 
+/**
+ * Устойчивость к flood-wait/5xx: throttler ограничивает исходящий поток,
+ * auto-retry повторяет временные ошибки. В тестах отключено (моки/скорость).
+ */
+export function installResiliencePlugins(
+  bot: { api: { config: { use: (transformer: never) => unknown } } },
+  nodeEnv?: string
+): void {
+  if (nodeEnv === 'test') return;
+  bot.api.config.use(apiThrottler() as never);
+  bot.api.config.use(autoRetry({ maxRetryAttempts: 3, maxDelaySeconds: 60 }) as never);
+}
+
 export const BOT_PROVIDER = {
   provide: BOT,
   useFactory: async (
@@ -43,6 +58,8 @@ export const BOT_PROVIDER = {
     sessionManagerService: SessionManagerService
   ) => {
     const bot = new Bot(config.botToken, { client: { environment: config.tgEnv } });
+
+    installResiliencePlugins(bot, process.env.NODE_ENV);
 
     bot.catch((err: BotError<BotContext>) => {
       const ctx = err.ctx;

@@ -54,7 +54,7 @@ describe('TrollChatEntity', () => {
       .sort();
 
     expect(columns).toEqual(
-      ['addedByUserId', 'chatId', 'createdAt', 'isActive', 'lastSummaryAt', 'title', 'updatedAt']
+      ['addedByUserId', 'chatId', 'createdAt', 'isActive', 'lastSummaryAt', 'lastSummaryMessageId', 'title', 'updatedAt']
     );
   });
 });

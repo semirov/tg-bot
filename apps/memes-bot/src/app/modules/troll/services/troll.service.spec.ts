@@ -12,8 +12,11 @@ import {
   TROLL_CAPABILITIES_REPLY,
 } from '../constants/troll-prompts';
 import {
+  TROLL_HARD_MAX_TOKENS,
   TROLL_SELF_CHECK_CONTEXT_CHARS,
   TROLL_SELF_CHECK_MAX_ATTEMPTS,
+  TROLL_SUMMARY_MAX_CHARS,
+  TROLL_SUMMARY_MAX_MESSAGES,
 } from '../constants/troll-limits';
 import { TrollService } from './troll.service';
 
@@ -52,6 +55,8 @@ function settings(over: Partial<TrollRuntimeSettings> = {}): TrollRuntimeSetting
     maxInputChars: 1000,
     selfCheckEnabled: false,
     selfCheckThreshold: 0.6,
+    memberTagsEnabled: true,
+    memberBioEnabled: true,
     ...over,
   };
 }
@@ -79,6 +84,7 @@ function createService() {
       sendMessage: jest.fn(async () => ({ message_id: 501 })),
       sendChatAction: jest.fn(async () => true),
       setMessageReaction: jest.fn(async () => true),
+      sendMessageDraft: jest.fn(async () => true),
       forwardMessage: jest.fn(async () => ({ message_id: 502 })),
       copyMessage: jest.fn(async () => ({ message_id: 503 })),
       leaveChat: jest.fn(async () => true),
@@ -96,6 +102,12 @@ function createService() {
   const predictions = makeRepo();
   const defects = makeRepo();
   const memes = makeRepo();
+  const memberTags = { onUserMessage: jest.fn().mockResolvedValue(undefined) };
+  const memberBio = {
+    noteUserMessage: jest.fn().mockResolvedValue(undefined),
+    buildInjection: jest.fn().mockResolvedValue(null),
+    getChatBios: jest.fn().mockResolvedValue([]),
+  };
   const service = new TrollService(
     bot,
     config,
@@ -105,7 +117,9 @@ function createService() {
     history,
     predictions,
     defects,
-    memes
+    memes,
+    memberTags as any,
+    memberBio as any
   );
   return {
     service,
@@ -118,6 +132,8 @@ function createService() {
     predictions,
     defects,
     memes,
+    memberTags,
+    memberBio,
   };
 }
 
@@ -395,6 +411,12 @@ describe('TrollService — onMessage', () => {
     const { service, history } = createService();
     await (service as any).onMessage(makeCtx({ message: { message_id: 1, text: '/stat' } }));
     expect(history.insert).not.toHaveBeenCalled();
+  });
+
+  it('после сохранения реплики запускает анализ тегов участника', async () => {
+    const { service, memberTags } = createService();
+    await (service as any).onMessage(makeCtx({ message: { message_id: 10, text: 'привет' } }));
+    expect(memberTags.onUserMessage).toHaveBeenCalledWith(CHAT, USER);
   });
 
   it('отвечает списком команд на вопрос о возможностях', async () => {
@@ -1084,12 +1106,27 @@ describe('TrollService — /sumarize', () => {
     await (service as any).onSummaryCommand(makeCtx());
   });
 
-  it('отказывает на общем кулдауне чата', async () => {
-    const { service, chats, deepSeek, bot } = createService();
-    chats.findOne.mockResolvedValue({ isActive: true, lastSummaryAt: new Date() });
-    deepSeek.completeText.mockResolvedValue(null);
+  it('отказывает на общем кулдауне чата со ссылкой на прошлое саммари', async () => {
+    const { service, chats, bot } = createService();
+    chats.findOne.mockResolvedValue({
+      isActive: true,
+      lastSummaryAt: new Date(),
+      lastSummaryMessageId: 555,
+    });
     await (service as any).onSummaryCommand(makeCtx());
-    expect(bot.api.sendMessage).toHaveBeenCalled();
+    const [chatId, text, options] = bot.api.sendMessage.mock.calls.at(-1);
+    expect(chatId).toBe(CHAT);
+    expect(text).toContain('че ты мне ебешь кастрюли');
+    expect(text).toContain(`https://t.me/c/${CHAT}/555`);
+    expect(options.reply_to_message_id).toBe(555);
+  });
+
+  it('на кулдауне без известного саммари просит пролистать выше', async () => {
+    const { service, chats, bot } = createService();
+    chats.findOne.mockResolvedValue({ isActive: true, lastSummaryAt: new Date() });
+    await (service as any).onSummaryCommand(makeCtx());
+    const [, text] = bot.api.sendMessage.mock.calls.at(-1);
+    expect(text).toContain('пролистай выше');
   });
 
   it('сообщает, что истории нет вообще', async () => {
@@ -1117,17 +1154,50 @@ describe('TrollService — /sumarize', () => {
     expect(history.insert).toHaveBeenCalled();
   });
 
-  it('берёт последние сообщения, если окно пустое', async () => {
+  it('окно всегда максимальное: прошлый вызов его не режет', async () => {
     const { service, chats, history, deepSeek } = createService();
-    chats.findOne.mockResolvedValue({ isActive: true, lastSummaryAt: null });
-    history.find.mockResolvedValueOnce([]).mockResolvedValueOnce([historyRow()]);
+    const recentCall = new Date(Date.now() - 2 * 60 * 60 * 1000);
+    chats.findOne.mockResolvedValue({ isActive: true, lastSummaryAt: recentCall });
+    history.find.mockResolvedValue([historyRow()]);
     deepSeek.completeText.mockResolvedValue('саммари');
     await (service as any).onSummaryCommand(makeCtx());
-    expect(deepSeek.completeText).toHaveBeenCalledWith(
-      SUMMARY_PROMPT,
-      expect.any(String),
-      expect.any(Object)
+    const where = history.find.mock.calls[0][0].where;
+    const since = where.createdAt.value as Date;
+    const ageHours = (Date.now() - since.getTime()) / 3600000;
+    expect(ageHours).toBeGreaterThan(23.5);
+    expect(where.createdAt.type).toBe('moreThanOrEqual');
+  });
+
+  it('при переполнении расшифровки отбрасывает старое, а не свежее', async () => {
+    const { service, chats, history, deepSeek } = createService();
+    chats.findOne.mockResolvedValue({ isActive: true, lastSummaryAt: null });
+    const fresh = historyRow({ id: 2, content: 'свежая реплика' });
+    const stale = historyRow({
+      id: 1,
+      content: 'старая реплика '.repeat(TROLL_SUMMARY_MAX_CHARS).slice(0, TROLL_SUMMARY_MAX_CHARS),
+    });
+    history.find.mockResolvedValue([fresh, stale]);
+    deepSeek.completeText.mockResolvedValue('саммари');
+    await (service as any).onSummaryCommand(makeCtx());
+    const payload = deepSeek.completeText.mock.calls[0][1] as string;
+    expect(payload).toContain('свежая реплика');
+    expect(payload.length).toBeLessThanOrEqual(TROLL_SUMMARY_MAX_CHARS + 64);
+  });
+
+  it('большое окно не превышает лимиты запроса', async () => {
+    const { service, chats, history, deepSeek } = createService();
+    chats.findOne.mockResolvedValue({ isActive: true, lastSummaryAt: null });
+    const many = Array.from({ length: 5000 }, (_, index) =>
+      historyRow({ id: index + 1, content: 'x'.repeat(400) })
     );
+    history.find.mockResolvedValue(many);
+    deepSeek.completeText.mockResolvedValue('саммари');
+    await (service as any).onSummaryCommand(makeCtx());
+    const payload = deepSeek.completeText.mock.calls[0][1] as string;
+    expect(payload.length).toBeLessThanOrEqual(TROLL_SUMMARY_MAX_CHARS + 64);
+    const options = deepSeek.completeText.mock.calls[0][2];
+    expect(options.maxTokens).toBeLessThanOrEqual(TROLL_HARD_MAX_TOKENS);
+    expect(history.find.mock.calls[0][0].take).toBe(TROLL_SUMMARY_MAX_MESSAGES);
   });
 
   it('честно признаётся при пустом ответе модели', async () => {
@@ -2538,17 +2608,116 @@ describe('TrollService — ветвления сумм, зеркал и отчё
     expect((service as any).restoreNames(CHAT, 'вася пошёл')).toContain('Вася');
     expect((service as any).restoreNames(123, 'вася')).toBe('вася');
   });
+
+describe('streamPrivateReply (drafts)', () => {
+  it('стримит черновиками и отправляет финал', async () => {
+    const { service, bot } = createService();
+    const text = 'а'.repeat(300);
+
+    const id = await (service as any).streamPrivateReply(123, text);
+
+    expect(bot.api.sendMessageDraft).toHaveBeenCalledTimes(3);
+    expect(bot.api.sendMessage).toHaveBeenCalledWith(123, text, {});
+    expect(id).toBe(501);
+  });
+
+  it('при сбое drafts — фолбэк и предохранитель', async () => {
+    const { service, bot } = createService();
+    bot.api.sendMessageDraft.mockRejectedValueOnce(new Error('not supported'));
+
+    await (service as any).streamPrivateReply(123, 'короткий текст');
+    expect((service as any).draftUnavailable).toBe(true);
+
+    bot.api.sendMessageDraft.mockClear();
+    await (service as any).streamPrivateReply(123, 'ещё текст');
+    expect(bot.api.sendMessageDraft).not.toHaveBeenCalled();
+    expect(bot.api.sendMessage).toHaveBeenCalled();
+  });
 });
 
+  describe('биографии: окно свежести и защита памяти', () => {
+    function row(id: number, ageMin: number, content: string): any {
+      return {
+        id,
+        chatId: CHAT,
+        userId: USER,
+        userName: 'Вася',
+        role: 'user',
+        content,
+        messageId: 1000 + id,
+        replyToMessageId: null,
+        createdAt: new Date(Date.now() - ageMin * 60000),
+      };
+    }
 
+    it('applyRecencyWindow: хвост дословно, тёплое сжимает, старое отбрасывает', () => {
+      const { service } = createService();
+      const now = Date.now();
+      const rows = [
+        ...Array.from({ length: 21 }, (_, index) => row(index + 1, 1, `свежее-${index}`)),
+        row(100, 40, 'т'.repeat(200)),
+        row(200, 200, 'очень старое'),
+      ];
+      const out = (service as any).applyRecencyWindow(rows, now);
+      expect(out).toHaveLength(22);
+      expect(out[21].content.endsWith('…')).toBe(true);
+      expect(out[21].content.length).toBeLessThan(200);
+      expect(out.some((item: any) => item.content === 'очень старое')).toBe(false);
+    });
 
+    it('formatAge: минуты, часы, дни', () => {
+      const { service } = createService();
+      const now = Date.now();
+      expect((service as any).formatAge(new Date(now - 30 * 60000), now)).toBe('30м');
+      expect((service as any).formatAge(new Date(now - 3 * 3600 * 1000), now)).toBe('3ч');
+      expect((service as any).formatAge(new Date(now - 2 * 24 * 3600 * 1000), now)).toBe('2д');
+    });
 
+    it('buildMemoryTail: пусто без досье и с guard при наличии', () => {
+      const { service } = createService();
+      expect((service as any).buildMemoryTail(null)).toBe('');
+      const tail = (service as any).buildMemoryTail({ canary: 'CANARY-X', body: 'факт', facts: ['факт'] });
+      expect(tail).toContain('CANARY-X');
+      expect(tail).toContain('факт');
+      expect(tail).toContain('<memory');
+    });
 
+    it('getChatBiosView рендерит факты и отсеивает пустые', async () => {
+      const { service, memberBio } = createService();
+      memberBio.getChatBios.mockResolvedValue([
+        {
+          userId: 1,
+          userName: null,
+          facts: [
+            { text: 'Живёт в СПб', importance: 3, count: 2, firstSeenAt: Date.now(), lastSeenAt: Date.now(), baseWeight: 2, weight: 2 },
+          ],
+        },
+        { userId: 2, userName: 'Пусто', facts: [] },
+      ]);
+      const view = await service.getChatBiosView(CHAT);
+      expect(view).toHaveLength(1);
+      expect(view[0].bio).toContain('Живёт в СПб');
+      expect(view[0].userName).toBe('участник');
+    });
 
+    it('досье подмешивается в промпт, утечка отклоняется', async () => {
+      const normal = createService();
+      normal.memberBio.buildInjection.mockResolvedValue({ canary: 'CANARY-1', body: 'внутренний факт', facts: ['факт'] });
+      normal.deepSeek.complete.mockResolvedValue('нормальный дерзкий ответ');
+      const text = await (normal.service as any).generateCheckedReply(JERK_PROMPT, CHAT, { label: 'тест' }, undefined, (raw: string) => raw);
+      expect(text).toBe('нормальный дерзкий ответ');
+      const messages = normal.deepSeek.complete.mock.calls[0][0];
+      expect(messages[1].content).toContain('CANARY-1');
 
-
-
-
-
-
-
+      const leaky = createService();
+      leaky.memberBio.buildInjection.mockResolvedValue({
+        canary: 'CANARY-2',
+        body: 'внутренний факт',
+        facts: ['разбирается в арбитражных делах и долгах компаний'],
+      });
+      leaky.deepSeek.complete.mockResolvedValue('он разбирается в арбитражных делах и долгах компаний, вот так');
+      const safe = await (leaky.service as any).generateCheckedReply(JERK_PROMPT, CHAT, { label: 'тест' }, undefined, (raw: string) => raw);
+      expect(safe).toBe('не твоего ума дело, спрашивай что-нибудь попроще');
+    });
+  });
+});

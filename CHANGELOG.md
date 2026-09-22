@@ -1,3 +1,80 @@
+# [0.35.0](https://github.com/semirov/tg-bot/compare/v0.34.1...v0.35.0) (2026-09-22)
+
+
+### Features
+
+* **troll:** теги участников событийно — на каждое 10-е сообщение ([#101](https://github.com/semirov/tg-bot/issues/101)) ([100433b](https://github.com/semirov/tg-bot/commit/100433ba690e52dd1101c23bef5ffaa3821cc9b9))
+
+## [0.34.1](https://github.com/semirov/tg-bot/compare/v0.34.0...v0.34.1) (2026-09-22)
+
+
+### Bug Fixes
+
+* **troll:** не нарекать повторно из-за строковых bigint-id ([#100](https://github.com/semirov/tg-bot/issues/100)) ([0e786a8](https://github.com/semirov/tg-bot/commit/0e786a835054b913c6351cd12c65b95f32c30a54))
+
+# [0.34.0](https://github.com/semirov/tg-bot/compare/v0.33.0...v0.34.0) (2026-09-22)
+
+
+### Features
+
+* **troll:** смешные теги участников — редко, по делу, с торжественным наречением ([#98](https://github.com/semirov/tg-bot/issues/98)) ([199c583](https://github.com/semirov/tg-bot/commit/199c58347e753cd0049dc628888eadaa924a617e))
+
+# [0.33.0](https://github.com/semirov/tg-bot/compare/v0.32.0...v0.33.0) (2026-09-22)
+
+
+### Features
+
+* **cron,troll:** алерт о пустеющей очереди + публичные команды и полное окно саммари ([#96](https://github.com/semirov/tg-bot/issues/96)) ([eb67ba5](https://github.com/semirov/tg-bot/commit/eb67ba53ac9c234ee1c06f1cb5b2a3bf8f838408))
+
+# [0.32.0](https://github.com/semirov/tg-bot/compare/v0.31.2...v0.32.0) (2026-09-22)
+
+
+### Features
+
+* **conversations:** v2 + авторизация на session-state ([4a86651](https://github.com/semirov/tg-bot/commit/4a86651125da078081f37ade15c842bbf7e5535f))
+
+## [0.31.2](https://github.com/semirov/tg-bot/compare/v0.31.1...v0.31.2) (2026-09-22)
+
+
+### Bug Fixes
+
+* **post-management:** дата запланированного дубля в МСК ([91145e9](https://github.com/semirov/tg-bot/commit/91145e9480230841cdf507c4976380b68494bb49))
+
+## [0.31.1](https://github.com/semirov/tg-bot/compare/v0.31.0...v0.31.1) (2026-09-22)
+
+
+### Bug Fixes
+
+* **parser:** 64-символьные хеши, побитовый дедуп, peer по username ([56e98b4](https://github.com/semirov/tg-bot/commit/56e98b409faea19dfcf3cf3014dd0a4292cd411c))
+
+# [0.31.0](https://github.com/semirov/tg-bot/compare/v0.30.0...v0.31.0) (2026-09-22)
+
+
+### Features
+
+* **troll:** стриминг черновиками диагностики (пилот) ([0666d75](https://github.com/semirov/tg-bot/commit/0666d75d7da3f37f4cc973830771ad5fbd54709a))
+
+# [0.30.0](https://github.com/semirov/tg-bot/compare/v0.29.0...v0.30.0) (2026-09-22)
+
+
+### Features
+
+* **troll:** ephemeral-ответы /stat и /sumarize ([4911707](https://github.com/semirov/tg-bot/commit/49117077e3c8baf31f67cd056e3191cead7740d1))
+
+# [0.29.0](https://github.com/semirov/tg-bot/compare/v0.28.0...v0.29.0) (2026-09-22)
+
+
+### Features
+
+* **ux:** force_reply в диалогах ([8b32bee](https://github.com/semirov/tg-bot/commit/8b32beeb5c3fff7f9a252284da20e90e59113e4b))
+
+# [0.28.0](https://github.com/semirov/tg-bot/compare/v0.27.0...v0.28.0) (2026-09-22)
+
+
+### Features
+
+* **resilience:** auto-retry и transformer-throttler ([0f06a08](https://github.com/semirov/tg-bot/commit/0f06a08a27f368485b9af2c20c2bc048b5c1b40b))
+
 # [0.27.0](https://github.com/semirov/tg-bot/compare/v0.26.3...v0.27.0) (2026-09-21)
 
 

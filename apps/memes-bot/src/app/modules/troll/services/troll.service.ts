@@ -16,6 +16,10 @@ import {
   TROLL_DEFECT_SEARCH_LIMIT,
   TROLL_DEFECT_SEVERITIES,
   TROLL_DEFECT_TIME_WINDOW_MS,
+  TROLL_DIALOG_HOT_MESSAGES,
+  TROLL_DIALOG_HOT_MINUTES,
+  TROLL_DIALOG_WARM_CHARS,
+  TROLL_DIALOG_WARM_MINUTES,
   TROLL_DIAGNOSTIC_MAX_TOKENS,
   TROLL_DIAGNOSTIC_MODEL,
   TROLL_FUTURE_ANGRY_AFTER,
@@ -33,6 +37,7 @@ import {
   TROLL_MEME_COOLDOWN_SEC,
   TROLL_MEME_MAX_ATTEMPTS,
   TROLL_MEME_POOL_SIZE,
+  TROLL_MEMBER_BIO_MAX_CHARS,
   TROLL_MIRROR_MIN_WORD_LEN,
   TROLL_SELF_CHECK_CONTEXT_CHARS,
   TROLL_SELF_CHECK_MAX_ATTEMPTS,
@@ -41,7 +46,6 @@ import {
   TROLL_STAT_MAX_CHARS,
   TROLL_STAT_MAX_MESSAGES_PER_USER,
   TROLL_SUMMARY_COOLDOWN_SEC,
-  TROLL_SUMMARY_FALLBACK_MESSAGES,
   TROLL_SUMMARY_MAX_CHARS,
   TROLL_SUMMARY_MAX_MESSAGES,
   TROLL_SUMMARY_MAX_REPLY_CHARS,
@@ -62,6 +66,9 @@ import {
   SELF_CHECK_PROMPT,
   SUMMARY_PROMPT,
   buildRetryNote,
+  buildMemoryBlock,
+  MEMBER_BIO_GUARD_AFTER,
+  MEMBER_BIO_GUARD_BEFORE,
   MESSAGE_REFS_RULE,
   TROLL_CAPABILITIES_REPLY,
   TROLL_FUTURE_TECHNIQUES,
@@ -70,6 +77,7 @@ import {
   TROLL_MIRROR_TECHNIQUES,
 } from '../constants/troll-prompts';
 import { isAddressedToBot, isCapabilityQuestion, isNamedCall } from '../constants/troll-addresses';
+import { buildPostUrl } from '../../../shared/publication/telegram-link';
 import { TrollChatEntity } from '../entities/troll-chat.entity';
 import { TrollDefectEntity } from '../entities/troll-defect.entity';
 import { TrollMessageEntity } from '../entities/troll-message.entity';
@@ -87,6 +95,7 @@ import {
   ConversationItem,
 } from '../utils/troll-context';
 import { DefectCandidate, normalizeMatchText, pickDefectAnswer } from '../utils/troll-defect';
+import { findBioLeak, renderBioText } from '../utils/troll-bio';
 import {
   containsLink,
   sanitizeModelField,
@@ -101,6 +110,8 @@ import { DeepSeekService } from './deepseek.service';
 import { TrollCooldownRegistry } from './troll-cooldown-registry';
 import { TrollNameRegistry } from './troll-name-registry';
 import { MIN_TEXT_LENGTH, TrollReplyFormatter } from './troll-reply-formatter';
+import { BioInjection, TrollMemberBioService } from './troll-member-bio.service';
+import { TrollMemberTagsService } from './troll-member-tags.service';
 import { TrollSettingsService } from './troll-settings.service';
 
 /** Как часто обновлять «печатает…», пока идёт накопление. */
@@ -108,6 +119,15 @@ const TYPING_REFRESH_MS = 4500;
 
 /** Реакции-эмодзи, которые бот с шансом ставит на сообщения. */
 const REACTION_EMOJIS = ['🤡', '💩'] as const;
+
+/**
+ * Ответ, если все сгенерированные варианты раскрывали внутреннюю память.
+ * Держит образ и ничего не разглашает.
+ */
+const TROLL_BIO_SAFE_REPLY = 'не твоего ума дело, спрашивай что-нибудь попроще';
+
+/** Правило учёта свежести переписки: чем старше реплика, тем меньше её влияние. */
+const RECENCY_RULE = `В расшифровке у реплик указан возраст в квадратных скобках ([5м назад], [2ч назад]). Свежие реплики важнее: опирайся на последние сообщения и текущую тему, а старое — только фон. Не продолжай закрытые темы и не тяни старый контекст, если свежие реплики его не продолжают.`;
 
 /** Кому адресован ответ — для персонализации контекста. */
 interface TrollFocus {
@@ -196,7 +216,9 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
     @InjectRepository(TrollDefectEntity)
     private readonly defects: Repository<TrollDefectEntity>,
     @InjectRepository(ChannelMemeEntity)
-    private readonly memes: Repository<ChannelMemeEntity>
+    private readonly memes: Repository<ChannelMemeEntity>,
+    private readonly memberTags: TrollMemberTagsService,
+    private readonly memberBio: TrollMemberBioService
   ) {}
 
   public onModuleInit(): void {
@@ -336,6 +358,20 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
     await this.chats.update({ chatId: Number(chatId) }, { isActive });
   }
 
+  /** Досье участников чата для админ-просмотра владельцем (только текст). */
+  public async getChatBiosView(
+    chatId: number
+  ): Promise<Array<{ userId: number; userName: string; bio: string }>> {
+    const rows = await this.memberBio.getChatBios(chatId);
+    return rows
+      .map((row) => ({
+        userId: Number(row.userId),
+        userName: row.userName ?? 'участник',
+        bio: renderBioText(row.facts ?? [], TROLL_MEMBER_BIO_MAX_CHARS),
+      }))
+      .filter((item) => item.bio.length > 0);
+  }
+
   private async onMessage(ctx: BotContext): Promise<void> {
     const chat = ctx.chat;
 
@@ -405,6 +441,18 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
         messageId: ctx.message?.message_id,
         replyToMessageId: ctx.message?.reply_to_message?.message_id,
       });
+      // Теги участников: на каждое 10-е сообщение (событийно, не по крону).
+      void this.memberTags
+        .onUserMessage(chat.id, ctx.from.id)
+        .catch((error) =>
+          this.logger.warn(`Теги: анализ на сообщении не удался: ${this.describeError(error)}`)
+        );
+      // Биографии участников: раз в N сообщений обновляем внутреннее досье.
+      void this.memberBio
+        .noteUserMessage(chat.id, ctx.from.id, this.describeUser(ctx.from))
+        .catch((error) =>
+          this.logger.warn(`Био: обновление на сообщении не удалось: ${this.describeError(error)}`)
+        );
     }
 
     // Вопрос «что ты умеешь» — рассказываем о себе и командах (без LLM).
@@ -1114,7 +1162,24 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * /sumarize — пересказ переписки с момента прошлого запроса.
+   * Отлуп на /sumarize, если пересказ просили меньше часа назад. Отвечаем на
+   * прошлое саммари и даём на него ссылку — «пойди почитай» буквально.
+   * Текст детерминированный: ссылка важнее стиля модели.
+   */
+  private async sendSummaryCooldownRude(
+    ctx: BotContext,
+    chatId: number,
+    lastSummaryMessageId: number | null
+  ): Promise<void> {
+    const link = lastSummaryMessageId ? buildPostUrl({ id: chatId }, lastSummaryMessageId) : null;
+    const text = link
+      ? `че ты мне ебешь кастрюли, меньше часа назад была сумаризация, вот пойди почитай: ${link}`
+      : 'че ты мне ебешь кастрюли, меньше часа назад была сумаризация, пролистай выше';
+    await this.safeSendToChat(chatId, text, lastSummaryMessageId ?? ctx.message?.message_id);
+  }
+
+  /**
+   * /sumarize — пересказ переписки за максимально доступное окно (сутки).
    * Кулдаун общий на чат — 1 час. Запросить может любой участник.
    */
   private async onSummaryCommand(ctx: BotContext): Promise<void> {
@@ -1135,6 +1200,7 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
     }
 
     // Кулдаун общий на весь чат, поэтому храним время последнего запроса в БД.
+    // На окно пересказа он не влияет: окно всегда максимально доступное.
     const chatRow = await this.chats.findOne({ where: { chatId: chat.id } });
     const lastAt = chatRow?.lastSummaryAt ? new Date(chatRow.lastSummaryAt).getTime() : null;
     if (lastAt !== null && Date.now() - lastAt < TROLL_SUMMARY_COOLDOWN_SEC * 1000) {
@@ -1145,32 +1211,22 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
       this.logger.log(
         `${this.tag(chat.id, ctx.from.id)}: /sumarize — на кулдауне (${minutesLeft} мин), отказываю`
       );
-      await this.denyRudely(ctx, `пересказ просили недавно, возвращайся через ${minutesLeft} мин`);
+      await this.sendSummaryCooldownRude(ctx, chat.id, chatRow?.lastSummaryMessageId ?? null);
       return;
     }
 
-    const since = lastAt !== null ? new Date(lastAt) : new Date(Date.now() - TROLL_HISTORY_TTL_HOURS * 60 * 60 * 1000);
+    // Окно пересказа — всегда максимально доступное (вся история за TTL).
+    // Прошлый вызов его не режет: иначе частые пересказы раз в час давали бы
+    // огрызок из пары новых реплик вместо картины за сутки.
+    const since = new Date(Date.now() - TROLL_HISTORY_TTL_HOURS * 60 * 60 * 1000);
 
-    // Берём самые свежие реплики окна: order DESC + take, потом возвращаем хронологию.
+    // Берём самые свежие реплики окна: order DESC + take.
     // Только сообщения людей: ответы самого бота в пересказ не идут.
-    let rows = await this.history.find({
+    const rows = await this.history.find({
       where: { chatId: chat.id, role: 'user', createdAt: MoreThanOrEqual(since) },
       order: { id: 'DESC' },
       take: TROLL_SUMMARY_MAX_MESSAGES,
     });
-
-    // Окно пустое (с прошлого пересказа не писали или метки времени разъехались) —
-    // не отказываем, а пересказываем последние реплики чата.
-    if (!rows.length) {
-      this.logger.log(
-        `${this.tag(chat.id, ctx.from.id)}: /sumarize — окно пустое, беру последние ${TROLL_SUMMARY_FALLBACK_MESSAGES} сообщ.`
-      );
-      rows = await this.history.find({
-        where: { chatId: chat.id, role: 'user' },
-        order: { id: 'DESC' },
-        take: TROLL_SUMMARY_FALLBACK_MESSAGES,
-      });
-    }
 
     if (!rows.length) {
       this.logger.log(`${this.tag(chat.id, ctx.from.id)}: /sumarize — истории нет вообще`);
@@ -1182,22 +1238,15 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
       return;
     }
 
-    const ordered = [...rows].reverse();
-
     this.logger.log(
-      `${this.tag(chat.id, ctx.from.id)}: /sumarize — пересказываю ${ordered.length} сообщ.`
+      `${this.tag(chat.id, ctx.from.id)}: /sumarize — пересказываю ${rows.length} сообщ.`
     );
     void this.sendTyping(chat.id);
 
-    const joined = ordered
-      .map((row) => {
-        // Имена нужны и для восстановления регистра в ответе: карта чата живёт
-        // в памяти и в /sumarize сама не пополняется.
-        this.trackName(chat.id, row.userId, row.userName);
-        return `${row.userName ?? 'кто-то'}: ${row.content}`;
-      })
-      .join('\n');
-    const cleaned = sanitizeTranscript(joined, TROLL_SUMMARY_MAX_CHARS);
+    const cleaned = sanitizeTranscript(
+      this.buildSummaryTranscript(chat.id, rows),
+      TROLL_SUMMARY_MAX_CHARS
+    );
 
     const raw = await this.deepSeek.completeText(SUMMARY_PROMPT, wrapUserContent(cleaned), {
       temperature: 0.9,
@@ -1225,7 +1274,10 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
       return;
     }
 
-    await this.chats.update({ chatId: chat.id }, { lastSummaryAt: new Date() });
+    await this.chats.update(
+      { chatId: chat.id },
+      { lastSummaryAt: new Date(), lastSummaryMessageId: sent }
+    );
     await this.remember(chat.id, 'assistant', text, {
       messageId: sent,
       replyToMessageId: ctx.message?.message_id,
@@ -1597,7 +1649,7 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
       `${this.tag(ctx.chat.id, ctx.from.id)}: дефект #${defect.id} записан (серьёзность ${diagnosis.severity})`
     );
 
-    await this.safeSendToChat(
+    await this.streamPrivateReply(
       ctx.chat.id,
       this.formatDefectReport(defect, match.candidate, replyTo, diagnosis),
       ctx.message.message_id
@@ -1851,18 +1903,24 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
     const parts = await this.buildConversationParts(chatId, focus);
     return [
       { role: 'system', content: system },
-      { role: 'user', content: `${wrapUserContent(parts.transcript)}\n\n${parts.directive}` },
+      {
+        role: 'user',
+        content: `${wrapUserContent(parts.transcript)}\n\n${parts.directive}${this.buildMemoryTail(
+          parts.injection
+        )}`,
+      },
     ];
   }
 
   /**
    * Расшифровка окна беседы в том виде, в каком её видит модель:
-   * «Имя (id) [msg N, replyTo M]: текст», строки «бот», метки пауз.
+   * «[возраст] Имя (id) [msg N, replyTo M]: текст», строки «бот», метки пауз.
    */
   private formatTranscript(
     chatId: number,
     context: ConversationItem<TrollMessageEntity>[]
   ): string {
+    const now = Date.now();
     return context
       .map((item) => {
         if (item.kind === 'pause') {
@@ -1871,17 +1929,58 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
 
         const row = item.row;
         const ids = this.describeMessageRefs(row.messageId, row.replyToMessageId);
+        const age = `[${this.formatAge(row.createdAt, now)} назад] `;
         if (row.role === 'assistant') {
-          return `бот${ids}: ${row.content}`;
+          return `${age}бот${ids}: ${row.content}`;
         }
         // Запоминаем имена из истории — чтобы вернуть регистр в ответе.
         this.trackName(chatId, row.userId, row.userName);
         const name = this.cleanName(row.userName) ?? 'участник';
         const label =
           row.userId !== null && row.userId !== undefined ? `${name} (${row.userId})` : name;
-        return `${label}${ids}: ${row.content}`;
+        return `${age}${label}${ids}: ${row.content}`;
       })
       .join('\n');
+  }
+
+  /** Возраст реплики для расшифровки: «5м», «2ч», «1д». */
+  private formatAge(createdAt: Date | string, now: number): string {
+    const minutes = Math.max(0, Math.round((now - new Date(createdAt).getTime()) / 60000));
+    if (minutes < 60) {
+      return `${minutes}м`;
+    }
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) {
+      return `${hours}ч`;
+    }
+    return `${Math.floor(hours / 24)}д`;
+  }
+
+  /**
+   * Взвешивание контекста по свежести: свежий хвост — дословно, чуть постарше
+   * сжимаем, совсем старое отбрасываем. Вход — реплики от новых к старым.
+   */
+  private applyRecencyWindow(rows: TrollMessageEntity[], now: number): TrollMessageEntity[] {
+    const out: TrollMessageEntity[] = [];
+    for (let index = 0; index < rows.length; index += 1) {
+      const row = rows[index];
+      const ageMin = (now - new Date(row.createdAt).getTime()) / 60000;
+      if (index < TROLL_DIALOG_HOT_MESSAGES || ageMin <= TROLL_DIALOG_HOT_MINUTES) {
+        out.push(row);
+        continue;
+      }
+      if (ageMin <= TROLL_DIALOG_WARM_MINUTES) {
+        const content = row.content ?? '';
+        out.push({
+          ...row,
+          content: content.length > TROLL_DIALOG_WARM_CHARS ? `${content.slice(0, TROLL_DIALOG_WARM_CHARS).trim()}…` : content,
+        });
+        continue;
+      }
+      // Реплики идут от свежих к старым: дальше только старше — прекращаем.
+      break;
+    }
+    return out;
   }
 
   /**
@@ -1891,9 +1990,10 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
   private async buildConversationParts(
     chatId: number,
     focus?: TrollFocus
-  ): Promise<{ transcript: string; directive: string }> {
+  ): Promise<{ transcript: string; directive: string; injection: BioInjection | null }> {
     const s = this.settings.current;
-    // Рабочий ограничитель объёма — только TTL: в модель уходит вся беседа за сутки.
+    // Рабочий ограничитель объёма — TTL (сутки), но влияние старых реплик гасим:
+    // свежий хвост дословно, чуть постарше сжимаем, совсем старое отбрасываем.
     const since = new Date(Date.now() - TROLL_HISTORY_TTL_HOURS * 60 * 60 * 1000);
     const rows = await this.history.find({
       where: { chatId, createdAt: MoreThanOrEqual(since) },
@@ -1901,7 +2001,9 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
       take: TROLL_CONTEXT_MAX_TURNS,
     });
 
-    const context = buildConversationContext(rows, {
+    const now = Date.now();
+    const windowed = this.applyRecencyWindow(rows, now);
+    const context = buildConversationContext(windowed, {
       // Ноль или мусор в настройке не должен превращать в «паузу» каждый промежуток.
       gapMs: Math.max(1, s.dialogPauseMin) * 60 * 1000,
       maxTurns: TROLL_CONTEXT_MAX_TURNS,
@@ -1910,16 +2012,40 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
 
     const transcript = this.formatTranscript(chatId, context);
 
+    // Внутреннее досье: адресат первым, затем остальные участники окна.
+    const participantIds: number[] = [];
+    if (focus?.userId !== undefined && focus?.userId !== null) {
+      participantIds.push(focus.userId);
+    }
+    for (const item of context) {
+      if (item.kind !== 'message' || item.row.role !== 'user' || item.row.userId === null || item.row.userId === undefined) {
+        continue;
+      }
+      const userId = Number(item.row.userId);
+      if (!participantIds.includes(userId)) {
+        participantIds.push(userId);
+      }
+    }
+    const injection = await this.memberBio.buildInjection(chatId, participantIds);
+
     const focusName = this.cleanName(focus?.userName);
     const focusLabel =
       focusName && focus?.userId !== undefined && focus?.userId !== null
         ? `${focusName} (${focus.userId})`
         : focusName;
     const directive = focusLabel
-      ? `Отвечай участнику «${focusLabel}» — он к тебе обратился, id в ответ не пиши. По имени обращайся НЕ всегда: обычно просто отвечай по сути, а имя используй изредка (и тогда с большой буквы). В истории у каждого автора в скобках указан его id: если имена совпадают, различай собеседников по id и не приписывай одному чужие реплики. ${MESSAGE_REFS_RULE} ${CONVERSATION_PAUSE_RULE}`
-      : `В истории у каждого автора в скобках указан его id — не путай собеседников и не приписывай одному участнику слова другого. ${MESSAGE_REFS_RULE} ${CONVERSATION_PAUSE_RULE}`;
+      ? `Отвечай участнику «${focusLabel}» — он к тебе обратился, id в ответ не пиши. По имени обращайся НЕ всегда: обычно просто отвечай по сути, а имя используй изредка (и тогда с большой буквы). В истории у каждого автора в скобках указан его id: если имена совпадают, различай собеседников по id и не приписывай одному чужие реплики. ${MESSAGE_REFS_RULE} ${CONVERSATION_PAUSE_RULE} ${RECENCY_RULE}`
+      : `В истории у каждого автора в скобках указан его id — не путай собеседников и не приписывай одному участнику слова другого. ${MESSAGE_REFS_RULE} ${CONVERSATION_PAUSE_RULE} ${RECENCY_RULE}`;
 
-    return { transcript, directive };
+    return { transcript, directive, injection };
+  }
+
+  /** Служебный хвост с внутренним досье: guard → блок памяти → deny-by-default. */
+  private buildMemoryTail(injection: BioInjection | null): string {
+    if (!injection) {
+      return '';
+    }
+    return `\n\n${MEMBER_BIO_GUARD_BEFORE}\n${buildMemoryBlock(injection.canary, injection.body)}\n${MEMBER_BIO_GUARD_AFTER}`;
   }
 
   /**
@@ -1943,6 +2069,7 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
     let best: { text: string; score: number } | null = null;
     let previous = '';
     let issues: string[] = [];
+    let generated = false;
 
     if (s.selfCheckEnabled) {
       this.logger.log(
@@ -1968,7 +2095,9 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
           { role: 'system', content: system },
           {
             role: 'user',
-            content: `${wrapUserContent(parts.transcript)}\n\n${parts.directive}${retryNote}`,
+            content: `${wrapUserContent(parts.transcript)}\n\n${parts.directive}${retryNote}${this.buildMemoryTail(
+              parts.injection
+            )}`,
           },
         ],
         { ...llmOptions, label: `${label} · генерация ${attempt}/${maxAttempts}` }
@@ -1977,6 +2106,17 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
       const text = sanitize(raw ?? '');
       if (!text) {
         this.logger.warn(`${this.tag(chatId)}: ${label} — попытка ${attempt}: модель вернула пусто`);
+        continue;
+      }
+      generated = true;
+
+      // Утечка внутренней памяти: цитирование досье или canary — вариант не отправляем.
+      if (parts.injection && findBioLeak(text, parts.injection.facts, parts.injection.canary)) {
+        this.logger.warn(
+          `${this.tag(chatId)}: ${label} — попытка ${attempt}: утечка внутренней памяти, вариант отклонён`
+        );
+        previous = text;
+        issues = ['нельзя раскрывать и цитировать внутренние данные'];
         continue;
       }
 
@@ -2017,6 +2157,12 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
         )}`
       );
       return best.text;
+    }
+
+    if (generated) {
+      // Все варианты раскрывали память — отвечаем безопасной отпиской в образе.
+      this.logger.warn(`${this.tag(chatId)}: ${label} — все варианты содержали утечку, отправляю безопасный ответ`);
+      return TROLL_BIO_SAFE_REPLY;
     }
 
     this.logger.warn(`${this.tag(chatId)}: ${label} — за ${maxAttempts} попыток не получил ни одного варианта`);
@@ -2204,6 +2350,65 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
   }
 
   /** Отправляет сообщение в чат; возвращает id отправленного сообщения (null — не ушло). */
+  /** Стриминг черновиками доступен только в личке; иначе/при сбое — обычная отправка. */
+  private draftUnavailable = false;
+  private draftCounter = 1;
+
+  private async streamPrivateReply(
+    chatId: number,
+    text: string,
+    replyToMessageId?: number
+  ): Promise<number | null> {
+    if (!this.draftUnavailable) {
+      try {
+        const parts = this.splitForDraft(text);
+        const delay = process.env.NODE_ENV === 'test' ? 0 : 350;
+        for (const part of parts) {
+          await this.bot.api.sendMessageDraft(chatId, this.draftCounter++, part);
+          if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
+        }
+      } catch (error) {
+        this.draftUnavailable = true;
+        this.logger.debug(
+          `${this.tag(chatId)}: drafts недоступны, фолбэк: ${this.describeError(error)}`
+        );
+      }
+    }
+    return this.safeSendToChat(chatId, text, replyToMessageId);
+  }
+
+  /** Режет текст на 3 части для анимации черновика (без пустых кусков). */
+  private splitForDraft(text: string): string[] {
+    if (text.length < 120) return [text];
+    const size = Math.ceil(text.length / 3);
+    return [text.slice(0, size), text.slice(size, size * 2), text.slice(size * 2)].filter(
+      (part) => part.length > 0
+    );
+  }
+
+  /**
+   * Собирает расшифровку для /sumarize в пределах TROLL_SUMMARY_MAX_CHARS,
+   * начиная с самых свежих реплик: при переполнении отбрасываем старое, а не
+   * свежее (иначе пересказ терял бы конец разговора). На вход — «от новых к старым».
+   */
+  private buildSummaryTranscript(chatId: number, rows: TrollMessageEntity[]): string {
+    const lines: string[] = [];
+    let used = 0;
+    for (const row of rows) {
+      // Имена нужны и для восстановления регистра в ответе: карта чата живёт
+      // в памяти и в /sumarize сама не пополняется.
+      this.trackName(chatId, row.userId, row.userName);
+      const line = `${row.userName ?? 'кто-то'}: ${row.content}`;
+      const cost = line.length + 1;
+      if (used + cost > TROLL_SUMMARY_MAX_CHARS) {
+        break;
+      }
+      lines.push(line);
+      used += cost;
+    }
+    return lines.reverse().join('\n');
+  }
+
   private async safeSendToChat(
     chatId: number,
     text: string,

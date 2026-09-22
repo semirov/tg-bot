@@ -119,7 +119,7 @@ describe('BaseConfigService', () => {
       ['trollJerkBatchWindow', 'TROLL_JERK_BATCH_WINDOW', 15],
       ['trollJerkCooldown', 'TROLL_JERK_COOLDOWN', 180],
       ['trollDialogPauseMin', 'TROLL_DIALOG_PAUSE_MIN', 15],
-      ['trollDailyRequestLimit', 'TROLL_DAILY_REQUEST_LIMIT', 2000],
+      ['trollDailyRequestLimit', 'TROLL_DAILY_REQUEST_LIMIT', 4000],
       ['trollMaxInputChars', 'TROLL_MAX_INPUT_CHARS', 1000],
       ['trollSelfCheckThreshold', 'TROLL_SELF_CHECK_THRESHOLD', 0.6],
     ];
@@ -145,7 +145,7 @@ describe('BaseConfigService', () => {
 
     it('пустая строка — это отсутствие значения, а не 0', () => {
       const service = new BaseConfigService(makeConfig({ TROLL_DAILY_REQUEST_LIMIT: '' }));
-      expect(getter(service, 'trollDailyRequestLimit')).toBe(2000);
+      expect(getter(service, 'trollDailyRequestLimit')).toBe(4000);
     });
   });
 

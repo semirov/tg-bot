@@ -690,8 +690,9 @@ export class UserPostManagementService implements OnModuleInit {
             );
 
             if (scheduledPost && this.isValidDate(scheduledPost.publishDate)) {
+              // Дата публикации — в московском времени (как в остальном планировщике).
               const scheduledDateFormatted = format(
-                scheduledPost.publishDate,
+                PostSchedulerService.formatToMsk(scheduledPost.publishDate),
                 'dd.LL.yy в ~HH:mm',
                 { locale: ru }
               );

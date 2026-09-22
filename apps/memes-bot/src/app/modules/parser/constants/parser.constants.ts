@@ -58,7 +58,6 @@ export const CRINGE_REACTIONS = ['🤡', '💩'];
 /** Префикс callback_data карточки поста парсера. */
 export const CARD_CB_PREFIX = 'prs';
 /** Префикс callback_data карточки кандидата в админке. */
-export const CANDIDATE_CB_PREFIX = 'prsc';
 
 /** Ограничения Bot API на multipart-загрузку медиа. */
 export const MAX_PHOTO_BYTES = 10 * 1024 * 1024;
@@ -73,8 +72,6 @@ export const QUEUE_MERGE_SIMILARITY = 0.85;
 export const BOOST_MULTIPLIER = 4;
 
 /** Через сколько часов доставленная без реакции карточка считается игнором. */
-export const IGNORED_AFTER_HOURS = 48;
-
 /** Минимум разных каналов с одинаковым медиа для форс-публикации в предложку. */
 export const FORCE_MIN_SOURCES = 3;
 
@@ -116,4 +113,3 @@ export const FLOOD_CUMULATIVE_CAP_SEC = 600;
 export const DISCOVERY_WEB_CHECK_PER_RUN = 10;
 export const DISCOVERY_CROSS_LIMIT_PER_RUN = 10;
 /** Сколько карточек кандидатов показывать за раз в меню. */
-export const DISCOVERY_REVIEW_LIMIT = 8;

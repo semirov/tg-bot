@@ -1,4 +1,3 @@
-import { Conversation, createConversation } from '@grammyjs/conversations';
 import { Inject, Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -49,8 +48,8 @@ export class ClientBaseService implements OnModuleInit {
   private botForwardTarget?: Promise<string | undefined>;
 
   async onModuleInit(): Promise<void> {
-    this.registerConversations();
     this.waitingClientCommands();
+    this.registerClientAuthInput();
     await this.checkAutoRunObserver();
   }
 
@@ -152,60 +151,44 @@ export class ClientBaseService implements OnModuleInit {
     return firstValueFrom(this.phoneCodeSubject);
   }
 
-  public async phoneConversation(
-    conversation: Conversation<BotContext>,
-    ctx: BotContext
-  ): Promise<void> {
-    await ctx.reply('Введи номер телефона');
-    const answerCtx = await conversation.wait();
-    if (answerCtx?.message?.text) {
-      this.phoneSubject.next(answerCtx?.message?.text);
-    }
-    return;
-  }
-
-  public async passwordConversation(
-    conversation: Conversation<BotContext>,
-    ctx: BotContext
-  ): Promise<void> {
-    await ctx.reply('Введи пароль');
-    const answerCtx = await conversation.wait();
-    if (answerCtx?.message?.text) {
-      this.passwordSubject.next(answerCtx?.message?.text);
-    }
-    return;
-  }
-
-  public async phoneCodeConversation(
-    conversation: Conversation<BotContext>,
-    ctx: BotContext
-  ): Promise<void> {
-    await ctx.reply('Введи код подтверждения');
-    const answerCtx = await conversation.wait();
-    if (answerCtx?.message?.text) {
-      this.phoneCodeSubject.next(answerCtx?.message?.text);
-    }
-    return;
-  }
-
   private waitingClientCommands(): void {
     this.bot.callbackQuery('fill_client_phone', async (ctx) => {
-      await ctx.conversation.enter('PHONE_CONVERSATION');
+      ctx.session.clientAuthAwait = 'phone';
+      await ctx.reply('Введи номер телефона', { reply_markup: { force_reply: true } });
     });
     this.bot.callbackQuery('fill_client_password', async (ctx) => {
-      await ctx.conversation.enter('PASSWORD_CONVERSATION');
+      ctx.session.clientAuthAwait = 'password';
+      await ctx.reply('Введи пароль', { reply_markup: { force_reply: true } });
     });
     this.bot.callbackQuery('fill_client_code', async (ctx) => {
-      await ctx.conversation.enter('PHONE_CODE_CONVERSATION');
+      ctx.session.clientAuthAwait = 'code';
+      await ctx.reply('Введи код подтверждения', { reply_markup: { force_reply: true } });
     });
   }
 
-  private registerConversations() {
-    this.bot.use(createConversation(this.phoneConversation.bind(this), 'PHONE_CONVERSATION'));
-    this.bot.use(createConversation(this.passwordConversation.bind(this), 'PASSWORD_CONVERSATION'));
-    this.bot.use(
-      createConversation(this.phoneCodeConversation.bind(this), 'PHONE_CODE_CONVERSATION')
-    );
+  /**
+   * Ввод телефона/пароля/кода владельцем: состояние в сессии, без conversations
+   * (в v2 диалоги, начатые из callback, ненадёжно принимают следующий апдейт).
+   */
+  private registerClientAuthInput(): void {
+    this.bot.on('message:text', async (ctx, next) => {
+      const awaiting = ctx.session?.clientAuthAwait;
+      const ownerId = Number(this.baseConfigService.ownerId);
+      if (!awaiting) return next();
+      if (Number(ctx.chat?.id) !== ownerId || Number(ctx.from?.id) !== ownerId) return next();
+
+      ctx.session.clientAuthAwait = undefined;
+      const text = ctx.message.text.trim();
+      if (awaiting === 'phone') this.phoneSubject.next(text);
+      else if (awaiting === 'password') this.passwordSubject.next(text);
+      else this.phoneCodeSubject.next(text);
+
+      try {
+        await ctx.deleteMessage();
+      } catch {
+        // сообщение могло быть уже удалено
+      }
+    });
   }
 
   private async saveSession(session: string): Promise<void> {
