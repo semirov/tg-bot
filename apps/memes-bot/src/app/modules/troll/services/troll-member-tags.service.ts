@@ -118,20 +118,29 @@ export class TrollMemberTagsService {
       return;
     }
 
+    // bigint-поля Postgres отдаёт строками — приводим id к числу, иначе ключи
+    // мапы не сойдутся с сохранёнными тегами и участник обработается повторно.
     const byUser = new Map<number, TrollMessageEntity[]>();
     for (const row of rows) {
-      if (row.userId == null) continue;
-      const list = byUser.get(row.userId);
+      const userId = Number(row.userId);
+      if (!Number.isFinite(userId)) continue;
+      const list = byUser.get(userId);
       if (list) list.push(row);
-      else byUser.set(row.userId, [row]);
+      else byUser.set(userId, [row]);
     }
 
     const chatTags = await this.tags.find({ where: { chatId } });
     const storedByUser = new Map(chatTags.map((row) => [Number(row.userId), row]));
+    // Создателю чата Telegram тег не меняет (CHAT_CREATOR_REQUIRED) — исключаем сразу,
+    // чтобы он не занимал слот наречения.
+    const creatorId = await this.chatCreatorId(chatId);
 
     const renames: TagCandidate[] = [];
     const firsts: TagCandidate[] = [];
     for (const [userId, list] of byUser) {
+      if (userId === creatorId) {
+        continue;
+      }
       const stored = storedByUser.get(userId) ?? null;
       if (!stored) {
         // Первое наречение: только те, кто реально пишет, иначе разметим всех сразу.
@@ -146,7 +155,7 @@ export class TrollMemberTagsService {
       if (now.getTime() - lastEvaluatedAt < TROLL_MEMBER_TAG_COOLDOWN_HOURS * HOUR_MS) {
         continue;
       }
-      const cursor = stored.lastMessageId ?? 0;
+      const cursor = Number(stored.lastMessageId ?? 0);
       const fresh = list.filter((row) => (row.id ?? 0) > cursor);
       if (fresh.length >= TROLL_MEMBER_TAG_NEW_MESSAGES) {
         renames.push({ userId, fresh, stored, newCount: fresh.length });
@@ -159,13 +168,7 @@ export class TrollMemberTagsService {
       ...renames.sort((a, b) => b.newCount - a.newCount).slice(0, TROLL_MEMBER_TAG_MAX_RENAMES_PER_CHAT),
       ...firsts.sort((a, b) => b.newCount - a.newCount).slice(0, TROLL_MEMBER_TAG_MAX_FIRST_PER_CHAT),
     ];
-    // Создателю чата Telegram менять тег не даёт (CHAT_CREATOR_REQUIRED) — пропускаем сразу.
-    const creatorId = await this.chatCreatorId(chatId);
-
     for (const item of selected) {
-      if (item.userId === creatorId) {
-        continue;
-      }
       const occupied = chatTags
         .filter((row) => Number(row.userId) !== item.userId && !!row.tag)
         .map((row) => row.tag as string);
