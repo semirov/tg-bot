@@ -2,16 +2,14 @@ jest.mock('./deepseek.service', () => ({ DeepSeekService: class DeepSeekService 
 
 import { TrollMemberTagsService } from './troll-member-tags.service';
 import {
+  TROLL_MEMBER_TAG_BATCH_MESSAGES,
   TROLL_MEMBER_TAG_COOLDOWN_HOURS,
-  TROLL_MEMBER_TAG_MIN_MESSAGES,
-  TROLL_MEMBER_TAG_NEW_MESSAGES,
   TROLL_MEMBER_TAG_TRANSCRIPT_CHARS,
 } from '../constants/troll-limits';
 
 const CHAT = -100500;
 const USER = 42;
 
-/** Реплики участника: order — «от новых к старым», id убывают. */
 function userRows(
   userId: number,
   count: number,
@@ -40,7 +38,7 @@ function storedTag(over: any = {}): any {
     tag: 'старый-тег',
     reason: 'было',
     topics: null,
-    lastMessageId: null,
+    lastMessageId: 0,
     lastEvaluatedAt: null,
     updatedAt: new Date(),
     ...over,
@@ -50,12 +48,15 @@ function storedTag(over: any = {}): any {
 function setup(
   options: {
     rows?: unknown[];
-    stored?: unknown[];
+    count?: number;
+    stored?: unknown;
+    chatTags?: unknown[];
     suggestion?: unknown;
     enabled?: boolean;
     tagsEnabled?: boolean;
     botInfo?: unknown;
     member?: unknown;
+    admins?: unknown;
     announcement?: string | null;
   } = {}
 ) {
@@ -69,7 +70,7 @@ function setup(
             ? { status: 'administrator', can_manage_tags: true }
             : options.member
         ),
-      getChatAdministrators: jest.fn().mockResolvedValue([]),
+      getChatAdministrators: jest.fn().mockResolvedValue(options.admins ?? []),
       setChatMemberTag: jest.fn().mockResolvedValue(true),
       sendMessage: jest.fn().mockResolvedValue({ message_id: 1 }),
     },
@@ -94,12 +95,15 @@ function setup(
   const settings = {
     current: { enabled: options.enabled ?? true, memberTagsEnabled: options.tagsEnabled ?? true },
   };
-  const chats = { find: jest.fn().mockResolvedValue([{ chatId: CHAT }]) };
   const history = {
-    find: jest.fn().mockResolvedValue(options.rows ?? userRows(USER, TROLL_MEMBER_TAG_MIN_MESSAGES)),
+    count: jest.fn().mockResolvedValue(options.count ?? TROLL_MEMBER_TAG_BATCH_MESSAGES),
+    find: jest
+      .fn()
+      .mockResolvedValue(options.rows ?? userRows(USER, TROLL_MEMBER_TAG_BATCH_MESSAGES)),
   };
   const tags = {
-    find: jest.fn().mockResolvedValue(options.stored ?? []),
+    findOne: jest.fn().mockResolvedValue(options.stored ?? null),
+    find: jest.fn().mockResolvedValue(options.chatTags ?? []),
     save: jest.fn().mockResolvedValue(undefined),
     update: jest.fn().mockResolvedValue({ affected: 1 }),
   };
@@ -108,356 +112,188 @@ function setup(
     bot as never,
     deepSeek as never,
     settings as never,
-    chats as never,
     history as never,
     tags as never
   );
 
-  return { service, bot, deepSeek, settings, chats, history, tags };
+  return { service, bot, deepSeek, settings, history, tags };
 }
+
+const oldEval = new Date(Date.now() - (TROLL_MEMBER_TAG_COOLDOWN_HOURS + 1) * 3600 * 1000);
 
 describe('TrollMemberTagsService', () => {
   afterEach(() => jest.restoreAllMocks());
 
-  it('cron-джоба дёргает обход', async () => {
-    const { service } = setup();
-    const spy = jest.spyOn(service, 'refreshMemberTags').mockResolvedValue(undefined);
-    await service.refreshMemberTagsJob();
-    expect(spy).toHaveBeenCalledTimes(1);
-  });
-
   it('выключенный тролль или теги — ничего не делает', async () => {
     const off = setup({ enabled: false });
-    await off.service.refreshMemberTags();
-    expect(off.chats.find).not.toHaveBeenCalled();
+    await off.service.onUserMessage(CHAT, USER);
+    expect(off.history.count).not.toHaveBeenCalled();
 
     const noTags = setup({ tagsEnabled: false });
-    await noTags.service.refreshMemberTags();
-    expect(noTags.chats.find).not.toHaveBeenCalled();
+    await noTags.service.onUserMessage(CHAT, USER);
+    expect(noTags.history.count).not.toHaveBeenCalled();
   });
 
-  it('ошибка выборки чатов логируется и не пробрасывается', async () => {
-    const { service, chats } = setup();
-    chats.find.mockRejectedValue(new Error('db down'));
-    const warn = jest.spyOn(service['logger'], 'warn').mockImplementation(() => undefined);
-    await expect(service.refreshMemberTags()).resolves.toBeUndefined();
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining('db down'));
-  });
-
-  it('сбой внутри чата логируется и не роняет обход', async () => {
-    const { service, history } = setup();
-    history.find.mockRejectedValue(new Error('history down'));
-    const warn = jest.spyOn(service['logger'], 'warn').mockImplementation(() => undefined);
-    await expect(service.refreshMemberTags()).resolves.toBeUndefined();
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining('history down'));
-  });
-
-  it('пустая история чата — ничего не делаем', async () => {
-    const { service, deepSeek } = setup({ rows: [] });
-    await service.refreshMemberTags();
-    expect(deepSeek.completeJson).not.toHaveBeenCalled();
-  });
-
-  it('бот не админ/без права или без botInfo — чат пропускается', async () => {
+  it('бот без права, не админ или без botInfo — пропуск', async () => {
     const member = setup({ member: { status: 'member' } });
-    await member.service.refreshMemberTags();
-    expect(member.history.find).not.toHaveBeenCalled();
+    await member.service.onUserMessage(CHAT, USER);
+    expect(member.history.count).not.toHaveBeenCalled();
 
     const noRight = setup({ member: { status: 'administrator', can_manage_tags: false } });
-    await noRight.service.refreshMemberTags();
-    expect(noRight.history.find).not.toHaveBeenCalled();
+    await noRight.service.onUserMessage(CHAT, USER);
+    expect(noRight.history.count).not.toHaveBeenCalled();
 
     const noBot = setup({ botInfo: null });
-    await noBot.service.refreshMemberTags();
-    expect(noBot.history.find).not.toHaveBeenCalled();
+    await noBot.service.onUserMessage(CHAT, USER);
+    expect(noBot.history.count).not.toHaveBeenCalled();
   });
 
-  it('создателя чата не нарекаем — Telegram запрещает', async () => {
-    const { service, bot } = setup();
-    bot.api.getChatAdministrators.mockResolvedValue([{ status: 'creator', user: { id: USER } }]);
-    await service.refreshMemberTags();
-    expect(bot.api.setChatMemberTag).not.toHaveBeenCalled();
-  });
-
-  it('создатель со строковым userId тоже пропускается', async () => {
-    const rows = userRows(USER, TROLL_MEMBER_TAG_MIN_MESSAGES).map((row) => ({
-      ...row,
-      userId: String(USER),
-    }));
-    const { service, bot } = setup({ rows });
-    bot.api.getChatAdministrators.mockResolvedValue([{ status: 'creator', user: { id: USER } }]);
-    await service.refreshMemberTags();
-    expect(bot.api.setChatMemberTag).not.toHaveBeenCalled();
-  });
-
-  it('ошибка определения создателя не мешает наречению', async () => {
-    const { service, bot } = setup();
-    bot.api.getChatAdministrators.mockRejectedValue(new Error('tg'));
-    const debug = jest.spyOn(service['logger'], 'debug').mockImplementation(() => undefined);
-    await service.refreshMemberTags();
-    expect(debug).toHaveBeenCalledWith(expect.stringContaining('не определить создателя'));
-    expect(bot.api.setChatMemberTag).toHaveBeenCalled();
-  });
-
-  it('ошибка проверки прав не роняет обход', async () => {
+  it('ошибка проверки прав логируется и не роняет', async () => {
     const { service, bot } = setup();
     bot.api.getChatMember.mockRejectedValue(new Error('tg'));
     const debug = jest.spyOn(service['logger'], 'debug').mockImplementation(() => undefined);
-    await expect(service.refreshMemberTags()).resolves.toBeUndefined();
-    expect(debug).toHaveBeenCalled();
+    await expect(service.onUserMessage(CHAT, USER)).resolves.toBeUndefined();
+    expect(debug).toHaveBeenCalledWith(expect.stringContaining('не проверить права'));
   });
 
-  describe('первое наречение', () => {
-    it('нарекает, объявляет и сохраняет курсор', async () => {
-      const { service, bot, tags, deepSeek } = setup({
-        rows: userRows(USER, TROLL_MEMBER_TAG_MIN_MESSAGES),
-      });
-
-      await service.refreshMemberTags();
-
-      expect(bot.api.setChatMemberTag).toHaveBeenCalledWith(CHAT, USER, 'подмыхан');
-      const [chatId, text, opts] = bot.api.sendMessage.mock.calls[0];
-      expect(chatId).toBe(CHAT);
-      expect(text).toBe('нарекаю вася - подмыхан, дымит как паровоз, хули');
-      expect(opts).toMatchObject({ reply_to_message_id: 1000 });
-      expect(tags.save).toHaveBeenCalledWith(
-        expect.objectContaining({
-          chatId: CHAT,
-          userId: USER,
-          tag: 'подмыхан',
-          lastMessageId: TROLL_MEMBER_TAG_MIN_MESSAGES,
-          lastEvaluatedAt: expect.any(Date),
-        })
-      );
-      expect(deepSeek.completeText).toHaveBeenCalledWith(
-        expect.stringContaining('нарекаю'),
-        expect.stringContaining('подмыхан'),
-        expect.objectContaining({ label: 'наречение' })
-      );
-    });
-
-    it('меньше порога сообщений — не нарекаем', async () => {
-      const { service, bot } = setup({
-        rows: userRows(USER, TROLL_MEMBER_TAG_MIN_MESSAGES - 1),
-      });
-      await service.refreshMemberTags();
-      expect(bot.api.setChatMemberTag).not.toHaveBeenCalled();
-    });
-
-    it('за прогон — не больше двух первых наречений, по объёму реплик', async () => {
-      const rows = [
-        ...userRows(1, 30, { userName: 'Много' }),
-        ...userRows(2, 20, { userName: 'Средне' }),
-        ...userRows(3, 12, { userName: 'Мало' }),
-      ];
-      const { service, bot } = setup({ rows });
-
-      await service.refreshMemberTags();
-
-      expect(bot.api.setChatMemberTag).toHaveBeenCalledTimes(2);
-      expect(bot.api.setChatMemberTag).toHaveBeenNthCalledWith(1, CHAT, 1, 'подмыхан');
-      expect(bot.api.setChatMemberTag).toHaveBeenNthCalledWith(2, CHAT, 2, 'подмыхан');
-    });
+  it('создателя чата пропускаем', async () => {
+    const { service, history } = setup({ admins: [{ status: 'creator', user: { id: USER } }] });
+    await service.onUserMessage(CHAT, USER);
+    expect(history.count).not.toHaveBeenCalled();
   });
 
-  describe('смена существующего тега', () => {
-    const oldEval = new Date(Date.now() - (TROLL_MEMBER_TAG_COOLDOWN_HOURS + 1) * 3600 * 1000);
-
-    it('меняет тег при 10 новых сообщениях после суток', async () => {
-      const rows = userRows(USER, TROLL_MEMBER_TAG_NEW_MESSAGES, { newestId: 100 });
-      const { service, bot, tags } = setup({
-        rows,
-        stored: [
-          storedTag({ lastMessageId: 100 - TROLL_MEMBER_TAG_NEW_MESSAGES, lastEvaluatedAt: oldEval }),
-        ],
-      });
-
-      await service.refreshMemberTags();
-
-      expect(bot.api.setChatMemberTag).toHaveBeenCalledWith(CHAT, USER, 'подмыхан');
-      expect(tags.save).toHaveBeenCalledWith(expect.objectContaining({ id: 5, lastMessageId: 100 }));
-    });
-
-    it('не чаще раза в сутки: свежая оценка — пропуск', async () => {
-      const rows = userRows(USER, TROLL_MEMBER_TAG_NEW_MESSAGES, { newestId: 100 });
-      const { service, bot } = setup({
-        rows,
-        stored: [
-          storedTag({ lastMessageId: 90, lastEvaluatedAt: new Date() }),
-        ],
-      });
-      await service.refreshMemberTags();
-      expect(bot.api.setChatMemberTag).not.toHaveBeenCalled();
-    });
-
-    it('меньше 10 новых сообщений — пропуск', async () => {
-      const rows = userRows(USER, TROLL_MEMBER_TAG_NEW_MESSAGES, { newestId: 100 });
-      const { service, bot } = setup({
-        rows,
-        stored: [
-          storedTag({ lastMessageId: 92, lastEvaluatedAt: oldEval }),
-        ],
-      });
-      await service.refreshMemberTags();
-      expect(bot.api.setChatMemberTag).not.toHaveBeenCalled();
-    });
-
-    it('реплики без id не считаются новыми', async () => {
-      const rows = userRows(USER, TROLL_MEMBER_TAG_NEW_MESSAGES).map((row) => ({ ...row, id: null }));
-      const { service, bot } = setup({
-        rows,
-        stored: [storedTag({ lastMessageId: null, lastEvaluatedAt: null })],
-      });
-      await service.refreshMemberTags();
-      expect(bot.api.setChatMemberTag).not.toHaveBeenCalled();
-    });
-
-    it('null lastEvaluatedAt считается «давно»', async () => {
-      const rows = userRows(USER, TROLL_MEMBER_TAG_NEW_MESSAGES, { newestId: 100 });
-      const { service, bot } = setup({
-        rows,
-        stored: [storedTag({ lastMessageId: 90, lastEvaluatedAt: null })],
-      });
-      await service.refreshMemberTags();
-      expect(bot.api.setChatMemberTag).toHaveBeenCalled();
-    });
-
-    it('тот же тег — не применяем, но двигаем курсор оценки', async () => {
-      const rows = userRows(USER, TROLL_MEMBER_TAG_NEW_MESSAGES, { newestId: 100 });
-      const { service, bot, tags } = setup({
-        rows,
-        stored: [
-          storedTag({ tag: 'подмыхан', lastMessageId: 90, lastEvaluatedAt: oldEval }),
-        ],
-      });
-
-      await service.refreshMemberTags();
-
-      expect(bot.api.setChatMemberTag).not.toHaveBeenCalled();
-      expect(bot.api.sendMessage).not.toHaveBeenCalled();
-      expect(tags.update).toHaveBeenCalledWith(
-        { id: 5 },
-        expect.objectContaining({ lastMessageId: 100, lastEvaluatedAt: expect.any(Date) })
-      );
-      expect(tags.save).not.toHaveBeenCalled();
-    });
-
-    it('bigint-поля приходят строками: сохранённый тег находится, повторно не нарекаем', async () => {
-      const rows = userRows(USER, TROLL_MEMBER_TAG_NEW_MESSAGES, { newestId: 100 }).map((row) => ({
-        ...row,
-        userId: String(USER),
-      }));
-      const { service, bot, tags } = setup({
-        rows,
-        stored: [
-          storedTag({
-            userId: String(USER),
-            lastMessageId: '90',
-            lastEvaluatedAt: oldEval,
-          }),
-        ],
-      });
-
-      await service.refreshMemberTags();
-
-      expect(bot.api.setChatMemberTag).toHaveBeenCalledTimes(1);
-      expect(tags.save).toHaveBeenCalledWith(expect.objectContaining({ id: 5 }));
-    });
-
-    it('bigint-поля строками в кулдауне: не трогаем вообще', async () => {
-      const rows = userRows(USER, TROLL_MEMBER_TAG_NEW_MESSAGES, { newestId: 100 }).map((row) => ({
-        ...row,
-        userId: String(USER),
-      }));
-      const { service, bot } = setup({
-        rows,
-        stored: [
-          storedTag({ userId: String(USER), lastMessageId: '90', lastEvaluatedAt: new Date() }),
-        ],
-      });
-
-      await service.refreshMemberTags();
-
-      expect(bot.api.setChatMemberTag).not.toHaveBeenCalled();
-    });
-
-    it('смена и первое наречение идут вместе, смены — первыми', async () => {
-      const rows = [
-        ...userRows(USER, TROLL_MEMBER_TAG_NEW_MESSAGES, { newestId: 100, userName: 'Старый' }),
-        ...userRows(77, TROLL_MEMBER_TAG_MIN_MESSAGES, { userName: 'Новый' }),
-      ];
-      const { service, bot } = setup({
-        rows,
-        stored: [
-          storedTag({ lastMessageId: 90, lastEvaluatedAt: oldEval, userName: 'Старый' }),
-        ],
-      });
-
-      await service.refreshMemberTags();
-
-      expect(bot.api.setChatMemberTag).toHaveBeenCalledTimes(2);
-      expect(bot.api.setChatMemberTag).toHaveBeenNthCalledWith(1, CHAT, USER, 'подмыхан');
-      expect(bot.api.setChatMemberTag).toHaveBeenNthCalledWith(2, CHAT, 77, 'подмыхан');
-    });
+  it('создатель со строковым userId тоже пропускается', async () => {
+    const { service, history } = setup({ admins: [{ status: 'creator', user: { id: USER } }] });
+    await service.onUserMessage(CHAT, String(USER) as never);
+    expect(history.count).not.toHaveBeenCalled();
   });
 
-  it('передаёт занятые теги других участников, чтобы не повторяться', async () => {
-    const other = 555;
-    const rows = [
-      ...userRows(other, TROLL_MEMBER_TAG_MIN_MESSAGES, { userName: 'Другой' }),
-      ...userRows(USER, TROLL_MEMBER_TAG_MIN_MESSAGES),
-    ];
-    const { service, deepSeek } = setup({
-      rows,
-      stored: [storedTag({ id: 7, userId: other, tag: 'пробив-мастер', lastMessageId: null })],
-    });
+  it('ошибка получения админов не мешает обработке', async () => {
+    const { service, bot, tags } = setup();
+    bot.api.getChatAdministrators.mockRejectedValue(new Error('tg'));
+    const debug = jest.spyOn(service['logger'], 'debug').mockImplementation(() => undefined);
+    await service.onUserMessage(CHAT, USER);
+    expect(debug).toHaveBeenCalledWith(expect.stringContaining('не определить создателя'));
+    expect(tags.save).toHaveBeenCalled();
+  });
 
-    await service.refreshMemberTags();
+  it('права кэшируются и не дёргаются каждый раз', async () => {
+    const { service, bot } = setup();
+    await service.onUserMessage(CHAT, USER);
+    await service.onUserMessage(CHAT, USER);
+    expect(bot.api.getChatMember).toHaveBeenCalledTimes(1);
+  });
 
-    const systems = deepSeek.completeJson.mock.calls.map((call) => call[0] as string);
-    const withOccupied = systems.filter(
-      (system) => system.includes('Уже занятые теги') && system.includes('пробив-мастер')
+  it('нечисловой userId — пропуск', async () => {
+    const { service, history } = setup();
+    await service.onUserMessage(CHAT, 'abc' as never);
+    expect(history.count).not.toHaveBeenCalled();
+  });
+
+  it('пустая выборка свежих реплик — пропуск', async () => {
+    const { service, deepSeek, tags } = setup({ rows: [] });
+    await service.onUserMessage(CHAT, USER);
+    expect(deepSeek.completeJson).not.toHaveBeenCalled();
+    expect(tags.save).not.toHaveBeenCalled();
+  });
+
+  it('меньше 10 сообщений — анализа нет', async () => {
+    const { service, history, deepSeek } = setup({ count: TROLL_MEMBER_TAG_BATCH_MESSAGES - 1 });
+    await service.onUserMessage(CHAT, USER);
+    expect(history.find).not.toHaveBeenCalled();
+    expect(deepSeek.completeJson).not.toHaveBeenCalled();
+  });
+
+  it('не на границе десятка — анализа нет', async () => {
+    const { service, history } = setup({ count: TROLL_MEMBER_TAG_BATCH_MESSAGES + 5 });
+    await service.onUserMessage(CHAT, USER);
+    expect(history.find).not.toHaveBeenCalled();
+  });
+
+  it('на 10-м сообщении нарекает, объявляет и сохраняет курсор', async () => {
+    const { service, bot, tags, deepSeek } = setup();
+
+    await service.onUserMessage(CHAT, USER);
+
+    expect(bot.api.setChatMemberTag).toHaveBeenCalledWith(CHAT, USER, 'подмыхан');
+    const [chatId, text, opts] = bot.api.sendMessage.mock.calls[0];
+    expect(chatId).toBe(CHAT);
+    expect(text).toBe('нарекаю вася - подмыхан, дымит как паровоз, хули');
+    expect(opts).toMatchObject({ reply_to_message_id: 1000 });
+    expect(tags.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        chatId: CHAT,
+        userId: USER,
+        tag: 'подмыхан',
+        lastMessageId: TROLL_MEMBER_TAG_BATCH_MESSAGES,
+        lastEvaluatedAt: expect.any(Date),
+      })
     );
-    expect(withOccupied.length).toBeGreaterThan(0);
-    expect(withOccupied[0]).toContain('Не повторяй');
+    expect(deepSeek.completeText).toHaveBeenCalledWith(
+      expect.stringContaining('нарекаю'),
+      expect.stringContaining('подмыхан'),
+      expect.objectContaining({ label: 'наречение' })
+    );
   });
 
-  it('свой тег не считается занятым', async () => {
-    const rows = userRows(USER, TROLL_MEMBER_TAG_NEW_MESSAGES, { newestId: 100 });
-    const { service, deepSeek } = setup({
+  it('на 20-м сообщении тоже анализирует', async () => {
+    const { service, bot } = setup({ count: 20, rows: userRows(USER, 20, { newestId: 100 }) });
+    await service.onUserMessage(CHAT, USER);
+    expect(bot.api.setChatMemberTag).toHaveBeenCalled();
+  });
+
+  it('кулдаун на человека: свежая оценка — пропуск', async () => {
+    const { service, bot } = setup({ stored: storedTag({ lastEvaluatedAt: new Date() }) });
+    await service.onUserMessage(CHAT, USER);
+    expect(bot.api.setChatMemberTag).not.toHaveBeenCalled();
+  });
+
+  it('после суток сменяем тег и обновляем запись', async () => {
+    const rows = userRows(USER, TROLL_MEMBER_TAG_BATCH_MESSAGES, { newestId: 100 });
+    const { service, bot, tags } = setup({
       rows,
-      stored: [
-        storedTag({ tag: 'старый-тег', lastMessageId: 90, lastEvaluatedAt: new Date(0) }),
-      ],
+      stored: storedTag({ lastMessageId: 90, lastEvaluatedAt: oldEval }),
     });
-    await service.refreshMemberTags();
-    const system = deepSeek.completeJson.mock.calls[0][0] as string;
-    expect(system).not.toContain('старый-тег');
+    await service.onUserMessage(CHAT, USER);
+    expect(bot.api.setChatMemberTag).toHaveBeenCalledWith(CHAT, USER, 'подмыхан');
+    expect(tags.save).toHaveBeenCalledWith(expect.objectContaining({ id: 5, lastMessageId: 100 }));
+  });
+
+  it('строковый lastMessageId не мешает кулдауну', async () => {
+    const { service, bot } = setup({
+      stored: storedTag({ lastMessageId: '90', lastEvaluatedAt: new Date() }),
+    });
+    await service.onUserMessage(CHAT, USER);
+    expect(bot.api.setChatMemberTag).not.toHaveBeenCalled();
+  });
+
+  it('тот же тег: не применяем, но двигаем курсор', async () => {
+    const { service, bot, tags } = setup({
+      stored: storedTag({ tag: 'подмыхан', lastMessageId: 90, lastEvaluatedAt: oldEval }),
+    });
+    await service.onUserMessage(CHAT, USER);
+    expect(bot.api.setChatMemberTag).not.toHaveBeenCalled();
+    expect(bot.api.sendMessage).not.toHaveBeenCalled();
+    expect(tags.update).toHaveBeenCalledWith(
+      { id: 5 },
+      expect.objectContaining({ lastEvaluatedAt: expect.any(Date) })
+    );
+    expect(tags.save).not.toHaveBeenCalled();
   });
 
   it('пустой ответ модели курсор не двигает', async () => {
     const { service, tags } = setup({ suggestion: null });
-    await service.refreshMemberTags();
+    await service.onUserMessage(CHAT, USER);
     expect(tags.save).not.toHaveBeenCalled();
     expect(tags.update).not.toHaveBeenCalled();
   });
 
   it('пустые реплики — модель не вызывается', async () => {
     const { service, deepSeek } = setup({
-      rows: userRows(USER, TROLL_MEMBER_TAG_MIN_MESSAGES, { content: () => '   ' }),
+      rows: userRows(USER, TROLL_MEMBER_TAG_BATCH_MESSAGES, { content: () => '   ' }),
     });
-    await service.refreshMemberTags();
+    await service.onUserMessage(CHAT, USER);
     expect(deepSeek.completeJson).not.toHaveBeenCalled();
-  });
-
-  it('реплики без userId пропускаются', async () => {
-    const rows = [
-      ...userRows(USER, TROLL_MEMBER_TAG_MIN_MESSAGES),
-      { ...userRows(USER, 1)[0], id: 999, userId: null },
-    ];
-    const { service, deepSeek } = setup({ rows });
-    await service.refreshMemberTags();
-    expect(deepSeek.completeJson).toHaveBeenCalledTimes(1);
   });
 
   it('оскорбительные теги отсеиваются, берём безобидный', async () => {
@@ -469,7 +305,7 @@ describe('TrollMemberTagsService', () => {
         ],
       },
     });
-    await service.refreshMemberTags();
+    await service.onUserMessage(CHAT, USER);
     expect(bot.api.setChatMemberTag).toHaveBeenCalledWith(CHAT, USER, 'докер-обжора');
   });
 
@@ -477,7 +313,7 @@ describe('TrollMemberTagsService', () => {
     const { service, bot, tags } = setup({
       suggestion: { tags: [{ tag: 'долбоёб', reason: 'x', relevance: 1 }] },
     });
-    await service.refreshMemberTags();
+    await service.onUserMessage(CHAT, USER);
     expect(bot.api.setChatMemberTag).not.toHaveBeenCalled();
     expect(tags.save).not.toHaveBeenCalled();
   });
@@ -491,45 +327,37 @@ describe('TrollMemberTagsService', () => {
         ],
       },
     });
-    await service.refreshMemberTags();
+    await service.onUserMessage(CHAT, USER);
     expect(bot.api.setChatMemberTag).toHaveBeenCalledWith(CHAT, USER, 'кальянный лорд');
   });
 
-  it('ошибка отправки объявления логируется, но тег сохраняется', async () => {
-    const { service, bot, tags } = setup();
-    bot.api.sendMessage.mockRejectedValue(new Error('tg'));
-    const warn = jest.spyOn(service['logger'], 'warn').mockImplementation(() => undefined);
-    await service.refreshMemberTags();
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining('объявление'));
-    expect(tags.save).toHaveBeenCalled();
+  it('передаёт занятые теги других участников', async () => {
+    const other = 555;
+    const { service, deepSeek } = setup({
+      chatTags: [storedTag({ id: 7, userId: other, tag: 'пробив-мастер' })],
+    });
+    await service.onUserMessage(CHAT, USER);
+    const system = deepSeek.completeJson.mock.calls[0][0] as string;
+    expect(system).toContain('Уже занятые теги');
+    expect(system).toContain('пробив-мастер');
+    expect(system).toContain('Не повторяй');
   });
 
-  it('ошибка setChatMemberTag не роняет обход', async () => {
-    const { service, bot, tags } = setup();
-    bot.api.setChatMemberTag.mockRejectedValue(new Error('no rights'));
-    const warn = jest.spyOn(service['logger'], 'warn').mockImplementation(() => undefined);
-    await expect(service.refreshMemberTags()).resolves.toBeUndefined();
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining('no rights'));
-    expect(tags.save).not.toHaveBeenCalled();
-  });
-
-  it('сбой одного участника не мешает остальным', async () => {
-    const rows = [
-      ...userRows(1, 30, { userName: 'Первый' }),
-      ...userRows(2, 20, { userName: 'Второй' }),
-    ];
-    const { service, bot } = setup({ rows });
-    bot.api.setChatMemberTag.mockRejectedValueOnce(new Error('boom'));
-    await service.refreshMemberTags();
-    expect(bot.api.setChatMemberTag).toHaveBeenCalledTimes(2);
+  it('строковый userId занятого тега сравнивается корректно', async () => {
+    const { service, deepSeek } = setup({
+      chatTags: [storedTag({ id: 7, userId: String(USER), tag: 'свой-тег' })],
+    });
+    await service.onUserMessage(CHAT, USER);
+    const system = deepSeek.completeJson.mock.calls[0][0] as string;
+    expect(system).not.toContain('Уже занятые теги');
   });
 
   it('расшифровка не превышает лимит', async () => {
-    const rows = userRows(USER, TROLL_MEMBER_TAG_MIN_MESSAGES, {
-      content: () => 'x'.repeat(600),
+    const { service, deepSeek } = setup({
+      rows: userRows(USER, TROLL_MEMBER_TAG_BATCH_MESSAGES, { content: () => 'x'.repeat(600) }),
+      count: TROLL_MEMBER_TAG_BATCH_MESSAGES,
     });
-    const { service, deepSeek } = setup({ rows });
-    await service.refreshMemberTags();
+    await service.onUserMessage(CHAT, USER);
     const payload = deepSeek.completeJson.mock.calls[0][1] as string;
     expect(payload.length).toBeLessThanOrEqual(TROLL_MEMBER_TAG_TRANSCRIPT_CHARS + 64);
     expect(payload).toContain('<user_message>');
@@ -537,25 +365,41 @@ describe('TrollMemberTagsService', () => {
 
   it('без ответа модели объявление падает в шаблон с именем', async () => {
     const { service, bot } = setup({
-      rows: userRows(USER, TROLL_MEMBER_TAG_MIN_MESSAGES, { userName: null }),
+      rows: userRows(USER, TROLL_MEMBER_TAG_BATCH_MESSAGES, { userName: null }),
       announcement: null,
     });
-    await service.refreshMemberTags();
+    await service.onUserMessage(CHAT, USER);
     expect(bot.api.sendMessage.mock.calls[0][1]).toContain('нарекаю участник');
   });
 
   it('без messageId объявление уходит без ответа', async () => {
-    const rows = userRows(USER, TROLL_MEMBER_TAG_MIN_MESSAGES).map((row) => ({
+    const rows = userRows(USER, TROLL_MEMBER_TAG_BATCH_MESSAGES).map((row) => ({
       ...row,
       messageId: null,
     }));
     const { service, bot } = setup({ rows });
-    await service.refreshMemberTags();
+    await service.onUserMessage(CHAT, USER);
     expect(bot.api.sendMessage.mock.calls[0][2]).not.toHaveProperty('reply_to_message_id');
   });
 
+  it('ошибка объявления логируется, тег сохраняется', async () => {
+    const { service, bot, tags } = setup();
+    bot.api.sendMessage.mockRejectedValue(new Error('tg'));
+    const warn = jest.spyOn(service['logger'], 'warn').mockImplementation(() => undefined);
+    await service.onUserMessage(CHAT, USER);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('объявление'));
+    expect(tags.save).toHaveBeenCalled();
+  });
+
+  it('ошибка setChatMemberTag пробрасывается наверх (обработает вызывающий)', async () => {
+    const { service, bot, tags } = setup();
+    bot.api.setChatMemberTag.mockRejectedValue(new Error('no rights'));
+    await expect(service.onUserMessage(CHAT, USER)).rejects.toThrow('no rights');
+    expect(tags.save).not.toHaveBeenCalled();
+  });
+
   it('null-контент и нечисловой relevance не ломают отбор', async () => {
-    const rows = userRows(USER, TROLL_MEMBER_TAG_MIN_MESSAGES);
+    const rows = userRows(USER, TROLL_MEMBER_TAG_BATCH_MESSAGES);
     rows[0].content = null;
     const { service, bot } = setup({
       rows,
@@ -567,23 +411,52 @@ describe('TrollMemberTagsService', () => {
         ],
       },
     });
-    await service.refreshMemberTags();
+    await service.onUserMessage(CHAT, USER);
     expect(bot.api.setChatMemberTag).toHaveBeenCalledWith(CHAT, USER, 'кальян');
+  });
+
+  it('реплика без id — курсор сохраняется null', async () => {
+    const rows = userRows(USER, TROLL_MEMBER_TAG_BATCH_MESSAGES).map((row) => ({ ...row, id: 0 }));
+    const { service, tags } = setup({ rows });
+    await service.onUserMessage(CHAT, USER);
+    expect(tags.save).toHaveBeenCalledWith(expect.objectContaining({ lastMessageId: null }));
+  });
+
+  it('тот же тег без новых id — курсор остаётся прежним', async () => {
+    const rows = userRows(USER, TROLL_MEMBER_TAG_BATCH_MESSAGES).map((row) => ({ ...row, id: 0 }));
+    const { service, tags } = setup({
+      rows,
+      stored: storedTag({ tag: 'подмыхан', lastMessageId: 77, lastEvaluatedAt: oldEval }),
+    });
+    await service.onUserMessage(CHAT, USER);
+    expect(tags.update).toHaveBeenCalledWith(
+      { id: 5 },
+      expect.objectContaining({ lastMessageId: 77 })
+    );
+  });
+
+  it('без reason и ответа модели — шаблон с «ты сам всё понимаешь»', async () => {
+    const { service, bot } = setup({
+      suggestion: { tags: [{ tag: 'подмыхан', relevance: 1 }] },
+      announcement: null,
+    });
+    await service.onUserMessage(CHAT, USER);
+    expect(bot.api.sendMessage.mock.calls[0][1]).toContain('ты сам всё понимаешь');
+  });
+
+  it('не-Error при проверке прав логируется строкой', async () => {
+    const { service, bot } = setup();
+    bot.api.getChatMember.mockRejectedValue('oops');
+    const debug = jest.spyOn(service['logger'], 'debug').mockImplementation(() => undefined);
+    await service.onUserMessage(CHAT, USER);
+    expect(debug).toHaveBeenCalledWith(expect.stringContaining('oops'));
   });
 
   it('без topics сохраняет null', async () => {
     const { service, tags } = setup({
       suggestion: { tags: [{ tag: 'подмыхан', relevance: 1 }] },
     });
-    await service.refreshMemberTags();
+    await service.onUserMessage(CHAT, USER);
     expect(tags.save).toHaveBeenCalledWith(expect.objectContaining({ topics: null }));
-  });
-
-  it('не-Error в сбое логируется строкой', async () => {
-    const { service, history } = setup();
-    history.find.mockRejectedValue('oops');
-    const warn = jest.spyOn(service['logger'], 'warn').mockImplementation(() => undefined);
-    await service.refreshMemberTags();
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining('oops'));
   });
 });

@@ -1,27 +1,21 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
-import { Cron, CronExpression } from '@nestjs/schedule';
 import { InjectRepository } from '@nestjs/typeorm';
-import { MoreThanOrEqual, Repository } from 'typeorm';
+import { MoreThan, MoreThanOrEqual, Repository } from 'typeorm';
 import { Bot } from 'grammy';
 import { BOT } from '../../bot/providers/bot.provider';
 import { BotContext } from '../../bot/interfaces/bot-context.interface';
 import {
-  TROLL_CONTEXT_MAX_TURNS,
   TROLL_HISTORY_TTL_HOURS,
   TROLL_MEMBER_TAG_ANNOUNCE_MAX_CHARS,
   TROLL_MEMBER_TAG_ANNOUNCE_MAX_TOKENS,
+  TROLL_MEMBER_TAG_BATCH_MESSAGES,
   TROLL_MEMBER_TAG_COOLDOWN_HOURS,
-  TROLL_MEMBER_TAG_MAX_FIRST_PER_CHAT,
   TROLL_MEMBER_TAG_MAX_MESSAGES,
-  TROLL_MEMBER_TAG_MAX_RENAMES_PER_CHAT,
   TROLL_MEMBER_TAG_MAX_TOKENS,
-  TROLL_MEMBER_TAG_MIN_MESSAGES,
-  TROLL_MEMBER_TAG_NEW_MESSAGES,
   TROLL_MEMBER_TAG_OCCUPIED_MAX,
   TROLL_MEMBER_TAG_TRANSCRIPT_CHARS,
 } from '../constants/troll-limits';
 import { MEMBER_TAG_ANNOUNCE_PROMPT, MEMBER_TAG_PROMPT } from '../constants/troll-prompts';
-import { TrollChatEntity } from '../entities/troll-chat.entity';
 import { TrollMemberTagEntity } from '../entities/troll-member-tag.entity';
 import { TrollMessageEntity } from '../entities/troll-message.entity';
 import { MemberTagCandidate, MemberTagSuggestion } from '../interfaces/troll.interface';
@@ -37,149 +31,106 @@ import { DeepSeekService } from './deepseek.service';
 import { TrollSettingsService } from './troll-settings.service';
 
 const HOUR_MS = 60 * 60 * 1000;
+/** Как часто перепроверять права бота в чате, мс. */
+const ACCESS_TTL_MS = 10 * 60 * 1000;
 
-/** Кандидат на наречение: свежие реплики и прежний тег (если был). */
-interface TagCandidate {
-  userId: number;
-  fresh: TrollMessageEntity[];
-  stored: TrollMemberTagEntity | null;
-  newCount: number;
+interface ChatAccess {
+  ok: boolean;
+  creatorId: number | null;
+  at: number;
 }
 
 /**
- * Смешные теги участников чата по тому, как они общаются.
+ * Смешные теги участников — событийно, без крона.
  *
- * Раз в час обходит активные чаты, где бот — администратор с правом
- * `can_manage_tags`, и меняет тег только «по делу»:
- * - впервые — если человек написал не меньше TROLL_MEMBER_TAG_MIN_MESSAGES сообщений;
- * - повторно — не чаще раза в сутки и только когда накопилось
- *   TROLL_MEMBER_TAG_NEW_MESSAGES новых реплик, не участвовавших в прошлом наречении.
- * За прогон в чате — не больше нескольких смен и первых наречений, чтобы не
- * разметить всех разом. Тег без мата и обзывательств; объявление генерирует модель.
+ * Триггер: на каждое TROLL_MEMBER_TAG_BATCH_MESSAGES-е сообщение участника
+ * (10-е, 20-е, …). Контекст — вся история за сутки (TTL, без изменений).
+ * На одного человека — не чаще раза в сутки. Ограничений на число наречений
+ * в чате за день нет. Тег описывает манеру и мысли человека, без мата и
+ * обзывательств; объявление генерирует отдельный промт. Создателя чата
+ * пропускаем: Telegram не даёт менять ему тег (CHAT_CREATOR_REQUIRED).
  */
 @Injectable()
 export class TrollMemberTagsService {
   private readonly logger = new Logger(TrollMemberTagsService.name);
+  private readonly chatAccess = new Map<number, ChatAccess>();
 
   constructor(
     @Inject(BOT) private readonly bot: Bot<BotContext>,
     private readonly deepSeek: DeepSeekService,
     private readonly settings: TrollSettingsService,
-    @InjectRepository(TrollChatEntity)
-    private readonly chats: Repository<TrollChatEntity>,
     @InjectRepository(TrollMessageEntity)
     private readonly history: Repository<TrollMessageEntity>,
     @InjectRepository(TrollMemberTagEntity)
     private readonly tags: Repository<TrollMemberTagEntity>
   ) {}
 
-  @Cron(CronExpression.EVERY_HOUR)
-  public async refreshMemberTagsJob(): Promise<void> {
-    await this.refreshMemberTags();
-  }
-
-  /** Обходит активные чаты и обновляет теги участников. */
-  public async refreshMemberTags(now: Date = new Date()): Promise<void> {
+  /**
+   * Вызывается после сохранения сообщения пользователя. Раз в 10 реплик (и не
+   * чаще раза в сутки на человека) пересматривает его тег.
+   */
+  public async onUserMessage(
+    chatId: number,
+    userId: number,
+    now: Date = new Date()
+  ): Promise<void> {
     const s = this.settings.current;
     if (!s.enabled || !s.memberTagsEnabled) {
       return;
     }
 
-    let activeChats: TrollChatEntity[];
-    try {
-      activeChats = await this.chats.find({ where: { isActive: true } });
-    } catch (error) {
-      this.logger.warn(`Теги: не удалось получить активные чаты: ${this.describeError(error)}`);
+    // bigint-id может прийти строкой — нормализуем, иначе сравнения разъедутся.
+    const uid = Number(userId);
+    if (!Number.isFinite(uid)) {
       return;
     }
 
-    for (const chat of activeChats) {
-      try {
-        await this.processChat(Number(chat.chatId), now);
-      } catch (error) {
-        this.logger.warn(`Теги: чат ${chat.chatId} — сбой: ${this.describeError(error)}`);
-      }
-    }
-  }
-
-  /** Проверяет право бота, отбирает «заслуживших» и обрабатывает их. */
-  private async processChat(chatId: number, now: Date): Promise<void> {
-    if (!(await this.canManageTags(chatId))) {
+    const access = await this.chatAccessFor(chatId);
+    if (!access.ok || uid === access.creatorId) {
       return;
     }
 
+    const stored = await this.tags.findOne({ where: { chatId, userId: uid } });
+    const cursor = Number(stored?.lastMessageId ?? 0);
     const since = new Date(now.getTime() - TROLL_HISTORY_TTL_HOURS * HOUR_MS);
-    const rows = await this.history.find({
-      where: { chatId, role: 'user', createdAt: MoreThanOrEqual(since) },
-      order: { id: 'DESC' },
-      take: TROLL_CONTEXT_MAX_TURNS,
-    });
-    if (!rows.length) {
+    const where = {
+      chatId,
+      userId: uid,
+      role: 'user',
+      createdAt: MoreThanOrEqual(since),
+      id: MoreThan(cursor),
+    };
+
+    const freshCount = await this.history.count({ where });
+    if (
+      freshCount < TROLL_MEMBER_TAG_BATCH_MESSAGES ||
+      freshCount % TROLL_MEMBER_TAG_BATCH_MESSAGES !== 0
+    ) {
+      return;
+    }
+    if (
+      stored?.lastEvaluatedAt &&
+      now.getTime() - new Date(stored.lastEvaluatedAt).getTime() <
+        TROLL_MEMBER_TAG_COOLDOWN_HOURS * HOUR_MS
+    ) {
       return;
     }
 
-    // bigint-поля Postgres отдаёт строками — приводим id к числу, иначе ключи
-    // мапы не сойдутся с сохранёнными тегами и участник обработается повторно.
-    const byUser = new Map<number, TrollMessageEntity[]>();
-    for (const row of rows) {
-      const userId = Number(row.userId);
-      if (!Number.isFinite(userId)) continue;
-      const list = byUser.get(userId);
-      if (list) list.push(row);
-      else byUser.set(userId, [row]);
+    const fresh = await this.history.find({
+      where,
+      order: { id: 'DESC' },
+      take: TROLL_MEMBER_TAG_MAX_MESSAGES,
+    });
+    if (!fresh.length) {
+      return;
     }
 
     const chatTags = await this.tags.find({ where: { chatId } });
-    const storedByUser = new Map(chatTags.map((row) => [Number(row.userId), row]));
-    // Создателю чата Telegram тег не меняет (CHAT_CREATOR_REQUIRED) — исключаем сразу,
-    // чтобы он не занимал слот наречения.
-    const creatorId = await this.chatCreatorId(chatId);
+    const occupied = chatTags
+      .filter((row) => Number(row.userId) !== uid && !!row.tag)
+      .map((row) => row.tag as string);
 
-    const renames: TagCandidate[] = [];
-    const firsts: TagCandidate[] = [];
-    for (const [userId, list] of byUser) {
-      if (userId === creatorId) {
-        continue;
-      }
-      const stored = storedByUser.get(userId) ?? null;
-      if (!stored) {
-        // Первое наречение: только те, кто реально пишет, иначе разметим всех сразу.
-        if (list.length >= TROLL_MEMBER_TAG_MIN_MESSAGES) {
-          firsts.push({ userId, fresh: list, stored: null, newCount: list.length });
-        }
-        continue;
-      }
-      const lastEvaluatedAt = stored.lastEvaluatedAt
-        ? new Date(stored.lastEvaluatedAt).getTime()
-        : 0;
-      if (now.getTime() - lastEvaluatedAt < TROLL_MEMBER_TAG_COOLDOWN_HOURS * HOUR_MS) {
-        continue;
-      }
-      const cursor = Number(stored.lastMessageId ?? 0);
-      const fresh = list.filter((row) => (row.id ?? 0) > cursor);
-      if (fresh.length >= TROLL_MEMBER_TAG_NEW_MESSAGES) {
-        renames.push({ userId, fresh, stored, newCount: fresh.length });
-      }
-    }
-
-    // Сначала обновляем существующие теги (по объёму свежих реплик), потом — первые
-    // наречения, и тех и других за прогон ограниченное число.
-    const selected = [
-      ...renames.sort((a, b) => b.newCount - a.newCount).slice(0, TROLL_MEMBER_TAG_MAX_RENAMES_PER_CHAT),
-      ...firsts.sort((a, b) => b.newCount - a.newCount).slice(0, TROLL_MEMBER_TAG_MAX_FIRST_PER_CHAT),
-    ];
-    for (const item of selected) {
-      const occupied = chatTags
-        .filter((row) => Number(row.userId) !== item.userId && !!row.tag)
-        .map((row) => row.tag as string);
-      try {
-        await this.processMember(chatId, item.userId, item.fresh, item.stored, occupied, now);
-      } catch (error) {
-        this.logger.warn(
-          `Теги: чат ${chatId} участник ${item.userId} — сбой: ${this.describeError(error)}`
-        );
-      }
-    }
+    await this.processMember(chatId, uid, fresh, stored ?? null, occupied, now);
   }
 
   /** Считает и, если нужно, применяет новый тег участнику. */
@@ -206,16 +157,16 @@ export class TrollMemberTagsService {
     );
     const best = this.pickBestTag(suggestion);
     if (!best) {
-      // Ответа нет — курсор не двигаем, попробуем в следующий прогон.
+      // Ответа нет — курсор не двигаем, попробуем на следующем десятке.
       this.logger.debug(`Теги: чат ${chatId} участник ${userId} — модель не дала тегов`);
       return;
     }
 
-    const newestId = fresh[0]?.id ?? null;
+    const newestId = Number(fresh[0]?.id ?? 0) || null;
     const name = this.memberName(fresh[0]);
 
     if (stored?.tag === best.tag) {
-      // Тег тот же — просто отмечаем, что реплики «израсходованы» на оценку.
+      // Тег тот же — отмечаем реплики «израсходованными» на оценку.
       await this.tags.update(
         { id: stored.id },
         { lastEvaluatedAt: now, lastMessageId: newestId ?? stored.lastMessageId }
@@ -332,33 +283,38 @@ export class TrollMemberTagsService {
     }
   }
 
-  /** id создателя чата: ему Telegram тег не меняет, поэтому пропускаем. */
-  private async chatCreatorId(chatId: number): Promise<number | null> {
-    try {
-      const admins = await this.bot.api.getChatAdministrators(chatId);
-      const creator = admins.find((member) => member.status === 'creator');
-      return creator?.user.id ?? null;
-    } catch (error) {
-      this.logger.debug(
-        `Теги: чат ${chatId} — не определить создателя: ${this.describeError(error)}`
-      );
-      return null;
+  /** Права бота и id создателя чата (кэшируются на ACCESS_TTL_MS). */
+  private async chatAccessFor(chatId: number): Promise<ChatAccess> {
+    const cached = this.chatAccess.get(chatId);
+    if (cached && Date.now() - cached.at < ACCESS_TTL_MS) {
+      return cached;
     }
-  }
 
-  /** Бот — администратор с правом управления тегами? */
-  private async canManageTags(chatId: number): Promise<boolean> {
+    let ok = false;
+    let creatorId: number | null = null;
     const botId = this.bot.botInfo?.id;
-    if (!botId) {
-      return false;
+    if (botId) {
+      try {
+        const me = await this.bot.api.getChatMember(chatId, botId);
+        ok = me.status === 'administrator' && me.can_manage_tags === true;
+      } catch (error) {
+        this.logger.debug(`Теги: чат ${chatId} — не проверить права: ${this.describeError(error)}`);
+      }
+      if (ok) {
+        try {
+          const admins = await this.bot.api.getChatAdministrators(chatId);
+          creatorId = admins.find((member) => member.status === 'creator')?.user.id ?? null;
+        } catch (error) {
+          this.logger.debug(
+            `Теги: чат ${chatId} — не определить создателя: ${this.describeError(error)}`
+          );
+        }
+      }
     }
-    try {
-      const me = await this.bot.api.getChatMember(chatId, botId);
-      return me.status === 'administrator' && me.can_manage_tags === true;
-    } catch (error) {
-      this.logger.debug(`Теги: чат ${chatId} — не проверить права: ${this.describeError(error)}`);
-      return false;
-    }
+
+    const access: ChatAccess = { ok, creatorId, at: Date.now() };
+    this.chatAccess.set(chatId, access);
+    return access;
   }
 
   private describeError(error: unknown): string {
