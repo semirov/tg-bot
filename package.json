@@ -26,7 +26,7 @@
     "@aws-sdk/client-s3": "3.985.0",
     "@aws-sdk/lib-storage": "3.985.0",
     "@grammyjs/auto-retry": "2.0.2",
-    "@grammyjs/conversations": "1.2.0",
+    "@grammyjs/conversations": "2.1.1",
     "@grammyjs/menu": "1.5.0",
     "@grammyjs/runner": "2.0.3",
     "@grammyjs/storage-typeorm": "2.6.0",

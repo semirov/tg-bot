@@ -22,12 +22,12 @@ export interface SessionDataInterface {
   captchaValues?: CaptchaValuesInterface;
   approveJoinRequest?: number;
   memeLimitControlState?: string;
+  clientAuthAwait?: 'phone' | 'password' | 'code';
   memeLimitUserId?: number;
   yearResultsPreview?: YearResultsPreview;
   yearResultsCurrentUserIndex?: number;
 }
 
-export type BotContext = Context &
-  SessionFlavor<SessionDataInterface> &
-  BotConfig &
-  ConversationFlavor;
+type BotContextBase = Context & SessionFlavor<SessionDataInterface> & BotConfig;
+
+export type BotContext = BotContextBase & ConversationFlavor<BotContextBase>;

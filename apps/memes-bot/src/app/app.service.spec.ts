@@ -466,7 +466,9 @@ describe('AppService', () => {
       return {
         session,
         wait: jest.fn(() => Promise.resolve(answers.shift())),
-        external: jest.fn((op: any) => Promise.resolve(typeof op === 'function' ? op() : op.task())),
+        external: jest.fn((op: any) =>
+          Promise.resolve(typeof op === 'function' ? op({ session }) : op.task())
+        ),
       };
     }
 
@@ -579,6 +581,25 @@ describe('AppService', () => {
       expect(conversation.session.captchaSolved).toBe(true);
     });
 
+
+    it('external без outside-ctx использует ctx вызова (fallback)', async () => {
+      bot.api.getChatMember.mockResolvedValue({ status: 'member' });
+      const session: any = { captchaValues: { first: 5, second: 3, operand: '+', result: 8 } };
+      const conversation = {
+        wait: jest.fn(() => Promise.resolve(answerCtx('8'))),
+        // v2 может не передать outside-ctx — тогда берём ctx вызова.
+        external: jest.fn((op: any) => Promise.resolve(op(undefined))),
+      };
+      const ctx = captchaCtx({ session });
+
+      await (service as any).prepareCaptchaConversation(conversation, ctx);
+
+      expect(session.captchaSolved).toBe(true);
+      expect(ctx.reply).toHaveBeenCalledWith(
+        expect.stringContaining('Чему равно <b>5 + 3?</b>'),
+        expect.objectContaining({ parse_mode: 'HTML' })
+      );
+    });
     it('устойчиво к ответу без message', async () => {
       bot.api.getChatMember.mockResolvedValue({ status: 'member' });
       const noMessage = {

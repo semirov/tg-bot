@@ -108,9 +108,9 @@ describe('ClientBaseService', () => {
 
       await service.onModuleInit();
 
-      expect(bot.use).toHaveBeenCalledTimes(3);
+      expect(bot.use).not.toHaveBeenCalled();
       expect(bot.callbackQuery).toHaveBeenCalledTimes(3);
-      expect(bot.on).not.toHaveBeenCalled();
+      expect(bot.on).toHaveBeenCalledWith('message:text', expect.any(Function));
       expect(repo.update).not.toHaveBeenCalledWith({ station: 'main' }, { isActive: true });
     });
 
@@ -269,93 +269,75 @@ describe('ClientBaseService', () => {
     });
   });
 
-  describe('conversations', () => {
-    it('phoneConversation пересылает текст ответа в phoneSubject', async () => {
-      const { service } = setup();
-      const reply = jest.fn().mockResolvedValue(undefined);
-      const conversation = { wait: jest.fn().mockResolvedValue({ message: { text: '123' } }) };
-      const nextSpy = jest.spyOn((service as any).phoneSubject, 'next');
-
-      await service.phoneConversation(conversation as any, { reply } as any);
-
-      expect(reply).toHaveBeenCalledWith('Введи номер телефона', {
-        reply_markup: { force_reply: true },
-      });
-      expect(nextSpy).toHaveBeenCalledWith('123');
-    });
-
-    it('passwordConversation пересылает текст ответа в passwordSubject', async () => {
-      const { service } = setup();
-      const conversation = { wait: jest.fn().mockResolvedValue({ message: { text: 'pw' } }) };
-      const nextSpy = jest.spyOn((service as any).passwordSubject, 'next');
-
-      await service.passwordConversation(conversation as any, { reply: jest.fn() } as any);
-
-      expect(nextSpy).toHaveBeenCalledWith('pw');
-    });
-
-    it('phoneCodeConversation пересылает текст ответа в phoneCodeSubject', async () => {
-      const { service } = setup();
-      const conversation = { wait: jest.fn().mockResolvedValue({ message: { text: '999' } }) };
-      const nextSpy = jest.spyOn((service as any).phoneCodeSubject, 'next');
-
-      await service.phoneCodeConversation(conversation as any, { reply: jest.fn() } as any);
-
-      expect(nextSpy).toHaveBeenCalledWith('999');
-    });
-
-    it.each(['phoneConversation', 'passwordConversation', 'phoneCodeConversation'])(
-      '%s игнорирует ответ без текста',
-      async (method) => {
-        const { service } = setup();
-        const subject =
-          method === 'phoneConversation'
-            ? 'phoneSubject'
-            : method === 'passwordConversation'
-              ? 'passwordSubject'
-              : 'phoneCodeSubject';
-        const nextSpy = jest.spyOn((service as any)[subject], 'next');
-
-        for (const value of [undefined, {}, { message: {} }]) {
-          const conversation = { wait: jest.fn().mockResolvedValue(value) };
-          await (service as any)[method](conversation as any, { reply: jest.fn() } as any);
-        }
-
-        expect(nextSpy).not.toHaveBeenCalled();
-      }
-    );
-  });
-
-  describe('waitingClientCommands', () => {
-    it('входит в нужную беседу по каждому callback', async () => {
+  describe('client auth (session-state)', () => {
+    it('callback ставит состояние ожидания и присылает prompt', async () => {
       const { service, bot } = setup();
       const callbacks: Record<string, any> = {};
       bot.callbackQuery.mockImplementation((trigger: string, cb: any) => {
         callbacks[trigger] = cb;
       });
-
       (service as any).waitingClientCommands();
 
-      const enter = jest.fn();
-      await callbacks['fill_client_phone']({ conversation: { enter } });
-      await callbacks['fill_client_password']({ conversation: { enter } });
-      await callbacks['fill_client_code']({ conversation: { enter } });
+      const reply = jest.fn().mockResolvedValue(undefined);
+      const session: any = {};
+      await callbacks['fill_client_phone']({ session, reply });
+      await callbacks['fill_client_password']({ session, reply });
+      await callbacks['fill_client_code']({ session, reply });
 
-      expect(enter.mock.calls.map((call) => call[0])).toEqual([
-        'PHONE_CONVERSATION',
-        'PASSWORD_CONVERSATION',
-        'PHONE_CODE_CONVERSATION',
-      ]);
+      expect(reply).toHaveBeenCalledWith('Введи номер телефона', {
+        reply_markup: { force_reply: true },
+      });
+      expect(session.clientAuthAwait).toBe('code');
     });
-  });
 
-  describe('registerConversations', () => {
-    it('подключает три conversation-мидлвари', () => {
+    it('текст владельца уходит в subject, состояние чистится', async () => {
       const { service, bot } = setup();
+      let handler: any;
+      bot.on.mockImplementation((_trigger: any, cb: any) => {
+        handler = cb;
+      });
+      (service as any).registerClientAuthInput();
+      const nextSpy = jest.spyOn((service as any).phoneSubject, 'next');
 
-      (service as any).registerConversations();
+      const ctx: any = {
+        session: { clientAuthAwait: 'phone' },
+        chat: { id: 42 },
+        from: { id: 42 },
+        message: { text: ' +79990001122 ' },
+        deleteMessage: jest.fn().mockResolvedValue(undefined),
+      };
+      const next = jest.fn();
+      await handler(ctx, next);
 
-      expect(bot.use).toHaveBeenCalledTimes(3);
+      expect(nextSpy).toHaveBeenCalledWith('+79990001122');
+      expect(ctx.session.clientAuthAwait).toBeUndefined();
+      expect(next).not.toHaveBeenCalled();
+      expect(ctx.deleteMessage).toHaveBeenCalled();
+    });
+
+    it('без состояния или не владелец — пропускает дальше', async () => {
+      const { service, bot } = setup();
+      let handler: any;
+      bot.on.mockImplementation((_trigger: any, cb: any) => {
+        handler = cb;
+      });
+      (service as any).registerClientAuthInput();
+      const nextSpy = jest.spyOn((service as any).phoneSubject, 'next');
+
+      const next1 = jest.fn();
+      await handler(
+        { session: {}, chat: { id: 42 }, from: { id: 42 }, message: { text: 'x' } },
+        next1
+      );
+      const next2 = jest.fn();
+      await handler(
+        { session: { clientAuthAwait: 'phone' }, chat: { id: 7 }, from: { id: 7 }, message: { text: 'x' } },
+        next2
+      );
+
+      expect(next1).toHaveBeenCalled();
+      expect(next2).toHaveBeenCalled();
+      expect(nextSpy).not.toHaveBeenCalled();
     });
   });
 

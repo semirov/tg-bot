@@ -657,19 +657,19 @@ describe('E2E: MTProto-клиент и парсер обсерватории', (
   });
 
   describe('авторизация — callback-команды и конверсации', () => {
-    it('registerConversations и waitingClientCommands регистрируют беседы и callbacks', () => {
+    it('waitingClientCommands регистрирует callbacks, ввод ждёт message:text', () => {
       const service = h.moduleRef.get(ClientBaseService);
       const callbackSpy = jest.spyOn(h.bot, 'callbackQuery');
-      const useSpy = jest.spyOn(h.bot, 'use');
+      const onSpy = jest.spyOn(h.bot, 'on');
 
-      (service as any).registerConversations();
       (service as any).waitingClientCommands();
+      (service as any).registerClientAuthInput();
 
       const triggers = callbackSpy.mock.calls.map((call) => call[0]);
       expect(triggers).toEqual(
         expect.arrayContaining(['fill_client_phone', 'fill_client_password', 'fill_client_code'])
       );
-      expect(useSpy).toHaveBeenCalled();
+      expect(onSpy).toHaveBeenCalledWith('message:text', expect.any(Function));
     });
 
     it('callback fill_client_phone заходит в беседу и принимает номер', async () => {
@@ -744,23 +744,6 @@ describe('E2E: MTProto-клиент и парсер обсерватории', (
       await waitFor(() => expect(nextSpy).toHaveBeenCalledWith('12345'));
     });
 
-    it('конверсации игнорируют ответ без текста', async () => {
-      const service = h.moduleRef.get(ClientBaseService);
-      const cases: Array<[string, string]> = [
-        ['phoneConversation', 'phoneSubject'],
-        ['passwordConversation', 'passwordSubject'],
-        ['phoneCodeConversation', 'phoneCodeSubject'],
-      ];
-
-      for (const [method, subject] of cases) {
-        const nextSpy = jest.spyOn((service as any)[subject], 'next');
-        for (const value of [undefined, {}, { message: {} }]) {
-          const conversation = { wait: jest.fn().mockResolvedValue(value) };
-          await (service as any)[method](conversation, { reply: jest.fn() });
-        }
-        expect(nextSpy).not.toHaveBeenCalled();
-      }
-    });
   });
 
   describe('детекция рекламы и разбор ссылок', () => {
