@@ -149,10 +149,11 @@ describe('DeduplicationService', () => {
       expect(service.calculateHashDistance('1010', '1010')).toBe(1);
     });
 
-    it('считает долю совпадающих символов', () => {
+    it('считает побитовую долю совпадений (hex-ниблы)', () => {
       const { service } = setup();
-      expect(service.calculateHashDistance('1010', '1001')).toBe(0.5);
-      expect(service.calculateHashDistance('1111', '1110')).toBe(0.75);
+      expect(service.calculateHashDistance('1010', '1001')).toBeCloseTo(0.875, 5);
+      expect(service.calculateHashDistance('1111', '1110')).toBeCloseTo(0.9375, 5);
+      expect(service.calculateHashDistance('0000', 'ffff')).toBe(0);
     });
   });
 
