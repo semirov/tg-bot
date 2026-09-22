@@ -1,3 +1,10 @@
+# [0.35.0](https://github.com/semirov/tg-bot/compare/v0.34.1...v0.35.0) (2026-09-22)
+
+
+### Features
+
+* **troll:** теги участников событийно — на каждое 10-е сообщение ([#101](https://github.com/semirov/tg-bot/issues/101)) ([100433b](https://github.com/semirov/tg-bot/commit/100433ba690e52dd1101c23bef5ffaa3821cc9b9))
+
 ## [0.34.1](https://github.com/semirov/tg-bot/compare/v0.34.0...v0.34.1) (2026-09-22)
 
 
