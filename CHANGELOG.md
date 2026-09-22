@@ -1,3 +1,11 @@
+## [0.36.1](https://github.com/semirov/tg-bot/compare/v0.36.0...v0.36.1) (2026-09-22)
+
+
+### Bug Fixes
+
+* **troll:** био — отсев доказательств из скопированного текста ([0bc77fb](https://github.com/semirov/tg-bot/commit/0bc77fb25e999e13dd3c228e136304e308c059b8))
+* **troll:** био — только личные факты, отсев тем/цитат/третьих лиц ([db14261](https://github.com/semirov/tg-bot/commit/db14261d54c21cc0577d0d6e0aa85b39ce5caae7))
+
 # [0.36.0](https://github.com/semirov/tg-bot/compare/v0.35.0...v0.36.0) (2026-09-22)
 
 
