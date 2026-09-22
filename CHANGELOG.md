@@ -1,3 +1,10 @@
+# [0.30.0](https://github.com/semirov/tg-bot/compare/v0.29.0...v0.30.0) (2026-09-22)
+
+
+### Features
+
+* **troll:** ephemeral-ответы /stat и /sumarize ([4911707](https://github.com/semirov/tg-bot/commit/49117077e3c8baf31f67cd056e3191cead7740d1))
+
 # [0.29.0](https://github.com/semirov/tg-bot/compare/v0.28.0...v0.29.0) (2026-09-22)
 
 
