@@ -1,3 +1,10 @@
+# [0.31.0](https://github.com/semirov/tg-bot/compare/v0.30.0...v0.31.0) (2026-09-22)
+
+
+### Features
+
+* **troll:** стриминг черновиками диагностики (пилот) ([0666d75](https://github.com/semirov/tg-bot/commit/0666d75d7da3f37f4cc973830771ad5fbd54709a))
+
 # [0.30.0](https://github.com/semirov/tg-bot/compare/v0.29.0...v0.30.0) (2026-09-22)
 
 
