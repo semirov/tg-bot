@@ -22,6 +22,7 @@ export interface SessionDataInterface {
   captchaValues?: CaptchaValuesInterface;
   approveJoinRequest?: number;
   memeLimitControlState?: string;
+  clientAuthAwait?: 'phone' | 'password' | 'code';
   memeLimitUserId?: number;
   yearResultsPreview?: YearResultsPreview;
   yearResultsCurrentUserIndex?: number;
