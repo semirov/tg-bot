@@ -1,3 +1,10 @@
+# [0.33.0](https://github.com/semirov/tg-bot/compare/v0.32.0...v0.33.0) (2026-09-22)
+
+
+### Features
+
+* **cron,troll:** алерт о пустеющей очереди + публичные команды и полное окно саммари ([#96](https://github.com/semirov/tg-bot/issues/96)) ([eb67ba5](https://github.com/semirov/tg-bot/commit/eb67ba53ac9c234ee1c06f1cb5b2a3bf8f838408))
+
 # [0.32.0](https://github.com/semirov/tg-bot/compare/v0.31.2...v0.32.0) (2026-09-22)
 
 
