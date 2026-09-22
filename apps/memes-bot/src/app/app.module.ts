@@ -12,7 +12,6 @@ import { SettingsEntity } from './modules/bot/entities/settings.entity';
 import { UserRequestEntity } from './modules/bot/entities/user-request.entity';
 import { UserEntity } from './modules/bot/entities/user.entity';
 import { SessionEntity } from './modules/bot/session/session.entity';
-import { ChannelMonitorModule } from './modules/channel-monitor/channel-monitor.module';
 import { ChannelMemeEntity } from './modules/channel-monitor/entities/channel-meme.entity';
 import { ClientModule } from './modules/client/client.module';
 import { ClientSessionEntity } from './modules/client/entities/client-session.entity';
@@ -49,7 +48,6 @@ import { SharedModule } from './shared/shared.module';
     SharedModule,
     BotModule,
     ObservatoryModule,
-    ChannelMonitorModule,
     ScheduleModule.forRoot(),
     ThrottlerModule.forRoot([
       {

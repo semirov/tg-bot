@@ -69,6 +69,7 @@ function setup(
             ? { status: 'administrator', can_manage_tags: true }
             : options.member
         ),
+      getChatAdministrators: jest.fn().mockResolvedValue([]),
       setChatMemberTag: jest.fn().mockResolvedValue(true),
       sendMessage: jest.fn().mockResolvedValue({ message_id: 1 }),
     },
@@ -169,6 +170,22 @@ describe('TrollMemberTagsService', () => {
     const noBot = setup({ botInfo: null });
     await noBot.service.refreshMemberTags();
     expect(noBot.history.find).not.toHaveBeenCalled();
+  });
+
+  it('создателя чата не нарекаем — Telegram запрещает', async () => {
+    const { service, bot } = setup();
+    bot.api.getChatAdministrators.mockResolvedValue([{ status: 'creator', user: { id: USER } }]);
+    await service.refreshMemberTags();
+    expect(bot.api.setChatMemberTag).not.toHaveBeenCalled();
+  });
+
+  it('ошибка определения создателя не мешает наречению', async () => {
+    const { service, bot } = setup();
+    bot.api.getChatAdministrators.mockRejectedValue(new Error('tg'));
+    const debug = jest.spyOn(service['logger'], 'debug').mockImplementation(() => undefined);
+    await service.refreshMemberTags();
+    expect(debug).toHaveBeenCalledWith(expect.stringContaining('не определить создателя'));
+    expect(bot.api.setChatMemberTag).toHaveBeenCalled();
   });
 
   it('ошибка проверки прав не роняет обход', async () => {
