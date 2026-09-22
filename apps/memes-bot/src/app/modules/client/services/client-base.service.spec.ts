@@ -273,7 +273,7 @@ describe('ClientBaseService', () => {
     it('phoneConversation пересылает текст ответа в phoneSubject', async () => {
       const { service } = setup();
       const reply = jest.fn().mockResolvedValue(undefined);
-      const conversation = { wait: jest.fn().mockResolvedValue({ message: { text: '123' } }) };
+      const conversation = { waitFor: jest.fn().mockResolvedValue({ message: { text: '123' } }) };
       const nextSpy = jest.spyOn((service as any).phoneSubject, 'next');
 
       await service.phoneConversation(conversation as any, { reply } as any);
@@ -286,7 +286,7 @@ describe('ClientBaseService', () => {
 
     it('passwordConversation пересылает текст ответа в passwordSubject', async () => {
       const { service } = setup();
-      const conversation = { wait: jest.fn().mockResolvedValue({ message: { text: 'pw' } }) };
+      const conversation = { waitFor: jest.fn().mockResolvedValue({ message: { text: 'pw' } }) };
       const nextSpy = jest.spyOn((service as any).passwordSubject, 'next');
 
       await service.passwordConversation(conversation as any, { reply: jest.fn() } as any);
@@ -296,7 +296,7 @@ describe('ClientBaseService', () => {
 
     it('phoneCodeConversation пересылает текст ответа в phoneCodeSubject', async () => {
       const { service } = setup();
-      const conversation = { wait: jest.fn().mockResolvedValue({ message: { text: '999' } }) };
+      const conversation = { waitFor: jest.fn().mockResolvedValue({ message: { text: '999' } }) };
       const nextSpy = jest.spyOn((service as any).phoneCodeSubject, 'next');
 
       await service.phoneCodeConversation(conversation as any, { reply: jest.fn() } as any);
@@ -317,7 +317,7 @@ describe('ClientBaseService', () => {
         const nextSpy = jest.spyOn((service as any)[subject], 'next');
 
         for (const value of [undefined, {}, { message: {} }]) {
-          const conversation = { wait: jest.fn().mockResolvedValue(value) };
+          const conversation = { waitFor: jest.fn().mockResolvedValue(value) };
           await (service as any)[method](conversation as any, { reply: jest.fn() } as any);
         }
 
