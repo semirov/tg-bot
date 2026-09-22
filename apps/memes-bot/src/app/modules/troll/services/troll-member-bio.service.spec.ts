@@ -46,7 +46,7 @@ function setup(options: {
   const deepSeek = {
     completeJson: jest.fn().mockResolvedValue(
       options.extracted === undefined
-        ? { facts: [{ text: 'Живёт в Санкт-Петербурге', importance: 4 }] }
+        ? { facts: [{ text: 'Живёт в Санкт-Петербурге', importance: 4, self: true, evidence: 'живу в спб' }] }
         : options.extracted
     ),
   };
@@ -260,7 +260,7 @@ describe('TrollMemberBioService', () => {
 
     it('принимает строковые факты и отсеивает мусор', async () => {
       const { service, bios } = setup({
-        extracted: { facts: ['строковый факт про спб', null, 42, { text: '', importance: 3 }] },
+        extracted: { facts: [null, 42, { text: '', importance: 3, self: true, evidence: 'x' }, { text: 'строковый факт про спб', importance: 3, self: true, evidence: 'я в спб' }] },
       });
       await service.refreshBio(CHAT, USER, 'Вася');
       const saved = bios.save.mock.calls[0][0];
@@ -271,6 +271,8 @@ describe('TrollMemberBioService', () => {
       const facts = Array.from({ length: 12 }, (_, index) => ({
         text: `факт${index} ${'слово'.repeat(24)}`,
         importance: 5,
+        self: true,
+        evidence: 'да',
       }));
       const { service, bios } = setup({ extracted: { facts } });
       await service.refreshBio(CHAT, USER, 'Вася');
@@ -422,7 +424,7 @@ describe('TrollMemberBioService', () => {
 
     it('нестроковые text и importance фактов', async () => {
       const { service, bios } = setup({
-        extracted: { facts: [{ text: 123, importance: 3 }, { text: 'нормальный факт', importance: 'abc' }] },
+        extracted: { facts: [{ text: 123, importance: 3 }, { text: 'нормальный факт', importance: 'abc', self: true, evidence: 'да' }] },
       });
       await service.refreshBio(CHAT, USER, 'Вася');
       const saved = bios.save.mock.calls[0][0];

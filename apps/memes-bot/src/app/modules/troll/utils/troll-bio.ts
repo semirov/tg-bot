@@ -69,6 +69,22 @@ export function factSimilarity(a: string, b: string): number {
   return matched / Math.min(left.size, right.size);
 }
 
+/** Глаголы «обсуждал/принёс в чат» — это не биография, а тема или чужой текст. */
+const TOPIC_PREFIX = /^(обсужда|комментиру|упомина|делитс|рассказыва|пересказыва|шут|спрашива|поинтересова|интересуется|процитирова|цитиру|репост|скопирова)/i;
+
+/** Слова о третьих лицах — их сведения в досье участника не попадают. */
+const THIRD_PARTY = /(^|\s)(знаком\w*|друг\w*|подруг\w*|коллег\w*|жена|муж|брат|сестр\w*|сосед\w*|начальник\w*)/i;
+
+/**
+ * Детерминированная страховка поверх промпта: отсеивает формулировки-темы
+ * («обсуждает…», «интересуется…») и сведения о третьих лицах — это не личная
+ * биография участника.
+ */
+export function looksLikeTopicNotBiography(text: string): boolean {
+  const trimmed = text.trim();
+  return TOPIC_PREFIX.test(trimmed) || THIRD_PARTY.test(trimmed);
+}
+
 /**
  * Детерминированный отсев персональных данных (страховка поверх промпта).
  * Режем ЗНАЧЕНИЯ: даты рождения, госномера, телефоны, документы с номерами,
@@ -133,7 +149,7 @@ export function mergeFacts(
       break;
     }
     const text = sanitizeMemoryText(candidate.text);
-    if (!text || text.length < 3 || looksLikePii(text)) {
+    if (!text || text.length < 3 || looksLikePii(text) || looksLikeTopicNotBiography(text)) {
       continue;
     }
     let best: TrollMemberBioFact | null = null;

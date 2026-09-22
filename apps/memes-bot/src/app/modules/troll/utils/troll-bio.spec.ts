@@ -15,6 +15,7 @@ import {
   findBioLeak,
   halfLifeHours,
   looksLikePii,
+  looksLikeTopicNotBiography,
   mergeFacts,
   normalizeFact,
   renderBioText,
@@ -58,6 +59,27 @@ describe('troll-bio', () => {
 
     it('короткие факты (меньше двух слов) не сравниваются', () => {
       expect(factSimilarity('VPN', 'VPN')).toBe(0);
+    });
+  });
+
+  describe('looksLikeTopicNotBiography', () => {
+    it.each([
+      'Обсуждает аренду жилья и залоги',
+      'Интересуется базами ФССП',
+      'Упоминает аквариумы',
+      'Имеет знакомого, работающего в Яндексе',
+      'Друг посоветовал сервис',
+      'Цитирует журнал «Регионы России»',
+    ])('отсеивает не-биографию: %s', (text) => {
+      expect(looksLikeTopicNotBiography(text)).toBe(true);
+    });
+
+    it.each([
+      'Живёт в Санкт-Петербурге',
+      'Программирует арбитражных ботов',
+      'Работала у дистрибьютора',
+    ])('пропускает личные факты: %s', (text) => {
+      expect(looksLikeTopicNotBiography(text)).toBe(false);
     });
   });
 
@@ -167,6 +189,19 @@ describe('troll-bio', () => {
       const result = mergeFacts([old], [], NOW);
       expect(result.facts).toHaveLength(0);
       expect(result.dropped).toBe(1);
+    });
+
+    it('отбрасывает темы, третьих лиц и цитаты', () => {
+      const result = mergeFacts(
+        [],
+        [
+          { text: 'Обсуждает блокчейн-платформу', importance: 3 },
+          { text: 'Имеет знакомого из Яндекса', importance: 3 },
+          { text: 'Процитировала журнал «Регионы России»', importance: 3 },
+        ],
+        NOW
+      );
+      expect(result.facts).toHaveLength(0);
     });
 
     it('отбрасывает PII, пустые и слишком короткие факты', () => {

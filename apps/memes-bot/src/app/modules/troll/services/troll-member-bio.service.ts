@@ -187,16 +187,18 @@ export class TrollMemberBioService {
     const raw = parsed.facts;
     return raw
       .map((item): ExtractedFact | null => {
-        if (typeof item === 'string') {
-          return { text: item, importance: 3 };
+        if (!item || typeof item !== 'object') {
+          return null;
         }
-        if (item && typeof item === 'object') {
-          const record = item as { text?: unknown; importance?: unknown };
-          const text = typeof record.text === 'string' ? record.text : '';
-          const importance = Math.min(5, Math.max(1, Math.round(Number(record.importance) || 3)));
-          return text ? { text, importance } : null;
+        const record = item as { text?: unknown; importance?: unknown; self?: unknown; evidence?: unknown };
+        const text = typeof record.text === 'string' ? record.text : '';
+        const evidence = typeof record.evidence === 'string' ? record.evidence.trim() : '';
+        // Факт без подтверждения «человек сказал это о себе» не берём.
+        if (record.self !== true || !evidence || !text) {
+          return null;
         }
-        return null;
+        const importance = Math.min(5, Math.max(1, Math.round(Number(record.importance) || 3)));
+        return { text, importance };
       })
       .filter((fact): fact is ExtractedFact => fact !== null);
   }
