@@ -176,3 +176,30 @@ export const TROLL_DEFECT_CONTEXT_CHARS = 12000;
 
 /** Допустимые уровни серьёзности дефекта (ответ диагностики). */
 export const TROLL_DEFECT_SEVERITIES = ['low', 'medium', 'high'];
+
+/**
+ * Теги участников чата (`setChatMemberTag`).
+ * Жёсткий лимит Telegram: 0–16 символов, эмодзи запрещены.
+ */
+export const TROLL_MEMBER_TAG_MAX_CHARS = 16;
+
+/** Минимум сообщений участника за окно, чтобы вообще считать ему тег. */
+export const TROLL_MEMBER_TAG_MIN_MESSAGES = 2;
+
+/** Сколько участников за один прогон обрабатывать в одном чате. */
+export const TROLL_MEMBER_TAGS_MAX_MEMBERS_PER_CHAT = 5;
+
+/** Сколько последних реплик участника отправлять модели. */
+export const TROLL_MEMBER_TAG_MAX_MESSAGES = 40;
+
+/** Потолок длины расшифровки реплик участника, символов. */
+export const TROLL_MEMBER_TAG_TRANSCRIPT_CHARS = 4000;
+
+/** Потолок max_tokens для запроса тегов. */
+export const TROLL_MEMBER_TAG_MAX_TOKENS = 500;
+
+/** Пауза между сменой тега одному участнику, часы (антифлуд). */
+export const TROLL_MEMBER_TAG_COOLDOWN_HOURS = 24;
+
+/** Максимум кандидатов-тегов, которые просим у модели. */
+export const TROLL_MEMBER_TAG_CANDIDATES = 5;

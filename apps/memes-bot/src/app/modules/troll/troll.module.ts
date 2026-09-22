@@ -6,9 +6,11 @@ import { AppConfigModule } from '../config/app-config.module';
 import { TrollChatEntity } from './entities/troll-chat.entity';
 import { TrollDefectEntity } from './entities/troll-defect.entity';
 import { TrollMessageEntity } from './entities/troll-message.entity';
+import { TrollMemberTagEntity } from './entities/troll-member-tag.entity';
 import { TrollPredictionEntity } from './entities/troll-prediction.entity';
 import { TrollSettingsEntity } from './entities/troll-settings.entity';
 import { DeepSeekService } from './services/deepseek.service';
+import { TrollMemberTagsService } from './services/troll-member-tags.service';
 import { TrollSettingsService } from './services/troll-settings.service';
 import { TrollService } from './services/troll.service';
 
@@ -22,10 +24,11 @@ import { TrollService } from './services/troll.service';
       TrollMessageEntity,
       TrollPredictionEntity,
       TrollDefectEntity,
+      TrollMemberTagEntity,
       ChannelMemeEntity,
     ]),
   ],
-  providers: [TrollService, TrollSettingsService, DeepSeekService],
+  providers: [TrollService, TrollSettingsService, DeepSeekService, TrollMemberTagsService],
   exports: [TrollService, TrollSettingsService, DeepSeekService],
 })
 export class TrollModule {}

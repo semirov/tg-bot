@@ -29,6 +29,7 @@ describe('TrollSettingsEntity', () => {
       'jerkEnabled',
       'addressReactionEnabled',
       'selfCheckEnabled',
+      'memberTagsEnabled',
     ];
 
     for (const toggle of toggles) {
