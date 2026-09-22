@@ -1,3 +1,10 @@
+# [0.36.0](https://github.com/semirov/tg-bot/compare/v0.35.0...v0.36.0) (2026-09-22)
+
+
+### Features
+
+* **troll:** внутренние биографии участников и учёт свежести диалога ([7dba622](https://github.com/semirov/tg-bot/commit/7dba622b97115a18e253b50fd9a1432052875ff8))
+
 # [0.35.0](https://github.com/semirov/tg-bot/compare/v0.34.1...v0.35.0) (2026-09-22)
 
 
