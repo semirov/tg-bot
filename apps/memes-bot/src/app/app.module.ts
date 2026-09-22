@@ -38,6 +38,7 @@ import { SourceChannelEntity } from './modules/parser/entities/source-channel.en
 import { TrollMessageEntity } from './modules/troll/entities/troll-message.entity';
 import { TrollPredictionEntity } from './modules/troll/entities/troll-prediction.entity';
 import { TrollSettingsEntity } from './modules/troll/entities/troll-settings.entity';
+import { QueueAlertStateEntity } from './modules/cron/entities/queue-alert-state.entity';
 import { TrollModule } from './modules/troll/troll.module';
 import { SharedModule } from './shared/shared.module';
 
@@ -86,6 +87,7 @@ import { SharedModule } from './shared/shared.module';
           ObservedPostEntity,
           SourceCandidateEntity,
           ParserSettingsEntity,
+          QueueAlertStateEntity,
         ],
         synchronize: true,
         extra: configService.useSSL

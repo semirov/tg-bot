@@ -41,7 +41,6 @@ import {
   TROLL_STAT_MAX_CHARS,
   TROLL_STAT_MAX_MESSAGES_PER_USER,
   TROLL_SUMMARY_COOLDOWN_SEC,
-  TROLL_SUMMARY_FALLBACK_MESSAGES,
   TROLL_SUMMARY_MAX_CHARS,
   TROLL_SUMMARY_MAX_MESSAGES,
   TROLL_SUMMARY_MAX_REPLY_CHARS,
@@ -70,6 +69,7 @@ import {
   TROLL_MIRROR_TECHNIQUES,
 } from '../constants/troll-prompts';
 import { isAddressedToBot, isCapabilityQuestion, isNamedCall } from '../constants/troll-addresses';
+import { buildPostUrl } from '../../../shared/publication/telegram-link';
 import { TrollChatEntity } from '../entities/troll-chat.entity';
 import { TrollDefectEntity } from '../entities/troll-defect.entity';
 import { TrollMessageEntity } from '../entities/troll-message.entity';
@@ -815,7 +815,7 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
     // Модель не ответила (таймаут/лимит) — не врём про «0 лет», а честно признаёмся.
     if (!stat) {
       this.logger.warn(`${this.tag(chat.id, ctx.from.id)}: /stat — пустой ответ модели`);
-      await this.sendToRequester(ctx, chat.id, 'чёт я подвис, попробуй ещё раз', ctx.message?.message_id);
+      await this.safeSendToChat(chat.id, 'чёт я подвис, попробуй ещё раз', ctx.message?.message_id);
       return;
     }
 
@@ -850,7 +850,7 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
       lines.push('• 0 лет — пока чисто');
     }
 
-    await this.sendToRequester(ctx, chat.id, lines.join('\n'), ctx.message?.message_id);
+    await this.safeSendToChat(chat.id, lines.join('\n'), ctx.message?.message_id);
     this.logger.log(`${this.tag(chat.id, ctx.from.id)}: /stat — отправлено (лет: ${totalYears})`);
   }
 
@@ -1114,7 +1114,24 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * /sumarize — пересказ переписки с момента прошлого запроса.
+   * Отлуп на /sumarize, если пересказ просили меньше часа назад. Отвечаем на
+   * прошлое саммари и даём на него ссылку — «пойди почитай» буквально.
+   * Текст детерминированный: ссылка важнее стиля модели.
+   */
+  private async sendSummaryCooldownRude(
+    ctx: BotContext,
+    chatId: number,
+    lastSummaryMessageId: number | null
+  ): Promise<void> {
+    const link = lastSummaryMessageId ? buildPostUrl({ id: chatId }, lastSummaryMessageId) : null;
+    const text = link
+      ? `че ты мне ебешь кастрюли, меньше часа назад была сумаризация, вот пойди почитай: ${link}`
+      : 'че ты мне ебешь кастрюли, меньше часа назад была сумаризация, пролистай выше';
+    await this.safeSendToChat(chatId, text, lastSummaryMessageId ?? ctx.message?.message_id);
+  }
+
+  /**
+   * /sumarize — пересказ переписки за максимально доступное окно (сутки).
    * Кулдаун общий на чат — 1 час. Запросить может любой участник.
    */
   private async onSummaryCommand(ctx: BotContext): Promise<void> {
@@ -1135,6 +1152,7 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
     }
 
     // Кулдаун общий на весь чат, поэтому храним время последнего запроса в БД.
+    // На окно пересказа он не влияет: окно всегда максимально доступное.
     const chatRow = await this.chats.findOne({ where: { chatId: chat.id } });
     const lastAt = chatRow?.lastSummaryAt ? new Date(chatRow.lastSummaryAt).getTime() : null;
     if (lastAt !== null && Date.now() - lastAt < TROLL_SUMMARY_COOLDOWN_SEC * 1000) {
@@ -1145,32 +1163,22 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
       this.logger.log(
         `${this.tag(chat.id, ctx.from.id)}: /sumarize — на кулдауне (${minutesLeft} мин), отказываю`
       );
-      await this.denyRudely(ctx, `пересказ просили недавно, возвращайся через ${minutesLeft} мин`);
+      await this.sendSummaryCooldownRude(ctx, chat.id, chatRow?.lastSummaryMessageId ?? null);
       return;
     }
 
-    const since = lastAt !== null ? new Date(lastAt) : new Date(Date.now() - TROLL_HISTORY_TTL_HOURS * 60 * 60 * 1000);
+    // Окно пересказа — всегда максимально доступное (вся история за TTL).
+    // Прошлый вызов его не режет: иначе частые пересказы раз в час давали бы
+    // огрызок из пары новых реплик вместо картины за сутки.
+    const since = new Date(Date.now() - TROLL_HISTORY_TTL_HOURS * 60 * 60 * 1000);
 
-    // Берём самые свежие реплики окна: order DESC + take, потом возвращаем хронологию.
+    // Берём самые свежие реплики окна: order DESC + take.
     // Только сообщения людей: ответы самого бота в пересказ не идут.
-    let rows = await this.history.find({
+    const rows = await this.history.find({
       where: { chatId: chat.id, role: 'user', createdAt: MoreThanOrEqual(since) },
       order: { id: 'DESC' },
       take: TROLL_SUMMARY_MAX_MESSAGES,
     });
-
-    // Окно пустое (с прошлого пересказа не писали или метки времени разъехались) —
-    // не отказываем, а пересказываем последние реплики чата.
-    if (!rows.length) {
-      this.logger.log(
-        `${this.tag(chat.id, ctx.from.id)}: /sumarize — окно пустое, беру последние ${TROLL_SUMMARY_FALLBACK_MESSAGES} сообщ.`
-      );
-      rows = await this.history.find({
-        where: { chatId: chat.id, role: 'user' },
-        order: { id: 'DESC' },
-        take: TROLL_SUMMARY_FALLBACK_MESSAGES,
-      });
-    }
 
     if (!rows.length) {
       this.logger.log(`${this.tag(chat.id, ctx.from.id)}: /sumarize — истории нет вообще`);
@@ -1182,22 +1190,15 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
       return;
     }
 
-    const ordered = [...rows].reverse();
-
     this.logger.log(
-      `${this.tag(chat.id, ctx.from.id)}: /sumarize — пересказываю ${ordered.length} сообщ.`
+      `${this.tag(chat.id, ctx.from.id)}: /sumarize — пересказываю ${rows.length} сообщ.`
     );
     void this.sendTyping(chat.id);
 
-    const joined = ordered
-      .map((row) => {
-        // Имена нужны и для восстановления регистра в ответе: карта чата живёт
-        // в памяти и в /sumarize сама не пополняется.
-        this.trackName(chat.id, row.userId, row.userName);
-        return `${row.userName ?? 'кто-то'}: ${row.content}`;
-      })
-      .join('\n');
-    const cleaned = sanitizeTranscript(joined, TROLL_SUMMARY_MAX_CHARS);
+    const cleaned = sanitizeTranscript(
+      this.buildSummaryTranscript(chat.id, rows),
+      TROLL_SUMMARY_MAX_CHARS
+    );
 
     const raw = await this.deepSeek.completeText(SUMMARY_PROMPT, wrapUserContent(cleaned), {
       temperature: 0.9,
@@ -1217,7 +1218,7 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
 
     // Метку окна двигаем только после того, как пересказ реально ушёл в чат:
     // иначе неудачная отправка или пустой ответ съедали бы все сообщения.
-    const sent = await this.sendToRequester(ctx, chat.id, text, ctx.message?.message_id);
+    const sent = await this.safeSendToChat(chat.id, text, ctx.message?.message_id);
     if (!sent) {
       this.logger.warn(
         `${this.tag(chat.id, ctx.from.id)}: /sumarize — отправить не удалось, метку окна не двигаю`
@@ -1225,7 +1226,10 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
       return;
     }
 
-    await this.chats.update({ chatId: chat.id }, { lastSummaryAt: new Date() });
+    await this.chats.update(
+      { chatId: chat.id },
+      { lastSummaryAt: new Date(), lastSummaryMessageId: sent }
+    );
     await this.remember(chat.id, 'assistant', text, {
       messageId: sent,
       replyToMessageId: ctx.message?.message_id,
@@ -2240,32 +2244,27 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
     );
   }
 
-  /** Эфемерная отправка только запросившему (в группах); иначе — обычная. */
-  private ephemeralUnavailable = false;
-
-  private async sendToRequester(
-    ctx: BotContext,
-    chatId: number,
-    text: string,
-    replyToMessageId?: number
-  ): Promise<number | null> {
-    const isGroup = ctx.chat?.type === 'group' || ctx.chat?.type === 'supergroup';
-    const userId = ctx.from?.id;
-    if (isGroup && userId && !this.ephemeralUnavailable) {
-      try {
-        const sent = await this.bot.api.sendMessage(chatId, text, {
-          ephemeral_message_parameters: { receiver_user_id: userId },
-        });
-        return sent.message_id;
-      } catch (error) {
-        // API/клиент может не поддержать эфемерные сообщения — больше не пробуем.
-        this.ephemeralUnavailable = true;
-        this.logger.debug(
-          `${this.tag(chatId, userId)}: ephemeral недоступен, фолбэк: ${this.describeError(error)}`
-        );
+  /**
+   * Собирает расшифровку для /sumarize в пределах TROLL_SUMMARY_MAX_CHARS,
+   * начиная с самых свежих реплик: при переполнении отбрасываем старое, а не
+   * свежее (иначе пересказ терял бы конец разговора). На вход — «от новых к старым».
+   */
+  private buildSummaryTranscript(chatId: number, rows: TrollMessageEntity[]): string {
+    const lines: string[] = [];
+    let used = 0;
+    for (const row of rows) {
+      // Имена нужны и для восстановления регистра в ответе: карта чата живёт
+      // в памяти и в /sumarize сама не пополняется.
+      this.trackName(chatId, row.userId, row.userName);
+      const line = `${row.userName ?? 'кто-то'}: ${row.content}`;
+      const cost = line.length + 1;
+      if (used + cost > TROLL_SUMMARY_MAX_CHARS) {
+        break;
       }
+      lines.push(line);
+      used += cost;
     }
-    return this.safeSendToChat(chatId, text, replyToMessageId);
+    return lines.reverse().join('\n');
   }
 
   private async safeSendToChat(

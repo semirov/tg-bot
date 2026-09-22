@@ -10,6 +10,7 @@ import { CringeManagementService } from '../../bot/services/cringe-management.se
 import { PublicationModesEnum } from '../../post-management/constants/publication-modes.enum';
 import { MonthlyStatService } from './monthly-stat.service';
 import { YearResultsService } from '../../year-results/services/year-results.service';
+import { QueueAlertService } from './queue-alert.service';
 
 @Injectable()
 export class CronService {
@@ -21,13 +22,24 @@ export class CronService {
     private observatoryService: ObservatoryService,
     private cringeManagementService: CringeManagementService,
     private monthlyStatService: MonthlyStatService,
-    private yearResultsService: YearResultsService
+    private yearResultsService: YearResultsService,
+    private queueAlertService: QueueAlertService
   ) {}
 
   @Interval(60000)
   async handleCron() {
     await this.handleNextScheduledPost();
     await this.tryToMoveCringe();
+  }
+
+  /** Раз в 10 минут проверяем, не пустеет ли очередь публикации. */
+  @Interval(600000)
+  async checkQueueAlerts(): Promise<void> {
+    try {
+      await this.queueAlertService.check();
+    } catch (error) {
+      this.logger.error('Failed to check queue alerts', error as never);
+    }
   }
 
   @Cron('0 17 9 * *')
