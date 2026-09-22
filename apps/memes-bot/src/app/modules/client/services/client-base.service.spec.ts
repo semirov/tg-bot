@@ -278,7 +278,9 @@ describe('ClientBaseService', () => {
 
       await service.phoneConversation(conversation as any, { reply } as any);
 
-      expect(reply).toHaveBeenCalledWith('Введи номер телефона');
+      expect(reply).toHaveBeenCalledWith('Введи номер телефона', {
+        reply_markup: { force_reply: true },
+      });
       expect(nextSpy).toHaveBeenCalledWith('123');
     });
 

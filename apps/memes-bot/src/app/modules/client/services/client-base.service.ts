@@ -156,7 +156,7 @@ export class ClientBaseService implements OnModuleInit {
     conversation: Conversation<BotContext>,
     ctx: BotContext
   ): Promise<void> {
-    await ctx.reply('Введи номер телефона');
+    await ctx.reply('Введи номер телефона', { reply_markup: { force_reply: true } });
     const answerCtx = await conversation.wait();
     if (answerCtx?.message?.text) {
       this.phoneSubject.next(answerCtx?.message?.text);
@@ -168,7 +168,7 @@ export class ClientBaseService implements OnModuleInit {
     conversation: Conversation<BotContext>,
     ctx: BotContext
   ): Promise<void> {
-    await ctx.reply('Введи пароль');
+    await ctx.reply('Введи пароль', { reply_markup: { force_reply: true } });
     const answerCtx = await conversation.wait();
     if (answerCtx?.message?.text) {
       this.passwordSubject.next(answerCtx?.message?.text);
@@ -180,7 +180,7 @@ export class ClientBaseService implements OnModuleInit {
     conversation: Conversation<BotContext>,
     ctx: BotContext
   ): Promise<void> {
-    await ctx.reply('Введи код подтверждения');
+    await ctx.reply('Введи код подтверждения', { reply_markup: { force_reply: true } });
     const answerCtx = await conversation.wait();
     if (answerCtx?.message?.text) {
       this.phoneCodeSubject.next(answerCtx?.message?.text);

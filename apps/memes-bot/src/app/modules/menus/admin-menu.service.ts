@@ -668,7 +668,9 @@ export class AdminMenuService implements OnModuleInit {
   ): Promise<void> {
     let user: UserEntity = null;
 
-    await ctx.reply('Пришли имя пользователя которого хочешь добавить в модераторы');
+    await ctx.reply('Пришли имя пользователя которого хочешь добавить в модераторы', {
+      reply_markup: { force_reply: true, input_field_placeholder: 'username' },
+    });
     while (!user) {
       const messageCtx = await conversation.wait();
 

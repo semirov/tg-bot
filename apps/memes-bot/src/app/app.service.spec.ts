@@ -499,6 +499,7 @@ describe('AppService', () => {
 
       expect(ctx.reply).toHaveBeenCalledWith(expect.stringContaining('Чему равно <b>5 + 3?</b>'), {
         parse_mode: 'HTML',
+        reply_markup: { force_reply: true, input_field_placeholder: 'Ответ числом' },
       });
       expect(answer.deleteMessage).toHaveBeenCalledTimes(1);
       expect(answer.api.deleteMessage).toHaveBeenCalledWith(111, 10);
