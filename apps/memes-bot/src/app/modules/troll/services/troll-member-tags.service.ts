@@ -159,8 +159,13 @@ export class TrollMemberTagsService {
       ...renames.sort((a, b) => b.newCount - a.newCount).slice(0, TROLL_MEMBER_TAG_MAX_RENAMES_PER_CHAT),
       ...firsts.sort((a, b) => b.newCount - a.newCount).slice(0, TROLL_MEMBER_TAG_MAX_FIRST_PER_CHAT),
     ];
+    // Создателю чата Telegram менять тег не даёт (CHAT_CREATOR_REQUIRED) — пропускаем сразу.
+    const creatorId = await this.chatCreatorId(chatId);
 
     for (const item of selected) {
+      if (item.userId === creatorId) {
+        continue;
+      }
       const occupied = chatTags
         .filter((row) => Number(row.userId) !== item.userId && !!row.tag)
         .map((row) => row.tag as string);
@@ -321,6 +326,20 @@ export class TrollMemberTagsService {
       });
     } catch (error) {
       this.logger.warn(`Теги: объявление в чат ${chatId} не ушло: ${this.describeError(error)}`);
+    }
+  }
+
+  /** id создателя чата: ему Telegram тег не меняет, поэтому пропускаем. */
+  private async chatCreatorId(chatId: number): Promise<number | null> {
+    try {
+      const admins = await this.bot.api.getChatAdministrators(chatId);
+      const creator = admins.find((member) => member.status === 'creator');
+      return creator?.user.id ?? null;
+    } catch (error) {
+      this.logger.debug(
+        `Теги: чат ${chatId} — не определить создателя: ${this.describeError(error)}`
+      );
+      return null;
     }
   }
 

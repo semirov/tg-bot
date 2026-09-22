@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Between, LessThan, MoreThanOrEqual, Repository, UpdateResult } from 'typeorm';
+import { Between, LessThan, Repository, UpdateResult } from 'typeorm';
 import { PostSchedulerEntity } from '../entities/post-scheduler.entity';
 import { PublicationModesEnum } from '../../post-management/constants/publication-modes.enum';
 import { SchedulerCommonService } from '../../common/scheduler-common.service';
