@@ -1,3 +1,10 @@
+# [0.29.0](https://github.com/semirov/tg-bot/compare/v0.28.0...v0.29.0) (2026-09-22)
+
+
+### Features
+
+* **ux:** force_reply в диалогах ([8b32bee](https://github.com/semirov/tg-bot/commit/8b32beeb5c3fff7f9a252284da20e90e59113e4b))
+
 # [0.28.0](https://github.com/semirov/tg-bot/compare/v0.27.0...v0.28.0) (2026-09-22)
 
 
