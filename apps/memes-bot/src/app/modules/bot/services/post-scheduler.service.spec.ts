@@ -311,6 +311,21 @@ describe('PostSchedulerService', () => {
     });
   });
 
+  describe('getFurthestUpcoming', () => {
+    it('берёт самый поздний неопубликованный пост', async () => {
+      const { service, repo } = setup();
+      const post = { id: 4, publishDate: msk(2026, 1, 20, 10) };
+      repo.findOne.mockResolvedValue(post);
+
+      await expect(service.getFurthestUpcoming()).resolves.toBe(post);
+      expect(repo.findOne).toHaveBeenCalledWith({
+        where: { isPublished: false },
+        order: { publishDate: 'DESC' },
+        cache: false,
+      });
+    });
+  });
+
   describe('countUpcoming', () => {
     it('без фильтра типа ключ isUserPost в where отсутствует', async () => {
       const { service, repo } = setup();

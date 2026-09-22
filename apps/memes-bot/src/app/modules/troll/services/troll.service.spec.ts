@@ -12,8 +12,11 @@ import {
   TROLL_CAPABILITIES_REPLY,
 } from '../constants/troll-prompts';
 import {
+  TROLL_HARD_MAX_TOKENS,
   TROLL_SELF_CHECK_CONTEXT_CHARS,
   TROLL_SELF_CHECK_MAX_ATTEMPTS,
+  TROLL_SUMMARY_MAX_CHARS,
+  TROLL_SUMMARY_MAX_MESSAGES,
 } from '../constants/troll-limits';
 import { TrollService } from './troll.service';
 
@@ -1085,12 +1088,27 @@ describe('TrollService — /sumarize', () => {
     await (service as any).onSummaryCommand(makeCtx());
   });
 
-  it('отказывает на общем кулдауне чата', async () => {
-    const { service, chats, deepSeek, bot } = createService();
-    chats.findOne.mockResolvedValue({ isActive: true, lastSummaryAt: new Date() });
-    deepSeek.completeText.mockResolvedValue(null);
+  it('отказывает на общем кулдауне чата со ссылкой на прошлое саммари', async () => {
+    const { service, chats, bot } = createService();
+    chats.findOne.mockResolvedValue({
+      isActive: true,
+      lastSummaryAt: new Date(),
+      lastSummaryMessageId: 555,
+    });
     await (service as any).onSummaryCommand(makeCtx());
-    expect(bot.api.sendMessage).toHaveBeenCalled();
+    const [chatId, text, options] = bot.api.sendMessage.mock.calls.at(-1);
+    expect(chatId).toBe(CHAT);
+    expect(text).toContain('че ты мне ебешь кастрюли');
+    expect(text).toContain(`https://t.me/c/${CHAT}/555`);
+    expect(options.reply_to_message_id).toBe(555);
+  });
+
+  it('на кулдауне без известного саммари просит пролистать выше', async () => {
+    const { service, chats, bot } = createService();
+    chats.findOne.mockResolvedValue({ isActive: true, lastSummaryAt: new Date() });
+    await (service as any).onSummaryCommand(makeCtx());
+    const [, text] = bot.api.sendMessage.mock.calls.at(-1);
+    expect(text).toContain('пролистай выше');
   });
 
   it('сообщает, что истории нет вообще', async () => {
@@ -1118,17 +1136,50 @@ describe('TrollService — /sumarize', () => {
     expect(history.insert).toHaveBeenCalled();
   });
 
-  it('берёт последние сообщения, если окно пустое', async () => {
+  it('окно всегда максимальное: прошлый вызов его не режет', async () => {
     const { service, chats, history, deepSeek } = createService();
-    chats.findOne.mockResolvedValue({ isActive: true, lastSummaryAt: null });
-    history.find.mockResolvedValueOnce([]).mockResolvedValueOnce([historyRow()]);
+    const recentCall = new Date(Date.now() - 2 * 60 * 60 * 1000);
+    chats.findOne.mockResolvedValue({ isActive: true, lastSummaryAt: recentCall });
+    history.find.mockResolvedValue([historyRow()]);
     deepSeek.completeText.mockResolvedValue('саммари');
     await (service as any).onSummaryCommand(makeCtx());
-    expect(deepSeek.completeText).toHaveBeenCalledWith(
-      SUMMARY_PROMPT,
-      expect.any(String),
-      expect.any(Object)
+    const where = history.find.mock.calls[0][0].where;
+    const since = where.createdAt.value as Date;
+    const ageHours = (Date.now() - since.getTime()) / 3600000;
+    expect(ageHours).toBeGreaterThan(23.5);
+    expect(where.createdAt.type).toBe('moreThanOrEqual');
+  });
+
+  it('при переполнении расшифровки отбрасывает старое, а не свежее', async () => {
+    const { service, chats, history, deepSeek } = createService();
+    chats.findOne.mockResolvedValue({ isActive: true, lastSummaryAt: null });
+    const fresh = historyRow({ id: 2, content: 'свежая реплика' });
+    const stale = historyRow({
+      id: 1,
+      content: 'старая реплика '.repeat(TROLL_SUMMARY_MAX_CHARS).slice(0, TROLL_SUMMARY_MAX_CHARS),
+    });
+    history.find.mockResolvedValue([fresh, stale]);
+    deepSeek.completeText.mockResolvedValue('саммари');
+    await (service as any).onSummaryCommand(makeCtx());
+    const payload = deepSeek.completeText.mock.calls[0][1] as string;
+    expect(payload).toContain('свежая реплика');
+    expect(payload.length).toBeLessThanOrEqual(TROLL_SUMMARY_MAX_CHARS + 64);
+  });
+
+  it('большое окно не превышает лимиты запроса', async () => {
+    const { service, chats, history, deepSeek } = createService();
+    chats.findOne.mockResolvedValue({ isActive: true, lastSummaryAt: null });
+    const many = Array.from({ length: 5000 }, (_, index) =>
+      historyRow({ id: index + 1, content: 'x'.repeat(400) })
     );
+    history.find.mockResolvedValue(many);
+    deepSeek.completeText.mockResolvedValue('саммари');
+    await (service as any).onSummaryCommand(makeCtx());
+    const payload = deepSeek.completeText.mock.calls[0][1] as string;
+    expect(payload.length).toBeLessThanOrEqual(TROLL_SUMMARY_MAX_CHARS + 64);
+    const options = deepSeek.completeText.mock.calls[0][2];
+    expect(options.maxTokens).toBeLessThanOrEqual(TROLL_HARD_MAX_TOKENS);
+    expect(history.find.mock.calls[0][0].take).toBe(TROLL_SUMMARY_MAX_MESSAGES);
   });
 
   it('честно признаётся при пустом ответе модели', async () => {
@@ -2539,44 +2590,6 @@ describe('TrollService — ветвления сумм, зеркал и отчё
     expect((service as any).restoreNames(CHAT, 'вася пошёл')).toContain('Вася');
     expect((service as any).restoreNames(123, 'вася')).toBe('вася');
   });
-
-describe('sendToRequester (ephemeral)', () => {
-  it('в группе шлёт эфемерно запросившему', async () => {
-    const { service, bot } = createService();
-    const ctx = makeCtx();
-
-    const id = await (service as any).sendToRequester(ctx, CHAT, 'текст');
-
-    expect(bot.api.sendMessage).toHaveBeenCalledWith(CHAT, 'текст', {
-      ephemeral_message_parameters: { receiver_user_id: USER },
-    });
-    expect(id).toBe(501);
-  });
-
-  it('при ошибке — фолбэк и предохранитель', async () => {
-    const { service, bot } = createService();
-    const ctx = makeCtx();
-    bot.api.sendMessage.mockRejectedValueOnce(new Error('bad request'));
-
-    await (service as any).sendToRequester(ctx, CHAT, 'текст');
-    expect((service as any).ephemeralUnavailable).toBe(true);
-
-    const before = bot.api.sendMessage.mock.calls.length;
-    await (service as any).sendToRequester(ctx, CHAT, 'ещё');
-    const last = bot.api.sendMessage.mock.calls.at(-1);
-    expect(last[2]?.ephemeral_message_parameters).toBeUndefined();
-    expect(bot.api.sendMessage.mock.calls.length).toBe(before + 1);
-  });
-
-  it('в личке — обычная отправка', async () => {
-    const { service, bot } = createService();
-    const ctx = makeCtx({ chat: { id: CHAT, type: 'private' } });
-
-    await (service as any).sendToRequester(ctx, CHAT, 'текст');
-
-    expect(bot.api.sendMessage.mock.calls[0][2]?.ephemeral_message_parameters).toBeUndefined();
-  });
-});
 
 describe('streamPrivateReply (drafts)', () => {
   it('стримит черновиками и отправляет финал', async () => {

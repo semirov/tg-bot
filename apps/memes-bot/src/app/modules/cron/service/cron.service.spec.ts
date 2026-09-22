@@ -30,6 +30,7 @@ function createService() {
   const cringeManagementService = { moveCringeMessages: jest.fn().mockResolvedValue(undefined) };
   const monthlyStatService = { publishMonthlyStatistic: jest.fn() };
   const yearResultsService = { generateAndSendPreviewToOwner: jest.fn().mockResolvedValue(undefined) };
+  const queueAlertService = { check: jest.fn().mockResolvedValue(undefined) };
 
   const service = new CronService(
     postSchedulerService as any,
@@ -37,7 +38,8 @@ function createService() {
     observatoryService as any,
     cringeManagementService as any,
     monthlyStatService as any,
-    yearResultsService as any
+    yearResultsService as any,
+    queueAlertService as any
   );
 
   return {
@@ -48,6 +50,7 @@ function createService() {
     cringeManagementService,
     monthlyStatService,
     yearResultsService,
+    queueAlertService,
   };
 }
 
@@ -89,6 +92,26 @@ describe('CronService.handleCron', () => {
 
     expect(nextSpy).toHaveBeenCalledTimes(1);
     expect(moveSpy).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('CronService.checkQueueAlerts', () => {
+  it('дёргает сервис алертов очереди', async () => {
+    const { service, queueAlertService } = createService();
+
+    await service.checkQueueAlerts();
+
+    expect(queueAlertService.check).toHaveBeenCalledTimes(1);
+  });
+
+  it('логирует ошибку и не пробрасывает её', async () => {
+    const { service, queueAlertService } = createService();
+    const failure = new Error('boom');
+    queueAlertService.check.mockRejectedValue(failure);
+
+    await expect(service.checkQueueAlerts()).resolves.toBeUndefined();
+
+    expect(Logger.prototype.error).toHaveBeenCalledWith('Failed to check queue alerts', failure);
   });
 });
 

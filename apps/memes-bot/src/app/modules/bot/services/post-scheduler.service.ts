@@ -266,6 +266,15 @@ export class PostSchedulerService {
     });
   }
 
+  /** Самый дальний неопубликованный пост — докуда заполнена очередь. */
+  public getFurthestUpcoming(): Promise<PostSchedulerEntity | null> {
+    return this.postSchedulerEntity.findOne({
+      where: { isPublished: false },
+      order: { publishDate: 'DESC' },
+      cache: false,
+    });
+  }
+
   /** Сколько неопубликованных постов в сетке (можно фильтровать по типу). */
   public countUpcoming(isUserPost?: boolean): Promise<number> {
     return this.postSchedulerEntity.count({

@@ -24,6 +24,10 @@ export class TrollChatEntity {
   @Column('timestamp', { nullable: true })
   lastSummaryAt: Date | null;
 
+  /** Id последнего пересказа — чтобы на кулдауне дать ссылку на прошлое саммари. */
+  @Column('bigint', { nullable: true })
+  lastSummaryMessageId: number | null;
+
   @CreateDateColumn({ type: 'timestamp' })
   createdAt: Date;
 
