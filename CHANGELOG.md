@@ -1,3 +1,10 @@
+# [0.32.0](https://github.com/semirov/tg-bot/compare/v0.31.2...v0.32.0) (2026-09-22)
+
+
+### Features
+
+* **conversations:** v2 + авторизация на session-state ([4a86651](https://github.com/semirov/tg-bot/commit/4a86651125da078081f37ade15c842bbf7e5535f))
+
 ## [0.31.2](https://github.com/semirov/tg-bot/compare/v0.31.1...v0.31.2) (2026-09-22)
 
 
