@@ -131,6 +131,7 @@ describe('TrollSettingsService', () => {
         maxInputChars: 1000,
         selfCheckEnabled: false,
         selfCheckThreshold: 0.6,
+        memberTagsEnabled: true,
       });
       expect(service.current).toBe(result);
     });

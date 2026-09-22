@@ -1,5 +1,6 @@
 import {
   containsLink,
+  sanitizeMemberTag,
   sanitizeModelField,
   sanitizeModelStyled,
   sanitizeModelText,
@@ -176,6 +177,36 @@ describe('troll-sanitizer', () => {
 
     it('не трогает текст без ссылок', () => {
       expect(stripLinks('обычное сообщение')).toBe('обычное сообщение');
+    });
+  });
+
+  describe('sanitizeMemberTag', () => {
+    it('обрезает тег до 16 символов', () => {
+      expect(sanitizeMemberTag('кальянный лорд и повелитель').length).toBeLessThanOrEqual(16);
+      expect(sanitizeMemberTag('кальянный лорд и повелитель')).toBe('кальянный лорд и');
+    });
+
+    it('вырезает эмодзи и запрещённые символы', () => {
+      expect(sanitizeMemberTag('подмыхан 🔥😎')).toBe('подмыхан');
+      expect(sanitizeMemberTag('мтс<страдалец>')).toBe('мтс страдалец');
+    });
+
+    it('разрешает пробел, дефис и подчёркивание', () => {
+      expect(sanitizeMemberTag('вася_2000-х')).toBe('вася_2000-х');
+    });
+
+    it('схлопывает пробелы и обрезает края', () => {
+      expect(sanitizeMemberTag('  подмыхан   дня  ')).toBe('подмыхан дня');
+    });
+
+    it('возвращает пустую строку для не-строки или одних эмодзи', () => {
+      expect(sanitizeMemberTag(null)).toBe('');
+      expect(sanitizeMemberTag(42)).toBe('');
+      expect(sanitizeMemberTag('🎉🎉')).toBe('');
+    });
+
+    it('уважает явный лимит', () => {
+      expect(sanitizeMemberTag('подмыхан', 4)).toBe('подм');
     });
   });
 });
