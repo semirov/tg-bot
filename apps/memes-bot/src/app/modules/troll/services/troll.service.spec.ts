@@ -2538,6 +2538,44 @@ describe('TrollService — ветвления сумм, зеркал и отчё
     expect((service as any).restoreNames(CHAT, 'вася пошёл')).toContain('Вася');
     expect((service as any).restoreNames(123, 'вася')).toBe('вася');
   });
+
+describe('sendToRequester (ephemeral)', () => {
+  it('в группе шлёт эфемерно запросившему', async () => {
+    const { service, bot } = createService();
+    const ctx = makeCtx();
+
+    const id = await (service as any).sendToRequester(ctx, CHAT, 'текст');
+
+    expect(bot.api.sendMessage).toHaveBeenCalledWith(CHAT, 'текст', {
+      ephemeral_message_parameters: { receiver_user_id: USER },
+    });
+    expect(id).toBe(501);
+  });
+
+  it('при ошибке — фолбэк и предохранитель', async () => {
+    const { service, bot } = createService();
+    const ctx = makeCtx();
+    bot.api.sendMessage.mockRejectedValueOnce(new Error('bad request'));
+
+    await (service as any).sendToRequester(ctx, CHAT, 'текст');
+    expect((service as any).ephemeralUnavailable).toBe(true);
+
+    const before = bot.api.sendMessage.mock.calls.length;
+    await (service as any).sendToRequester(ctx, CHAT, 'ещё');
+    const last = bot.api.sendMessage.mock.calls.at(-1);
+    expect(last[2]?.ephemeral_message_parameters).toBeUndefined();
+    expect(bot.api.sendMessage.mock.calls.length).toBe(before + 1);
+  });
+
+  it('в личке — обычная отправка', async () => {
+    const { service, bot } = createService();
+    const ctx = makeCtx({ chat: { id: CHAT, type: 'private' } });
+
+    await (service as any).sendToRequester(ctx, CHAT, 'текст');
+
+    expect(bot.api.sendMessage.mock.calls[0][2]?.ephemeral_message_parameters).toBeUndefined();
+  });
+});
 });
 
 
