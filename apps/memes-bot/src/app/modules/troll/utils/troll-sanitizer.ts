@@ -200,6 +200,18 @@ function truncateAtBoundary(text: string, limit: number): string {
  * Предложения разносит по строкам, а точки в концах строк вырезает (чатовый стиль).
  */
 /**
+ * Оскорбительные корни, которых не должно быть в теге участника: тег — это
+ * подколка про привычку или тему, а не обзывательство в лицо.
+ */
+const OFFENSIVE_ROOTS =
+  /(хуй|хуе|хуя|хуи|пизд|бля|еб[аоуы]|ёб|уеб|уёб|муд[ао]|долбо|гандон|пидор|пидар|сука|мраз|шлюх|гнид|дебил|кретин|идиот)/i;
+
+/** true, если строка содержит оскорбительный корень (не годится для тега). */
+export function containsProfanity(input: unknown): boolean {
+  return typeof input === 'string' && OFFENSIVE_ROOTS.test(input);
+}
+
+/**
  * Приводит тег участника к требованиям Telegram: не длиннее 16 символов,
  * без эмодзи и разметки. Разрешены буквы (любые алфавиты), цифры, пробел,
  * дефис и подчёркивание — всё остальное (в т.ч. эмодзи) вырезается.
@@ -220,9 +232,14 @@ export function sanitizeMemberTag(
     return cleaned;
   }
   // Не режем посреди слова: если влезает последнее целое слово — оставляем его.
+  // Границами считаем пробел, дефис и подчёркивание.
   const head = cleaned.slice(0, limit);
-  const lastSpace = head.lastIndexOf(' ');
-  return (lastSpace > 0 ? head.slice(0, lastSpace) : head).trim();
+  const boundary = Math.max(
+    head.lastIndexOf(' '),
+    head.lastIndexOf('-'),
+    head.lastIndexOf('_')
+  );
+  return (boundary > 0 ? head.slice(0, boundary) : head).trim();
 }
 
 export function sanitizeModelText(input: string, maxChars: number): string {

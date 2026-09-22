@@ -34,6 +34,17 @@ export class TrollMemberTagEntity {
   @Column('text', { nullable: true })
   topics: string | null;
 
+  /**
+   * id последнего сообщения, учтённого в этом наречении. Нужен, чтобы менять
+   * тег только когда накопились новые реплики, а не переоценивать одни и те же.
+   */
+  @Column('bigint', { nullable: true })
+  lastMessageId: number | null;
+
+  /** Когда тег оценивался последний раз — антифлуд «не чаще раза в сутки». */
+  @Column('timestamp', { nullable: true })
+  lastEvaluatedAt: Date | null;
+
   @UpdateDateColumn({ type: 'timestamp' })
   updatedAt: Date;
 }

@@ -183,11 +183,23 @@ export const TROLL_DEFECT_SEVERITIES = ['low', 'medium', 'high'];
  */
 export const TROLL_MEMBER_TAG_MAX_CHARS = 16;
 
-/** Минимум сообщений участника за окно, чтобы вообще считать ему тег. */
-export const TROLL_MEMBER_TAG_MIN_MESSAGES = 2;
+/**
+ * Сколько сообщений нужно набрать, чтобы впервые наречúть тег: заходим только
+ * к тем, кто реально пишет, чтобы в первый прогон не разметить всех сразу.
+ */
+export const TROLL_MEMBER_TAG_MIN_MESSAGES = 10;
 
-/** Сколько участников за один прогон обрабатывать в одном чате. */
-export const TROLL_MEMBER_TAGS_MAX_MEMBERS_PER_CHAT = 5;
+/**
+ * Сколько НОВЫХ сообщений (не участвовавших в прошлом наречении) должно
+ * накопиться, чтобы вообще пересматривать тег.
+ */
+export const TROLL_MEMBER_TAG_NEW_MESSAGES = 10;
+
+/** Сколько смен тега существующим участникам делать за один прогон чата. */
+export const TROLL_MEMBER_TAG_MAX_RENAMES_PER_CHAT = 3;
+
+/** Сколько первых наречений делать за один прогон чата (чтобы не разметить всех разом). */
+export const TROLL_MEMBER_TAG_MAX_FIRST_PER_CHAT = 2;
 
 /** Сколько последних реплик участника отправлять модели. */
 export const TROLL_MEMBER_TAG_MAX_MESSAGES = 40;
@@ -203,3 +215,12 @@ export const TROLL_MEMBER_TAG_COOLDOWN_HOURS = 24;
 
 /** Максимум кандидатов-тегов, которые просим у модели. */
 export const TROLL_MEMBER_TAG_CANDIDATES = 5;
+
+/** Сколько занятых в чате тегов передавать модели, чтобы не повторяться. */
+export const TROLL_MEMBER_TAG_OCCUPIED_MAX = 30;
+
+/** Потолок max_tokens для промта-объявления о наречении. */
+export const TROLL_MEMBER_TAG_ANNOUNCE_MAX_TOKENS = 200;
+
+/** Потолок длины объявления о наречении, символов. */
+export const TROLL_MEMBER_TAG_ANNOUNCE_MAX_CHARS = 250;

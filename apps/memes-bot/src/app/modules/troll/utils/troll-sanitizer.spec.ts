@@ -1,5 +1,6 @@
 import {
   containsLink,
+  containsProfanity,
   sanitizeMemberTag,
   sanitizeModelField,
   sanitizeModelStyled,
@@ -186,8 +187,13 @@ describe('troll-sanitizer', () => {
       expect(sanitizeMemberTag('гранатовый маньяк')).toBe('гранатовый');
     });
 
-    it('режет жёстко, если первое слово длиннее лимита', () => {
-      expect(sanitizeMemberTag('абракадабра-абракадабра')).toBe('абракадабра-абра');
+    it('режет по дефису и подчёркиванию, а не посреди слова', () => {
+      expect(sanitizeMemberTag('цифровой-партизан')).toBe('цифровой');
+      expect(sanitizeMemberTag('очень_длинный_тег_тут')).toBe('очень_длинный');
+    });
+
+    it('режет жёстко, если до границы ничего нет', () => {
+      expect(sanitizeMemberTag('абракадабраабракадабра')).toBe('абракадабраабрак');
     });
 
     it('вырезает эмодзи и запрещённые символы', () => {
@@ -211,6 +217,22 @@ describe('troll-sanitizer', () => {
 
     it('уважает явный лимит', () => {
       expect(sanitizeMemberTag('подмыхан', 4)).toBe('подм');
+    });
+  });
+
+  describe('containsProfanity', () => {
+    it('ловит оскорбительные корни', () => {
+      expect(containsProfanity('хуеглот')).toBe(true);
+      expect(containsProfanity('долбоёб')).toBe(true);
+      expect(containsProfanity('мудак')).toBe(true);
+      expect(containsProfanity('идиот')).toBe(true);
+    });
+
+    it('не трогает безобидные теги', () => {
+      expect(containsProfanity('докер-обжора')).toBe(false);
+      expect(containsProfanity('мтс-страдалец')).toBe(false);
+      expect(containsProfanity('тспу-летописец')).toBe(false);
+      expect(containsProfanity(null)).toBe(false);
     });
   });
 });
