@@ -815,7 +815,7 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
     // Модель не ответила (таймаут/лимит) — не врём про «0 лет», а честно признаёмся.
     if (!stat) {
       this.logger.warn(`${this.tag(chat.id, ctx.from.id)}: /stat — пустой ответ модели`);
-      await this.safeSendToChat(chat.id, 'чёт я подвис, попробуй ещё раз', ctx.message?.message_id);
+      await this.sendToRequester(ctx, chat.id, 'чёт я подвис, попробуй ещё раз', ctx.message?.message_id);
       return;
     }
 
@@ -850,7 +850,7 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
       lines.push('• 0 лет — пока чисто');
     }
 
-    await this.safeSendToChat(chat.id, lines.join('\n'), ctx.message?.message_id);
+    await this.sendToRequester(ctx, chat.id, lines.join('\n'), ctx.message?.message_id);
     this.logger.log(`${this.tag(chat.id, ctx.from.id)}: /stat — отправлено (лет: ${totalYears})`);
   }
 
@@ -1217,7 +1217,7 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
 
     // Метку окна двигаем только после того, как пересказ реально ушёл в чат:
     // иначе неудачная отправка или пустой ответ съедали бы все сообщения.
-    const sent = await this.safeSendToChat(chat.id, text, ctx.message?.message_id);
+    const sent = await this.sendToRequester(ctx, chat.id, text, ctx.message?.message_id);
     if (!sent) {
       this.logger.warn(
         `${this.tag(chat.id, ctx.from.id)}: /sumarize — отправить не удалось, метку окна не двигаю`
@@ -2204,6 +2204,34 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
   }
 
   /** Отправляет сообщение в чат; возвращает id отправленного сообщения (null — не ушло). */
+  /** Эфемерная отправка только запросившему (в группах); иначе — обычная. */
+  private ephemeralUnavailable = false;
+
+  private async sendToRequester(
+    ctx: BotContext,
+    chatId: number,
+    text: string,
+    replyToMessageId?: number
+  ): Promise<number | null> {
+    const isGroup = ctx.chat?.type === 'group' || ctx.chat?.type === 'supergroup';
+    const userId = ctx.from?.id;
+    if (isGroup && userId && !this.ephemeralUnavailable) {
+      try {
+        const sent = await this.bot.api.sendMessage(chatId, text, {
+          ephemeral_message_parameters: { receiver_user_id: userId },
+        });
+        return sent.message_id;
+      } catch (error) {
+        // API/клиент может не поддержать эфемерные сообщения — больше не пробуем.
+        this.ephemeralUnavailable = true;
+        this.logger.debug(
+          `${this.tag(chatId, userId)}: ephemeral недоступен, фолбэк: ${this.describeError(error)}`
+        );
+      }
+    }
+    return this.safeSendToChat(chatId, text, replyToMessageId);
+  }
+
   private async safeSendToChat(
     chatId: number,
     text: string,
