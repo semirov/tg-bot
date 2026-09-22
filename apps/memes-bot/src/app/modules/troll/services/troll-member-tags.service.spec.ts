@@ -179,6 +179,17 @@ describe('TrollMemberTagsService', () => {
     expect(bot.api.setChatMemberTag).not.toHaveBeenCalled();
   });
 
+  it('создатель со строковым userId тоже пропускается', async () => {
+    const rows = userRows(USER, TROLL_MEMBER_TAG_MIN_MESSAGES).map((row) => ({
+      ...row,
+      userId: String(USER),
+    }));
+    const { service, bot } = setup({ rows });
+    bot.api.getChatAdministrators.mockResolvedValue([{ status: 'creator', user: { id: USER } }]);
+    await service.refreshMemberTags();
+    expect(bot.api.setChatMemberTag).not.toHaveBeenCalled();
+  });
+
   it('ошибка определения создателя не мешает наречению', async () => {
     const { service, bot } = setup();
     bot.api.getChatAdministrators.mockRejectedValue(new Error('tg'));
@@ -329,6 +340,45 @@ describe('TrollMemberTagsService', () => {
         expect.objectContaining({ lastMessageId: 100, lastEvaluatedAt: expect.any(Date) })
       );
       expect(tags.save).not.toHaveBeenCalled();
+    });
+
+    it('bigint-поля приходят строками: сохранённый тег находится, повторно не нарекаем', async () => {
+      const rows = userRows(USER, TROLL_MEMBER_TAG_NEW_MESSAGES, { newestId: 100 }).map((row) => ({
+        ...row,
+        userId: String(USER),
+      }));
+      const { service, bot, tags } = setup({
+        rows,
+        stored: [
+          storedTag({
+            userId: String(USER),
+            lastMessageId: '90',
+            lastEvaluatedAt: oldEval,
+          }),
+        ],
+      });
+
+      await service.refreshMemberTags();
+
+      expect(bot.api.setChatMemberTag).toHaveBeenCalledTimes(1);
+      expect(tags.save).toHaveBeenCalledWith(expect.objectContaining({ id: 5 }));
+    });
+
+    it('bigint-поля строками в кулдауне: не трогаем вообще', async () => {
+      const rows = userRows(USER, TROLL_MEMBER_TAG_NEW_MESSAGES, { newestId: 100 }).map((row) => ({
+        ...row,
+        userId: String(USER),
+      }));
+      const { service, bot } = setup({
+        rows,
+        stored: [
+          storedTag({ userId: String(USER), lastMessageId: '90', lastEvaluatedAt: new Date() }),
+        ],
+      });
+
+      await service.refreshMemberTags();
+
+      expect(bot.api.setChatMemberTag).not.toHaveBeenCalled();
     });
 
     it('смена и первое наречение идут вместе, смены — первыми', async () => {
