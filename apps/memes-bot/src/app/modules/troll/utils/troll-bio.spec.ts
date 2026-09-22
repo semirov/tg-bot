@@ -16,6 +16,7 @@ import {
   halfLifeHours,
   looksLikePii,
   looksLikeTopicNotBiography,
+  evidenceLooksCopied,
   mergeFacts,
   normalizeFact,
   renderBioText,
@@ -80,6 +81,18 @@ describe('troll-bio', () => {
       'Работала у дистрибьютора',
     ])('пропускает личные факты: %s', (text) => {
       expect(looksLikeTopicNotBiography(text)).toBe(false);
+    });
+  });
+
+  describe('evidenceLooksCopied', () => {
+    it('коллективное «мы» без личного «я» — чужой текст', () => {
+      expect(evidenceLooksCopied('Наша IT компания создала первую блокчейн-платформу')).toBe(true);
+      expect(evidenceLooksCopied('мы с коллегами поздравляем')).toBe(true);
+    });
+
+    it('личное высказывание принимается', () => {
+      expect(evidenceLooksCopied('не, я же у дистра работала')).toBe(false);
+      expect(evidenceLooksCopied('плачу 1к за безлимит')).toBe(false);
     });
   });
 

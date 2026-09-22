@@ -17,7 +17,7 @@ import { MEMBER_BIO_EXTRACT_PROMPT } from '../constants/troll-prompts';
 import { TrollMemberBioEntity, TrollMemberBioFact } from '../entities/troll-member-bio.entity';
 import { TrollMessageEntity } from '../entities/troll-message.entity';
 import { sanitizeTranscript, wrapUserContent } from '../utils/troll-sanitizer';
-import { ExtractedFact, decayOnly, mergeFacts, renderBioText, sanitizeMemoryText } from '../utils/troll-bio';
+import { ExtractedFact, decayOnly, evidenceLooksCopied, mergeFacts, renderBioText, sanitizeMemoryText } from '../utils/troll-bio';
 import { DeepSeekService } from './deepseek.service';
 import { TrollSettingsService } from './troll-settings.service';
 
@@ -194,7 +194,8 @@ export class TrollMemberBioService {
         const text = typeof record.text === 'string' ? record.text : '';
         const evidence = typeof record.evidence === 'string' ? record.evidence.trim() : '';
         // Факт без подтверждения «человек сказал это о себе» не берём.
-        if (record.self !== true || !evidence || !text) {
+        // Доказательство из скопированного чужого текста (коллективное «мы») отсеиваем.
+        if (record.self !== true || !evidence || !text || evidenceLooksCopied(evidence)) {
           return null;
         }
         const importance = Math.min(5, Math.max(1, Math.round(Number(record.importance) || 3)));
