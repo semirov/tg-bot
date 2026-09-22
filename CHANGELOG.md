@@ -1,3 +1,10 @@
+# [0.34.0](https://github.com/semirov/tg-bot/compare/v0.33.0...v0.34.0) (2026-09-22)
+
+
+### Features
+
+* **troll:** смешные теги участников — редко, по делу, с торжественным наречением ([#98](https://github.com/semirov/tg-bot/issues/98)) ([199c583](https://github.com/semirov/tg-bot/commit/199c58347e753cd0049dc628888eadaa924a617e))
+
 # [0.33.0](https://github.com/semirov/tg-bot/compare/v0.32.0...v0.33.0) (2026-09-22)
 
 
