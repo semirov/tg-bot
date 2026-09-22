@@ -216,7 +216,13 @@ export function sanitizeMemberTag(
     .replace(/[^\p{L}\p{N} _-]/gu, ' ')
     .replace(/\s+/g, ' ')
     .trim();
-  return cleaned.slice(0, limit).trim();
+  if (cleaned.length <= limit) {
+    return cleaned;
+  }
+  // Не режем посреди слова: если влезает последнее целое слово — оставляем его.
+  const head = cleaned.slice(0, limit);
+  const lastSpace = head.lastIndexOf(' ');
+  return (lastSpace > 0 ? head.slice(0, lastSpace) : head).trim();
 }
 
 export function sanitizeModelText(input: string, maxChars: number): string {

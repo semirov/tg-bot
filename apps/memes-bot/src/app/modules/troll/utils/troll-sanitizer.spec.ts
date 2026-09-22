@@ -181,9 +181,13 @@ describe('troll-sanitizer', () => {
   });
 
   describe('sanitizeMemberTag', () => {
-    it('обрезает тег до 16 символов', () => {
-      expect(sanitizeMemberTag('кальянный лорд и повелитель').length).toBeLessThanOrEqual(16);
-      expect(sanitizeMemberTag('кальянный лорд и повелитель')).toBe('кальянный лорд и');
+    it('обрезает тег до 16 символов по границе слова', () => {
+      expect(sanitizeMemberTag('кальянный лорд и повелитель')).toBe('кальянный лорд');
+      expect(sanitizeMemberTag('гранатовый маньяк')).toBe('гранатовый');
+    });
+
+    it('режет жёстко, если первое слово длиннее лимита', () => {
+      expect(sanitizeMemberTag('абракадабра-абракадабра')).toBe('абракадабра-абра');
     });
 
     it('вырезает эмодзи и запрещённые символы', () => {
