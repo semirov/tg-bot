@@ -1597,7 +1597,7 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
       `${this.tag(ctx.chat.id, ctx.from.id)}: дефект #${defect.id} записан (серьёзность ${diagnosis.severity})`
     );
 
-    await this.safeSendToChat(
+    await this.streamPrivateReply(
       ctx.chat.id,
       this.formatDefectReport(defect, match.candidate, replyTo, diagnosis),
       ctx.message.message_id
@@ -2204,6 +2204,42 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
   }
 
   /** Отправляет сообщение в чат; возвращает id отправленного сообщения (null — не ушло). */
+  /** Стриминг черновиками доступен только в личке; иначе/при сбое — обычная отправка. */
+  private draftUnavailable = false;
+  private draftCounter = 1;
+
+  private async streamPrivateReply(
+    chatId: number,
+    text: string,
+    replyToMessageId?: number
+  ): Promise<number | null> {
+    if (!this.draftUnavailable) {
+      try {
+        const parts = this.splitForDraft(text);
+        const delay = process.env.NODE_ENV === 'test' ? 0 : 350;
+        for (const part of parts) {
+          await this.bot.api.sendMessageDraft(chatId, this.draftCounter++, part);
+          if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
+        }
+      } catch (error) {
+        this.draftUnavailable = true;
+        this.logger.debug(
+          `${this.tag(chatId)}: drafts недоступны, фолбэк: ${this.describeError(error)}`
+        );
+      }
+    }
+    return this.safeSendToChat(chatId, text, replyToMessageId);
+  }
+
+  /** Режет текст на 3 части для анимации черновика (без пустых кусков). */
+  private splitForDraft(text: string): string[] {
+    if (text.length < 120) return [text];
+    const size = Math.ceil(text.length / 3);
+    return [text.slice(0, size), text.slice(size, size * 2), text.slice(size * 2)].filter(
+      (part) => part.length > 0
+    );
+  }
+
   /** Эфемерная отправка только запросившему (в группах); иначе — обычная. */
   private ephemeralUnavailable = false;
 

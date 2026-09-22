@@ -79,6 +79,7 @@ function createService() {
       sendMessage: jest.fn(async () => ({ message_id: 501 })),
       sendChatAction: jest.fn(async () => true),
       setMessageReaction: jest.fn(async () => true),
+      sendMessageDraft: jest.fn(async () => true),
       forwardMessage: jest.fn(async () => ({ message_id: 502 })),
       copyMessage: jest.fn(async () => ({ message_id: 503 })),
       leaveChat: jest.fn(async () => true),
@@ -2574,6 +2575,32 @@ describe('sendToRequester (ephemeral)', () => {
     await (service as any).sendToRequester(ctx, CHAT, 'текст');
 
     expect(bot.api.sendMessage.mock.calls[0][2]?.ephemeral_message_parameters).toBeUndefined();
+  });
+});
+
+describe('streamPrivateReply (drafts)', () => {
+  it('стримит черновиками и отправляет финал', async () => {
+    const { service, bot } = createService();
+    const text = 'а'.repeat(300);
+
+    const id = await (service as any).streamPrivateReply(123, text);
+
+    expect(bot.api.sendMessageDraft).toHaveBeenCalledTimes(3);
+    expect(bot.api.sendMessage).toHaveBeenCalledWith(123, text, {});
+    expect(id).toBe(501);
+  });
+
+  it('при сбое drafts — фолбэк и предохранитель', async () => {
+    const { service, bot } = createService();
+    bot.api.sendMessageDraft.mockRejectedValueOnce(new Error('not supported'));
+
+    await (service as any).streamPrivateReply(123, 'короткий текст');
+    expect((service as any).draftUnavailable).toBe(true);
+
+    bot.api.sendMessageDraft.mockClear();
+    await (service as any).streamPrivateReply(123, 'ещё текст');
+    expect(bot.api.sendMessageDraft).not.toHaveBeenCalled();
+    expect(bot.api.sendMessage).toHaveBeenCalled();
   });
 });
 });
