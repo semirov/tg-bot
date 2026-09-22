@@ -619,6 +619,16 @@ export class AdminMenuService implements OnModuleInit {
       )
       .row()
       .text(
+        () => `Темы-теги участников: ${current().memberTagsEnabled ? '🟢 вкл' : '⚪️ выкл'}`,
+        this.ownerGuard(async (ctx) => {
+          await this.trollSettings.update({
+            memberTagsEnabled: AdminSettingsPresets.toggle(current().memberTagsEnabled),
+          });
+          ctx.menu.update();
+        })
+      )
+      .row()
+      .text(
         () => {
           const usage = this.deepSeek.usage;
           return `📊 DeepSeek сегодня: ${usage.requests} запр., ${usage.tokens} ток., ≈ ${formatUsd(

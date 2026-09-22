@@ -104,4 +104,24 @@ export interface TrollRuntimeSettings {
   selfCheckEnabled: boolean;
   /** Порог оценки ревизора: ниже него ответ переписывается. */
   selfCheckThreshold: number;
+  /** Придумывать и обновлять смешные теги участников чата. */
+  memberTagsEnabled: boolean;
+}
+
+/** Один предложенный тег участника от модели. */
+export interface MemberTagCandidate {
+  /** Тег (≤16 символов, без эмодзи). */
+  tag: string;
+  /** Причина «почему» — матерная, привязанная к темам участника. */
+  reason: string;
+  /** Релевантность темы участнику и «смешность», 0..1. */
+  relevance: number;
+}
+
+/** Ответ модели на запрос тегов участника. */
+export interface MemberTagSuggestion {
+  /** Короткий список ключевых тем участника. */
+  topics?: string[];
+  /** Кандидаты тега со скором. */
+  tags?: MemberTagCandidate[];
 }

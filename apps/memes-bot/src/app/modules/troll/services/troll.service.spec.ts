@@ -55,6 +55,7 @@ function settings(over: Partial<TrollRuntimeSettings> = {}): TrollRuntimeSetting
     maxInputChars: 1000,
     selfCheckEnabled: false,
     selfCheckThreshold: 0.6,
+    memberTagsEnabled: true,
     ...over,
   };
 }

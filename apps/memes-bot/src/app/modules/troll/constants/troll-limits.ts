@@ -176,3 +176,51 @@ export const TROLL_DEFECT_CONTEXT_CHARS = 12000;
 
 /** Допустимые уровни серьёзности дефекта (ответ диагностики). */
 export const TROLL_DEFECT_SEVERITIES = ['low', 'medium', 'high'];
+
+/**
+ * Теги участников чата (`setChatMemberTag`).
+ * Жёсткий лимит Telegram: 0–16 символов, эмодзи запрещены.
+ */
+export const TROLL_MEMBER_TAG_MAX_CHARS = 16;
+
+/**
+ * Сколько сообщений нужно набрать, чтобы впервые наречúть тег: заходим только
+ * к тем, кто реально пишет, чтобы в первый прогон не разметить всех сразу.
+ */
+export const TROLL_MEMBER_TAG_MIN_MESSAGES = 10;
+
+/**
+ * Сколько НОВЫХ сообщений (не участвовавших в прошлом наречении) должно
+ * накопиться, чтобы вообще пересматривать тег.
+ */
+export const TROLL_MEMBER_TAG_NEW_MESSAGES = 10;
+
+/** Сколько смен тега существующим участникам делать за один прогон чата. */
+export const TROLL_MEMBER_TAG_MAX_RENAMES_PER_CHAT = 3;
+
+/** Сколько первых наречений делать за один прогон чата (чтобы не разметить всех разом). */
+export const TROLL_MEMBER_TAG_MAX_FIRST_PER_CHAT = 2;
+
+/** Сколько последних реплик участника отправлять модели. */
+export const TROLL_MEMBER_TAG_MAX_MESSAGES = 40;
+
+/** Потолок длины расшифровки реплик участника, символов. */
+export const TROLL_MEMBER_TAG_TRANSCRIPT_CHARS = 4000;
+
+/** Потолок max_tokens для запроса тегов. */
+export const TROLL_MEMBER_TAG_MAX_TOKENS = 500;
+
+/** Пауза между сменой тега одному участнику, часы (антифлуд). */
+export const TROLL_MEMBER_TAG_COOLDOWN_HOURS = 24;
+
+/** Максимум кандидатов-тегов, которые просим у модели. */
+export const TROLL_MEMBER_TAG_CANDIDATES = 5;
+
+/** Сколько занятых в чате тегов передавать модели, чтобы не повторяться. */
+export const TROLL_MEMBER_TAG_OCCUPIED_MAX = 30;
+
+/** Потолок max_tokens для промта-объявления о наречении. */
+export const TROLL_MEMBER_TAG_ANNOUNCE_MAX_TOKENS = 200;
+
+/** Потолок длины объявления о наречении, символов. */
+export const TROLL_MEMBER_TAG_ANNOUNCE_MAX_CHARS = 250;
