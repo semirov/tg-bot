@@ -446,6 +446,11 @@ export class ParserModerationService {
     try {
       await ctx.editMessageReplyMarkup({ reply_markup: keyboard });
     } catch (error) {
+      const text = String(error);
+      if (text.includes('message is not modified')) {
+        this.logger.debug('Parser moderation: клавиатура без изменений');
+        return;
+      }
       this.logger.warn(`Parser moderation: edit keyboard failed: ${error}`);
     }
   }

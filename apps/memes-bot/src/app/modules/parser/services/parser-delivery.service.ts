@@ -63,11 +63,13 @@ export class ParserDeliveryService {
     const hashSource = mtproto.photoBuffer ?? mtproto.thumbBuffer;
     if (hashSource) {
       try {
+        // imghash(bits=16) в этой версии даёт hex-строку 64 символа —
+        // совпадает с длиной колонки published_post_hashes.hash (varchar(64)).
         if (mtproto.photoBuffer) {
           imageHash = await imghash.hash(mtproto.photoBuffer, 16);
         }
         // Фото хешируем напрямую, видео — по обложке (первому кадру).
-        perceptualHash = await imghash.hash(hashSource, 64);
+        perceptualHash = await imghash.hash(hashSource, 16);
       } catch (error) {
         this.logger.warn(`Parser delivery: imghash failed: ${error}`);
       }
@@ -229,10 +231,11 @@ export class ParserDeliveryService {
     const client = await this.activeClient();
     if (!client) return null;
 
-    const rawId = bigInt(source.chatId); // marked id (-100...)
+    // Для публичных каналов надёжнее username (без кэша диалогов).
+    const peer = source.username ?? bigInt(source.chatId);
     const ids = [candidate.sourceMessageId];
     const messages = await this.guard.run<TotalList<Api.Message>>('getMessages:deliver', () =>
-      client.getMessages(rawId, { ids })
+      client.getMessages(peer, { ids })
     );
     const message = messages?.find((m) => m?.id === candidate.sourceMessageId);
     if (!message) return null;

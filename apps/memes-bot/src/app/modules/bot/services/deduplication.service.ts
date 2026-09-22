@@ -84,7 +84,12 @@ export class DeduplicationService {
 
   public async createPublishedPostHash(hash: string, memeChannelMessageId: number): Promise<void> {
     if (hash) {
-      await this.publishedPostHashesEntity.insert({ hash, memeChannelMessageId });
+      // Колонка hash — varchar(64); на всякий случай не даём вставке упасть.
+      const safeHash = hash.length > 64 ? hash.slice(0, 64) : hash;
+      if (safeHash.length !== hash.length) {
+        this.logger.warn(`Hash length ${hash.length} усечён до 64 для дедупа`);
+      }
+      await this.publishedPostHashesEntity.insert({ hash: safeHash, memeChannelMessageId });
     } else {
       this.logger.warn(`Cannot create hash for memeChannelMessageId ${memeChannelMessageId}`);
     }
@@ -101,16 +106,24 @@ export class DeduplicationService {
       return 0;
     }
 
-    // Вычисляем количество совпадающих бит
-    let matchingBits = 0;
-    for (let i = 0; i < hash1.length; i++) {
-      if (hash1[i] === hash2[i]) {
-        matchingBits++;
+    // Побитовое сравнение: если строки — hex, сравниваем биты внутри ниблов,
+    // иначе считаем каждый символ одним битом.
+    const isHex = (value: string) => /^[0-9a-f]+$/i.test(value);
+    if (isHex(hash1) && isHex(hash2)) {
+      let matchingBits = 0;
+      for (let i = 0; i < hash1.length; i++) {
+        const a = parseInt(hash1[i], 16);
+        const b = parseInt(hash2[i], 16);
+        matchingBits += 4 - popcount(a ^ b);
       }
+      return matchingBits / (hash1.length * 4);
     }
 
-    // Возвращаем долю совпадающих бит
-    return matchingBits / hash1.length;
+    let matching = 0;
+    for (let i = 0; i < hash1.length; i++) {
+      if (hash1[i] === hash2[i]) matching++;
+    }
+    return matching / hash1.length;
   }
 
   public async getPostImageHash(photo: PhotoSize[]): Promise<string> {
@@ -200,4 +213,15 @@ export class DeduplicationService {
     this.logger.warn(`Using synthetic hash for file_id: ${fileId}`);
     return hash;
   }
+}
+
+/** Число установленных бит в 4-битном значении. */
+function popcount(value: number): number {
+  let v = value & 0xf;
+  let count = 0;
+  while (v) {
+    count += v & 1;
+    v >>= 1;
+  }
+  return count;
 }
