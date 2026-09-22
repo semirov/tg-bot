@@ -33,7 +33,7 @@ import { Logger } from '@nestjs/common';
 import { Bot, session, BotError, GrammyError, HttpError } from 'grammy';
 import { run, sequentialize } from '@grammyjs/runner';
 import { TypeormAdapter } from '@grammyjs/storage-typeorm';
-import { BOT, BOT_PROVIDER } from './bot.provider';
+import { BOT, BOT_PROVIDER, installResiliencePlugins } from './bot.provider';
 
 function setup() {
   const config = { botToken: '123:ABC', tgEnv: 'test', ownerId: 1 } as any;
@@ -283,4 +283,18 @@ describe('BOT_PROVIDER', () => {
       expect(next).toHaveBeenCalledTimes(1);
     });
   });
+
+describe('installResiliencePlugins', () => {
+  it('в тестах плагины не ставит', () => {
+    const bot: any = { api: { config: { use: jest.fn() } } };
+    installResiliencePlugins(bot, 'test');
+    expect(bot.api.config.use).not.toHaveBeenCalled();
+  });
+
+  it('в прод-режиме ставит throttler и auto-retry', () => {
+    const bot: any = { api: { config: { use: jest.fn() } } };
+    installResiliencePlugins(bot, 'production');
+    expect(bot.api.config.use).toHaveBeenCalledTimes(2);
+  });
+});
 });
