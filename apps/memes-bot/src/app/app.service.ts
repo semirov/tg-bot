@@ -231,7 +231,10 @@ export class AppService implements OnModuleInit {
     message += `Пока ты не решишь эту простую задачу, бот не будет тебе отвечать\n\n`;
     message += `Чему равно <b>${first} ${operand} ${second}?</b>\n\n`;
     message += `Ответ пришли одним числом`;
-    const captchaMessage = await ctx.reply(message, { parse_mode: 'HTML' });
+    const captchaMessage = await ctx.reply(message, {
+      parse_mode: 'HTML',
+      reply_markup: { force_reply: true, input_field_placeholder: 'Ответ числом' },
+    });
 
     // eslint-disable-next-line no-constant-condition
     while (true) {
