@@ -101,6 +101,7 @@ function createService() {
   const predictions = makeRepo();
   const defects = makeRepo();
   const memes = makeRepo();
+  const memberTags = { onUserMessage: jest.fn().mockResolvedValue(undefined) };
   const service = new TrollService(
     bot,
     config,
@@ -110,7 +111,8 @@ function createService() {
     history,
     predictions,
     defects,
-    memes
+    memes,
+    memberTags as any
   );
   return {
     service,
@@ -123,6 +125,7 @@ function createService() {
     predictions,
     defects,
     memes,
+    memberTags,
   };
 }
 
@@ -400,6 +403,12 @@ describe('TrollService — onMessage', () => {
     const { service, history } = createService();
     await (service as any).onMessage(makeCtx({ message: { message_id: 1, text: '/stat' } }));
     expect(history.insert).not.toHaveBeenCalled();
+  });
+
+  it('после сохранения реплики запускает анализ тегов участника', async () => {
+    const { service, memberTags } = createService();
+    await (service as any).onMessage(makeCtx({ message: { message_id: 10, text: 'привет' } }));
+    expect(memberTags.onUserMessage).toHaveBeenCalledWith(CHAT, USER);
   });
 
   it('отвечает списком команд на вопрос о возможностях', async () => {

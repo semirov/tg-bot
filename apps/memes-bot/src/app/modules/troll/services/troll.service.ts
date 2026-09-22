@@ -101,6 +101,7 @@ import { DeepSeekService } from './deepseek.service';
 import { TrollCooldownRegistry } from './troll-cooldown-registry';
 import { TrollNameRegistry } from './troll-name-registry';
 import { MIN_TEXT_LENGTH, TrollReplyFormatter } from './troll-reply-formatter';
+import { TrollMemberTagsService } from './troll-member-tags.service';
 import { TrollSettingsService } from './troll-settings.service';
 
 /** Как часто обновлять «печатает…», пока идёт накопление. */
@@ -196,7 +197,8 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
     @InjectRepository(TrollDefectEntity)
     private readonly defects: Repository<TrollDefectEntity>,
     @InjectRepository(ChannelMemeEntity)
-    private readonly memes: Repository<ChannelMemeEntity>
+    private readonly memes: Repository<ChannelMemeEntity>,
+    private readonly memberTags: TrollMemberTagsService
   ) {}
 
   public onModuleInit(): void {
@@ -405,6 +407,12 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
         messageId: ctx.message?.message_id,
         replyToMessageId: ctx.message?.reply_to_message?.message_id,
       });
+      // Теги участников: на каждое 10-е сообщение (событийно, не по крону).
+      void this.memberTags
+        .onUserMessage(chat.id, ctx.from.id)
+        .catch((error) =>
+          this.logger.warn(`Теги: анализ на сообщении не удался: ${this.describeError(error)}`)
+        );
     }
 
     // Вопрос «что ты умеешь» — рассказываем о себе и командах (без LLM).

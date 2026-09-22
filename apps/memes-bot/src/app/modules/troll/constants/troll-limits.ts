@@ -184,22 +184,10 @@ export const TROLL_DEFECT_SEVERITIES = ['low', 'medium', 'high'];
 export const TROLL_MEMBER_TAG_MAX_CHARS = 16;
 
 /**
- * Сколько сообщений нужно набрать, чтобы впервые наречúть тег: заходим только
- * к тем, кто реально пишет, чтобы в первый прогон не разметить всех сразу.
+ * Раз в сколько сообщений участника пересматривать его тег: на 10-е, 20-е и т.д.
+ * Событийно, без крона; контекст — вся история за сутки.
  */
-export const TROLL_MEMBER_TAG_MIN_MESSAGES = 10;
-
-/**
- * Сколько НОВЫХ сообщений (не участвовавших в прошлом наречении) должно
- * накопиться, чтобы вообще пересматривать тег.
- */
-export const TROLL_MEMBER_TAG_NEW_MESSAGES = 10;
-
-/** Сколько смен тега существующим участникам делать за один прогон чата. */
-export const TROLL_MEMBER_TAG_MAX_RENAMES_PER_CHAT = 3;
-
-/** Сколько первых наречений делать за один прогон чата (чтобы не разметить всех разом). */
-export const TROLL_MEMBER_TAG_MAX_FIRST_PER_CHAT = 2;
+export const TROLL_MEMBER_TAG_BATCH_MESSAGES = 10;
 
 /** Сколько последних реплик участника отправлять модели. */
 export const TROLL_MEMBER_TAG_MAX_MESSAGES = 40;
@@ -210,7 +198,7 @@ export const TROLL_MEMBER_TAG_TRANSCRIPT_CHARS = 4000;
 /** Потолок max_tokens для запроса тегов. */
 export const TROLL_MEMBER_TAG_MAX_TOKENS = 500;
 
-/** Пауза между сменой тега одному участнику, часы (антифлуд). */
+/** Не чаще раза в сутки на человека (антифлуд). */
 export const TROLL_MEMBER_TAG_COOLDOWN_HOURS = 24;
 
 /** Максимум кандидатов-тегов, которые просим у модели. */
