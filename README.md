@@ -512,7 +512,7 @@ sequenceDiagram
 
 Тролль-бот дополнительно пишет **тексты входящих сообщений и своих ответов**, а также расшифровку запроса и сырой ответ модели (уровень `debug`) — чтобы можно было детально разобрать его поведение.
 
-Логи ротируются: раз в сутки последние 24 часа складываются в `/var/log/memes-bot/bot.log`, `logrotate` хранит **текущий файл и два прошлых дня**, а вывод контейнера ограничен по размеру (`max-size=30m`, `max-file=10`). Подробности — в [README тролль-модуля](apps/memes-bot/src/app/modules/troll/README.md#10-логи-и-их-хранение).
+Логи ротируются: суточный дамп с ограниченным числом хранимых файлов, а вывод контейнера ограничен по размеру. Подробности — в [README тролль-модуля](apps/memes-bot/src/app/modules/troll/README.md#10-логи-и-их-хранение).
 
 ## 🧪 Тестирование
 
@@ -540,38 +540,15 @@ npm run e2e:docker   # docker compose: Postgres + приложение + про�
 
 ## 🔁 CI/CD и версионирование
 
-CI/CD — GitHub Actions на **self-hosted раннере в Docker** (на этой машине, рядом с остальными контейнерами).
+CI/CD — GitHub Actions. Пайплайн:
 
 - **PR**: `lint` → юнит-тесты с покрытием (порог 95%) → сборка прод-образа → **e2e**.
-- **push в `main`**: то же плюс **semantic-release** (версия из conventional commits, git-тег) и **деплой**; при неудачном старте контейнера — автоматический откат на предыдущий образ.
-- **Деплой по тегам**: версия вычисляется автоматически (`feat` → minor, `fix`/`perf` → patch), тег `vX.Y.Z`; версия прокидывается в контейнер как `APP_VERSION` и попадает в уведомление владельцу при старте.
-- **Скорость**: базовые образы зависимостей `telegram-bot-deps:node20` / `:node22` (тег = хэш `package-lock.json`) собираются отдельным job'ом только при изменении пакетов; приложение и тесты собираются `FROM` них. Прод-образ собирается один раз в test-job (тег `sha-<commit>`) и переиспользуется деплоем. `nx`-кэш — через BuildKit.
-- **Секреты**: не хранятся в репозитории — SSH/registry-доступы лежат на хосте раннера и монтируются read-only в `/deploy-secrets`.
+- **push в `main`**: то же плюс **semantic-release** (версия из conventional commits, git-тег) и **деплой**; при неудачном старте приложения — автоматический откат на предыдущий образ.
+- **Версионирование**: версия вычисляется автоматически (`feat` → minor, `fix`/`perf` → patch), тег `vX.Y.Z`; прокидывается в приложение как `APP_VERSION` и попадает в уведомление владельцу при старте.
+- **Сборка**: базовые образы зависимостей собираются отдельным job'ом только при изменении `package-lock.json`; прод-образ собирается один раз в test-job и переиспользуется деплоем. Кэш `nx` — через BuildKit.
+- **Секреты**: в репозитории не хранятся; доступы к деплою передаются в CI из защищённого окружения и в код не попадают.
 
-### Self-hosted раннер
-
-Раннер запущен в Docker на этой машине (`memes-bot-runner`) рядом с остальными контейнерами:
-
-```
-docker run -d --name memes-bot-runner --restart unless-stopped --cpus=2 --memory=4g \
-  -e REPO_URL=https://github.com/semirov/tg-bot \
-  -e ACCESS_TOKEN=<PAT/OAuth с доступом к репозиторию> \
-  -e RUNNER_NAME=memes-bot-runner -e LABELS=memes-bot -e RUNNER_SCOPE=repo \
-  -e DISABLE_AUTOMATIC_DEREGISTRATION=true \
-  -e CONFIGURED_ACTIONS_RUNNER_FILES_DIR=/runner-config \
-  -e DISABLE_AUTO_UPDATE=true -e RUN_AS_ROOT=true \
-  -v /var/run/docker.sock:/var/run/docker.sock \
-  -v /home/filipp/.deploy-secrets:/deploy-secrets:ro \
-  -v memes-runner-config2:/runner-config -v memes-runner-work:/_work \
-  myoung34/github-runner:latest
-```
-
-Ключевое: `CONFIGURED_ACTIONS_RUNNER_FILES_DIR` + `DISABLE_AUTOMATIC_DEREGISTRATION=true` дают
-переиспользование регистрации (раннер не дерегистрируется и не падает после каждой job), а
-`ACCESS_TOKEN` позволяет перерегистрироваться, если конфиг потерян. **Не задавайте `EPHEMERAL`** —
-в образе это флаг: любое непустое значение (включая `false`) включает режим «одна job на контейнер».
-
-Скрипты: `tools/ci/build-base.sh`, `tools/ci/release.sh`, `tools/deploy/deploy.sh`.
+Скрипты пайплайна и деплоя: `tools/ci/build-base.sh`, `tools/ci/release.sh`, `tools/deploy/deploy.sh` (конфигурация окружения — вне репозитория).
 
 ## 🤝 Вклад в проект
 

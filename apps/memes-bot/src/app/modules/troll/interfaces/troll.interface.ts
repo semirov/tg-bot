@@ -106,6 +106,8 @@ export interface TrollRuntimeSettings {
   selfCheckThreshold: number;
   /** Придумывать и обновлять смешные теги участников чата. */
   memberTagsEnabled: boolean;
+  /** Вести внутренние биографии участников (долгая память) и подмешивать в диалог. */
+  memberBioEnabled: boolean;
 }
 
 /** Один предложенный тег участника от модели. */

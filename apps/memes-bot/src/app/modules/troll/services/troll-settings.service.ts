@@ -100,6 +100,7 @@ export class TrollSettingsService implements OnModuleInit {
       selfCheckEnabled: true,
       selfCheckThreshold: this.config.trollSelfCheckThreshold,
       memberTagsEnabled: true,
+      memberBioEnabled: true,
     };
   }
 
@@ -159,6 +160,7 @@ export class TrollSettingsService implements OnModuleInit {
         defaults.selfCheckThreshold
       ),
       memberTagsEnabled: row.memberTagsEnabled ?? defaults.memberTagsEnabled,
+      memberBioEnabled: row.memberBioEnabled ?? defaults.memberBioEnabled,
     };
   }
 

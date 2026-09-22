@@ -51,7 +51,7 @@ export class AdminSettingsPresets {
   public static readonly MEME_ANNOUNCE_CHANCE: number[] = [0.05, 0.1, 0.2, 0.3, 0.5];
 
   /** Пресеты лимита запросов в сутки. */
-  public static readonly DAILY_REQUEST_LIMIT: number[] = [100, 200, 500, 1000, 2000, 5000, 10000];
+  public static readonly DAILY_REQUEST_LIMIT: number[] = [100, 200, 500, 1000, 2000, 4000, 5000, 10000];
 
   /** Пресеты максимальной длины входа. */
   public static readonly MAX_INPUT_CHARS: number[] = [500, 800, 1000, 1500, 2000, 3000];

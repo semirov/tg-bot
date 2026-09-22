@@ -35,6 +35,7 @@ import { ParserSettingsEntity } from './modules/parser/entities/parser-settings.
 import { SourceCandidateEntity } from './modules/parser/entities/source-candidate.entity';
 import { SourceChannelEntity } from './modules/parser/entities/source-channel.entity';
 import { TrollMessageEntity } from './modules/troll/entities/troll-message.entity';
+import { TrollMemberBioEntity } from './modules/troll/entities/troll-member-bio.entity';
 import { TrollMemberTagEntity } from './modules/troll/entities/troll-member-tag.entity';
 import { TrollPredictionEntity } from './modules/troll/entities/troll-prediction.entity';
 import { TrollSettingsEntity } from './modules/troll/entities/troll-settings.entity';
@@ -81,6 +82,7 @@ import { SharedModule } from './shared/shared.module';
           TrollSettingsEntity,
           TrollMessageEntity,
           TrollMemberTagEntity,
+          TrollMemberBioEntity,
           TrollPredictionEntity,
           TrollDefectEntity,
           SourceChannelEntity,

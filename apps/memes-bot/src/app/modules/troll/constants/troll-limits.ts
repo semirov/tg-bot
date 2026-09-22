@@ -212,3 +212,65 @@ export const TROLL_MEMBER_TAG_ANNOUNCE_MAX_TOKENS = 200;
 
 /** Потолок длины объявления о наречении, символов. */
 export const TROLL_MEMBER_TAG_ANNOUNCE_MAX_CHARS = 250;
+
+/**
+ * Биографии участников (внутренняя долгая память, per-chat).
+ * Хранение и впрыск — не более TROLL_MEMBER_BIO_MAX_CHARS символов.
+ */
+export const TROLL_MEMBER_BIO_MAX_CHARS = 1000;
+
+/**
+ * Через сколько новых реплик участника обновлять досье. По эксперименту:
+ * каждые ~20 сообщений — та же полнота, что каждые 10, но вдвое дешевле.
+ */
+export const TROLL_MEMBER_BIO_UPDATE_EVERY = 20;
+
+/** Минимальный интервал между обновлениями одного досье, мс (антифлуд). */
+export const TROLL_MEMBER_BIO_MIN_INTERVAL_MS = 10 * 60 * 1000;
+
+/** Сколько свежих реплик участника отдавать модели за одно обновление. */
+export const TROLL_MEMBER_BIO_MAX_MESSAGES = 40;
+
+/** Потолок длины расшифровки реплик для извлечения фактов, символов. */
+export const TROLL_MEMBER_BIO_TRANSCRIPT_CHARS = 8000;
+
+/** Потолок max_tokens извлечения фактов. */
+export const TROLL_MEMBER_BIO_MAX_TOKENS = 800;
+
+/** Максимум фактов, извлекаемых за одно обновление. */
+export const TROLL_MEMBER_BIO_MAX_FACTS = 6;
+
+/** Сколько подтверждений делают факт ядром. */
+export const TROLL_MEMBER_BIO_CORE_MIN = 2;
+
+/** Порог похожести фактов при слиянии (доля совпавших слов). */
+export const TROLL_MEMBER_BIO_SIMILARITY = 0.6;
+
+/** Вес памяти: старт, прибавка за подтверждение, потолок, порог вымывания. */
+export const TROLL_MEMBER_BIO_WEIGHT_INITIAL = 1;
+export const TROLL_MEMBER_BIO_WEIGHT_BOOST = 1;
+export const TROLL_MEMBER_BIO_WEIGHT_MAX = 4;
+export const TROLL_MEMBER_BIO_DROP_THRESHOLD = 0.3;
+
+/** Базовый и максимальный период полураспада факта, часы. */
+export const TROLL_MEMBER_BIO_HALF_LIFE_BASE_HOURS = 6;
+export const TROLL_MEMBER_BIO_HALF_LIFE_MAX_HOURS = 336; // 14 суток
+
+/** Сколько досье (участников) подмешивать в диалог и их суммарный потолок. */
+export const TROLL_MEMBER_BIO_INJECT_MAX_USERS = 5;
+export const TROLL_MEMBER_BIO_INJECT_MAX_CHARS = 1600;
+
+/** Canary-строка внутри блока памяти: появление в ответе = утечка. */
+export const TROLL_MEMBER_BIO_CANARY = 'ВНУТР_БИО_7F3A9E21';
+
+/** Минимальная длина дословного совпадения с фактом (слов), считающаяся утечкой. */
+export const TROLL_MEMBER_BIO_LEAK_NGRAM = 5;
+
+/**
+ * Взвешивание диалогового контекста по свежести.
+ * Свежий хвост — дословно, чуть постарше — сжимаем, совсем старое — отбрасываем.
+ */
+export const TROLL_DIALOG_HOT_MESSAGES = 20;
+export const TROLL_DIALOG_HOT_MINUTES = 30;
+export const TROLL_DIALOG_WARM_MINUTES = 120;
+export const TROLL_DIALOG_WARM_CHARS = 60;

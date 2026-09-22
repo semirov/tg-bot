@@ -56,6 +56,7 @@ function settings(over: Partial<TrollRuntimeSettings> = {}): TrollRuntimeSetting
     selfCheckEnabled: false,
     selfCheckThreshold: 0.6,
     memberTagsEnabled: true,
+    memberBioEnabled: true,
     ...over,
   };
 }
@@ -102,6 +103,11 @@ function createService() {
   const defects = makeRepo();
   const memes = makeRepo();
   const memberTags = { onUserMessage: jest.fn().mockResolvedValue(undefined) };
+  const memberBio = {
+    noteUserMessage: jest.fn().mockResolvedValue(undefined),
+    buildInjection: jest.fn().mockResolvedValue(null),
+    getChatBios: jest.fn().mockResolvedValue([]),
+  };
   const service = new TrollService(
     bot,
     config,
@@ -112,7 +118,8 @@ function createService() {
     predictions,
     defects,
     memes,
-    memberTags as any
+    memberTags as any,
+    memberBio as any
   );
   return {
     service,
@@ -126,6 +133,7 @@ function createService() {
     defects,
     memes,
     memberTags,
+    memberBio,
   };
 }
 
@@ -2626,17 +2634,90 @@ describe('streamPrivateReply (drafts)', () => {
     expect(bot.api.sendMessage).toHaveBeenCalled();
   });
 });
+
+  describe('биографии: окно свежести и защита памяти', () => {
+    function row(id: number, ageMin: number, content: string): any {
+      return {
+        id,
+        chatId: CHAT,
+        userId: USER,
+        userName: 'Вася',
+        role: 'user',
+        content,
+        messageId: 1000 + id,
+        replyToMessageId: null,
+        createdAt: new Date(Date.now() - ageMin * 60000),
+      };
+    }
+
+    it('applyRecencyWindow: хвост дословно, тёплое сжимает, старое отбрасывает', () => {
+      const { service } = createService();
+      const now = Date.now();
+      const rows = [
+        ...Array.from({ length: 21 }, (_, index) => row(index + 1, 1, `свежее-${index}`)),
+        row(100, 40, 'т'.repeat(200)),
+        row(200, 200, 'очень старое'),
+      ];
+      const out = (service as any).applyRecencyWindow(rows, now);
+      expect(out).toHaveLength(22);
+      expect(out[21].content.endsWith('…')).toBe(true);
+      expect(out[21].content.length).toBeLessThan(200);
+      expect(out.some((item: any) => item.content === 'очень старое')).toBe(false);
+    });
+
+    it('formatAge: минуты, часы, дни', () => {
+      const { service } = createService();
+      const now = Date.now();
+      expect((service as any).formatAge(new Date(now - 30 * 60000), now)).toBe('30м');
+      expect((service as any).formatAge(new Date(now - 3 * 3600 * 1000), now)).toBe('3ч');
+      expect((service as any).formatAge(new Date(now - 2 * 24 * 3600 * 1000), now)).toBe('2д');
+    });
+
+    it('buildMemoryTail: пусто без досье и с guard при наличии', () => {
+      const { service } = createService();
+      expect((service as any).buildMemoryTail(null)).toBe('');
+      const tail = (service as any).buildMemoryTail({ canary: 'CANARY-X', body: 'факт', facts: ['факт'] });
+      expect(tail).toContain('CANARY-X');
+      expect(tail).toContain('факт');
+      expect(tail).toContain('<memory');
+    });
+
+    it('getChatBiosView рендерит факты и отсеивает пустые', async () => {
+      const { service, memberBio } = createService();
+      memberBio.getChatBios.mockResolvedValue([
+        {
+          userId: 1,
+          userName: null,
+          facts: [
+            { text: 'Живёт в СПб', importance: 3, count: 2, firstSeenAt: Date.now(), lastSeenAt: Date.now(), baseWeight: 2, weight: 2 },
+          ],
+        },
+        { userId: 2, userName: 'Пусто', facts: [] },
+      ]);
+      const view = await service.getChatBiosView(CHAT);
+      expect(view).toHaveLength(1);
+      expect(view[0].bio).toContain('Живёт в СПб');
+      expect(view[0].userName).toBe('участник');
+    });
+
+    it('досье подмешивается в промпт, утечка отклоняется', async () => {
+      const normal = createService();
+      normal.memberBio.buildInjection.mockResolvedValue({ canary: 'CANARY-1', body: 'внутренний факт', facts: ['факт'] });
+      normal.deepSeek.complete.mockResolvedValue('нормальный дерзкий ответ');
+      const text = await (normal.service as any).generateCheckedReply(JERK_PROMPT, CHAT, { label: 'тест' }, undefined, (raw: string) => raw);
+      expect(text).toBe('нормальный дерзкий ответ');
+      const messages = normal.deepSeek.complete.mock.calls[0][0];
+      expect(messages[1].content).toContain('CANARY-1');
+
+      const leaky = createService();
+      leaky.memberBio.buildInjection.mockResolvedValue({
+        canary: 'CANARY-2',
+        body: 'внутренний факт',
+        facts: ['разбирается в арбитражных делах и долгах компаний'],
+      });
+      leaky.deepSeek.complete.mockResolvedValue('он разбирается в арбитражных делах и долгах компаний, вот так');
+      const safe = await (leaky.service as any).generateCheckedReply(JERK_PROMPT, CHAT, { label: 'тест' }, undefined, (raw: string) => raw);
+      expect(safe).toBe('не твоего ума дело, спрашивай что-нибудь попроще');
+    });
+  });
 });
-
-
-
-
-
-
-
-
-
-
-
-
-
