@@ -1,3 +1,10 @@
+## [0.34.1](https://github.com/semirov/tg-bot/compare/v0.34.0...v0.34.1) (2026-09-22)
+
+
+### Bug Fixes
+
+* **troll:** не нарекать повторно из-за строковых bigint-id ([#100](https://github.com/semirov/tg-bot/issues/100)) ([0e786a8](https://github.com/semirov/tg-bot/commit/0e786a835054b913c6351cd12c65b95f32c30a54))
+
 # [0.34.0](https://github.com/semirov/tg-bot/compare/v0.33.0...v0.34.0) (2026-09-22)
 
 
