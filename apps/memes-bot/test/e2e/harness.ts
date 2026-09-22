@@ -1,3 +1,9 @@
+// conversations v2 использует structuredClone; в окружении Jest CI его может не быть.
+if (typeof (globalThis as { structuredClone?: unknown }).structuredClone !== 'function') {
+  (globalThis as { structuredClone?: unknown }).structuredClone = <T>(value: T): T =>
+    JSON.parse(JSON.stringify(value)) as T;
+}
+
 import { TestingModule, Test } from '@nestjs/testing';
 import { Bot, InputFile } from 'grammy';
 import { Subject } from 'rxjs';

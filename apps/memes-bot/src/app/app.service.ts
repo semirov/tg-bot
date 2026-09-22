@@ -226,7 +226,9 @@ export class AppService implements OnModuleInit {
     conversation: Conversation<BotContext>,
     ctx: BotContext
   ): Promise<void> {
-    const { first, second, operand, result } = conversation.session.captchaValues;
+    const sessionCtx = (c: unknown): BotContext => (c as BotContext) ?? ctx;
+    const captchaValues = await conversation.external((c) => sessionCtx(c).session.captchaValues);
+    const { first, second, operand, result } = captchaValues;
     let message = `Это простая проверка на то, бот ты или человек.\n`;
     message += `Пока ты не решишь эту простую задачу, бот не будет тебе отвечать\n\n`;
     message += `Чему равно <b>${first} ${operand} ${second}?</b>\n\n`;
@@ -243,8 +245,10 @@ export class AppService implements OnModuleInit {
       if (Number(answerCtx?.message?.text?.trim()) === result) {
         await answerCtx.deleteMessage();
         await answerCtx.api.deleteMessage(captchaMessage.chat.id, captchaMessage.message_id);
-        conversation.session.captchaValues = null;
-        conversation.session.captchaSolved = true;
+        await conversation.external((c) => {
+          sessionCtx(c).session.captchaValues = null;
+          sessionCtx(c).session.captchaSolved = true;
+        });
         const chatMember = await conversation.external(async () =>
           this.bot.api.getChatMember(this.baseConfigService.memeChanelId, ctx.from.id)
         );
@@ -280,8 +284,8 @@ export class AppService implements OnModuleInit {
       }
 
       await answerCtx.deleteMessage();
-      const session = conversation.session;
-      const { first, second, operand } = session.captchaValues;
+      const values = await conversation.external((c) => sessionCtx(c).session.captchaValues);
+      const { first, second, operand } = values;
       await ctx.reply(
         `Капчу все таки надо решить\nЧему равно <b>${first} ${operand} ${second}?</b>`,
         { parse_mode: 'HTML' }

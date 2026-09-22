@@ -27,7 +27,6 @@ export interface SessionDataInterface {
   yearResultsCurrentUserIndex?: number;
 }
 
-export type BotContext = Context &
-  SessionFlavor<SessionDataInterface> &
-  BotConfig &
-  ConversationFlavor;
+type BotContextBase = Context & SessionFlavor<SessionDataInterface> & BotConfig;
+
+export type BotContext = BotContextBase & ConversationFlavor<BotContextBase>;

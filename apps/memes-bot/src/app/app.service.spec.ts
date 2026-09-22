@@ -466,7 +466,9 @@ describe('AppService', () => {
       return {
         session,
         wait: jest.fn(() => Promise.resolve(answers.shift())),
-        external: jest.fn((op: any) => Promise.resolve(typeof op === 'function' ? op() : op.task())),
+        external: jest.fn((op: any) =>
+          Promise.resolve(typeof op === 'function' ? op({ session }) : op.task())
+        ),
       };
     }
 
