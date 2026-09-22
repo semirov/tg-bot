@@ -1,3 +1,10 @@
+## [0.31.2](https://github.com/semirov/tg-bot/compare/v0.31.1...v0.31.2) (2026-09-22)
+
+
+### Bug Fixes
+
+* **post-management:** дата запланированного дубля в МСК ([91145e9](https://github.com/semirov/tg-bot/commit/91145e9480230841cdf507c4976380b68494bb49))
+
 ## [0.31.1](https://github.com/semirov/tg-bot/compare/v0.31.0...v0.31.1) (2026-09-22)
 
 
