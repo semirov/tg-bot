@@ -528,13 +528,24 @@ describe('TrollMemberBioService — бэкфилл по истории', () => {
     expect(refresh).toHaveBeenCalledWith(CHAT, USER, 'Вася');
   });
 
-  it('пропускает участников с малым числом реплик и уже учтённых', async () => {
-    const { service } = setup({ chats: [{ chatId: CHAT, isActive: true }] });
-    const refresh = jest.spyOn(service, 'refreshBio').mockResolvedValue(undefined);
-    (service as any).history.find.mockResolvedValue(rows(USER, 5));
+  it('для досье с фактами требует 20 реплик, для пустого — хватает хвоста', async () => {
+    const withFacts = setup({ chats: [{ chatId: CHAT, isActive: true }] });
+    const filled = {
+      userId: USER,
+      lastMessageId: 0,
+      facts: [{ text: 'x', importance: 3, count: 1, firstSeenAt: 1, lastSeenAt: Date.now(), baseWeight: 1, weight: 1 }],
+    };
+    withFacts.bios.find.mockResolvedValue([filled]);
+    const refreshFilled = jest.spyOn(withFacts.service, 'refreshBio').mockResolvedValue(undefined);
+    (withFacts.service as any).history.find.mockResolvedValue(rows(USER, 5));
+    await withFacts.service.backfillBiosJob();
+    expect(refreshFilled).not.toHaveBeenCalled();
 
-    await service.backfillBiosJob();
-    expect(refresh).not.toHaveBeenCalled();
+    const empty = setup({ chats: [{ chatId: CHAT, isActive: true }] });
+    const refreshEmpty = jest.spyOn(empty.service, 'refreshBio').mockResolvedValue(undefined);
+    (empty.service as any).history.find.mockResolvedValue(rows(USER, 5));
+    await empty.service.backfillBiosJob();
+    expect(refreshEmpty).toHaveBeenCalledWith(CHAT, USER, 'Вася');
   });
 
   it('сбой репозитория не роняет сервис', async () => {

@@ -321,6 +321,11 @@ export class TrollMemberBioService implements OnModuleInit {
         const cursorByUser = new Map(
           bios.map((bio) => [Number(bio.userId), Number(bio.lastMessageId ?? 0)])
         );
+        // У кого досье ещё пустое — забираем даже «хвост» из нескольких реплик,
+        // чтобы биография появилась сразу; дальше обновляем как обычно (20 реплик).
+        const hasFacts = new Set(
+          bios.filter((bio) => (bio.facts ?? []).length > 0).map((bio) => Number(bio.userId))
+        );
         const pending = new Map<number, { count: number; name: string }>();
         for (const row of rows) {
           const userId = Number(row.userId);
@@ -335,7 +340,7 @@ export class TrollMemberBioService implements OnModuleInit {
           pending.set(userId, entry);
         }
         const candidates = [...pending.entries()]
-          .filter(([, value]) => value.count >= TROLL_MEMBER_BIO_UPDATE_EVERY)
+          .filter(([userId, value]) => value.count >= (hasFacts.has(userId) ? TROLL_MEMBER_BIO_UPDATE_EVERY : 1))
           .sort((a, b) => b[1].count - a[1].count);
         for (const [userId, value] of candidates) {
           if (processed >= TrollMemberBioService.BACKFILL_MAX_PER_RUN) {

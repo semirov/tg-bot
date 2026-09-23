@@ -70,7 +70,7 @@ export function factSimilarity(a: string, b: string): number {
 }
 
 /** Глаголы «обсуждал/принёс в чат» — это не биография, а тема или чужой текст. */
-const TOPIC_PREFIX = /^(обсужда|комментиру|упомина|делитс|рассказыва|пересказыва|шут|спрашива|поинтересова|интересуется|процитирова|цитиру|репост|скопирова)/i;
+const TOPIC_PREFIX = /^(обсужда|комментиру|упомина|делитс|рассказыва|пересказыва|шут|спрашива|поинтересова|интересуется|процитирова|цитиру|репост|скопирова|слышал)/i;
 
 /** Разовые действия и реакции — события, а не устойчивые черты. */
 const ONE_OFF_PREFIX = /^(участвова|смеял(ся|ась)|пошутил|посмотрел|спросил|ответил|заметил|удивил(ся|ась)|восхитил(ся|ась)|поругал|обсудил|прислал|скинул|отправил|оплатил|заказал)/i;
@@ -228,7 +228,7 @@ export function renderBioText(facts: TrollMemberBioFact[], maxChars: number, now
       continue;
     }
     const text = sanitizeMemoryText(fact.text);
-    if (!text) {
+    if (!text || looksLikePii(text) || looksLikeTopicNotBiography(text)) {
       continue;
     }
     const line = `- ${text}`;
