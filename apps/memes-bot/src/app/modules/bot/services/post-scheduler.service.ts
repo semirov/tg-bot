@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Between, LessThan, Repository, UpdateResult } from 'typeorm';
+import { Between, LessThan, MoreThan, Repository, UpdateResult } from 'typeorm';
 import { PostSchedulerEntity } from '../entities/post-scheduler.entity';
 import { PublicationModesEnum } from '../../post-management/constants/publication-modes.enum';
 import { SchedulerCommonService } from '../../common/scheduler-common.service';
@@ -47,7 +47,7 @@ export class PostSchedulerService {
   }
 
   public async addPostToSchedule(context: ScheduledPostContextInterface): Promise<Date> {
-    const publishDate = await this.nextScheduledTimeByMode(context.mode);
+    const publishDate = await this.nextScheduledTimeByMode(context.mode, context.isUserPost);
 
     const count = await this.repository.count({
       where: { requestChannelMessageId: context.requestChannelMessageId },
@@ -138,11 +138,105 @@ export class PostSchedulerService {
     return add(now, { days: 1 });
   }
 
-  private async nextScheduledTimeByMode(mode: PublicationModesEnum): Promise<Date> {
+  /** Зазор пользовательского поста до соседей при вставке в сетку, мин. */
+  private static readonly USER_POST_MIN_GAP_MINUTES = 40;
+
+  /** Потолок пользовательских постов в сутки (МСК), чтобы не завалить канал. */
+  private static readonly USER_POST_MAX_PER_DAY = 6;
+
+  /** Ключ суток в МСК — для суточного потолка пользовательских постов. */
+  private static mskDayKey(date: Date): string {
+    const zoned = utcToZonedTime(date, 'Europe/Moscow');
+    return `${zoned.getFullYear()}-${zoned.getMonth() + 1}-${zoned.getDate()}`;
+  }
+
+  /**
+   * Ближайший зазор сетки парсера/обсерватории под пользовательский пост.
+   *
+   * Пользовательские посты не ждут конца очереди: вставляем их в середину
+   * ближайшего свободного промежутка между постами основного канала, по одному
+   * на промежуток — так пост выходит скоро, но не сбивается в кучу с другими.
+   * Занятые времена других пользовательских постов тоже учитываются, поэтому
+   * они распределяются по разным промежуткам, а не липнут к одному месту.
+   */
+  private async nextUserPostSlot(now: Date, mode: PublicationModesEnum): Promise<Date | null> {
+    const interval = SchedulerCommonService.timeIntervalByMode(mode);
+    const posts = await this.postSchedulerEntity.find({
+      where: { isPublished: false, publishDate: MoreThan(now) },
+      order: { publishDate: 'ASC' },
+      select: ['publishDate', 'isUserPost', 'mode'],
+      cache: false,
+    });
+    // Основной канал: ночной кринж идёт в отдельный канал и в этой сетке не мешает.
+    const mainTimes = posts
+      .filter((post) => post.mode !== PublicationModesEnum.NIGHT_CRINGE)
+      .map((post) => post.publishDate)
+      .sort((a, b) => a.getTime() - b.getTime());
+
+    const userPostsPerDay = new Map<string, number>();
+    for (const post of posts) {
+      if (post.isUserPost && post.mode !== PublicationModesEnum.NIGHT_CRINGE) {
+        const key = PostSchedulerService.mskDayKey(post.publishDate);
+        userPostsPerDay.set(key, (userPostsPerDay.get(key) ?? 0) + 1);
+      }
+    }
+
+    for (let dayOffset = 0; dayOffset < 30; dayOffset += 1) {
+      const day = add(now, { days: dayOffset });
+      const windowEnd = zonedTimeToUtc(set(day, interval.to), 'Europe/Moscow');
+      if (windowEnd.getTime() <= now.getTime()) {
+        continue;
+      }
+      let windowStart = zonedTimeToUtc(set(day, interval.from), 'Europe/Moscow');
+      if (windowStart.getTime() < now.getTime()) {
+        windowStart = now;
+      }
+      const dayKey = PostSchedulerService.mskDayKey(windowStart);
+      if ((userPostsPerDay.get(dayKey) ?? 0) >= PostSchedulerService.USER_POST_MAX_PER_DAY) {
+        continue;
+      }
+
+      const boundaries = [
+        windowStart,
+        ...mainTimes.filter(
+          (time) => time.getTime() > windowStart.getTime() && time.getTime() < windowEnd.getTime()
+        ),
+        windowEnd,
+      ];
+      for (let index = 0; index + 1 < boundaries.length; index += 1) {
+        const from = boundaries[index];
+        const to = boundaries[index + 1];
+        if (
+          differenceInMinutes(to, from) <
+          2 * PostSchedulerService.USER_POST_MIN_GAP_MINUTES
+        ) {
+          continue;
+        }
+        const slot = new Date(from.getTime() + (to.getTime() - from.getTime()) / 2);
+        slot.setSeconds(0, 0);
+        if (slot.getTime() >= now.getTime()) {
+          return slot;
+        }
+      }
+    }
+    return null;
+  }
+
+  private async nextScheduledTimeByMode(
+    mode: PublicationModesEnum,
+    isUserPost = false
+  ): Promise<Date> {
     const now = new Date();
     // Ночной кринж раскладываем по слотам (≤1.5ч) и переносим излишек на другие ночи.
     if (mode === PublicationModesEnum.NIGHT_CRINGE) {
       return this.nextCringeSlot(now);
+    }
+    // Пользовательские посты — в ближайший зазор сетки, чтобы не уезжали далеко.
+    if (isUserPost) {
+      const userSlot = await this.nextUserPostSlot(now, mode);
+      if (userSlot) {
+        return userSlot;
+      }
     }
     const interval = SchedulerCommonService.timeIntervalByMode(mode);
     const MIN_INTERVAL_MINUTES = 89; // Минимальный интервал в 90 минут

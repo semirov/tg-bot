@@ -28,7 +28,7 @@ const baseContext = {
   requestChannelMessageId: 5,
   processedByModerator: 9,
   caption: 'cap',
-  isUserPost: true,
+  isUserPost: false,
   hash: 'h',
 };
 
@@ -108,7 +108,7 @@ describe('PostSchedulerService', () => {
         mode: PublicationModesEnum.NEXT_MIDDAY,
         caption: 'cap',
         isPublished: false,
-        isUserPost: true,
+        isUserPost: false,
         hash: 'h',
       });
       expect(repo.save).toHaveBeenCalledWith(repo.create.mock.calls[0][0], {
@@ -451,4 +451,92 @@ describe('PostSchedulerService', () => {
       );
     });
   });
+});
+
+describe('PostSchedulerService — пользовательские посты в зазоры сетки', () => {
+  afterEach(() => {
+    jest.useRealTimers();
+    jest.restoreAllMocks();
+  });
+
+  const gridAt = (day: number) => [
+    [10, 30], [12, 0], [13, 30], [15, 0], [16, 30], [18, 0], [19, 30], [21, 0],
+  ].map(([h, m]) => ({
+    publishDate: msk(2026, 1, day, h, m),
+    isUserPost: false,
+    mode: PublicationModesEnum.NEXT_INTERVAL,
+  }));
+
+  const userContext = { ...baseContext, mode: PublicationModesEnum.NEXT_INTERVAL, isUserPost: true };
+
+  it('ставит пользовательский пост в середину ближайшего зазора', async () => {
+    const { service, repo } = setup();
+    withNow(msk(2026, 1, 15, 8, 30));
+    repo.find.mockResolvedValue(gridAt(15));
+
+    const date = await service.addPostToSchedule(userContext as any);
+    expect(date).toEqual(msk(2026, 1, 15, 9, 45));
+  });
+
+  it('не липнет к одному месту: следующий пост идёт в другой зазор', async () => {
+    const { service, repo } = setup();
+    withNow(msk(2026, 1, 15, 8, 30));
+    repo.find.mockResolvedValue([
+      { publishDate: msk(2026, 1, 15, 9, 45), isUserPost: true, mode: PublicationModesEnum.NEXT_INTERVAL },
+      ...gridAt(15),
+    ]);
+
+    const date = await service.addPostToSchedule(userContext as any);
+    expect(date).toEqual(msk(2026, 1, 15, 11, 15));
+  });
+
+  it('соблюдает суточный потолок и уходит на следующий день', async () => {
+    const { service, repo } = setup();
+    withNow(msk(2026, 1, 15, 8, 30));
+    const userPosts = [[9, 45], [11, 15], [12, 45], [14, 15], [15, 45], [17, 15]].map(([h, m]) => ({
+      publishDate: msk(2026, 1, 15, h, m),
+      isUserPost: true,
+      mode: PublicationModesEnum.NEXT_INTERVAL,
+    }));
+    repo.find.mockResolvedValue([...userPosts, ...gridAt(15), ...gridAt(16)]);
+
+    const date = await service.addPostToSchedule(userContext as any);
+    expect(date).toEqual(msk(2026, 1, 16, 9, 45));
+  });
+
+  it('ночной кринж пользователя идёт по кринж-слотам, а не в зазоры', async () => {
+    const { service, repo } = setup();
+    withNow(msk(2026, 1, 15, 12, 0));
+    repo.find.mockResolvedValue(gridAt(15));
+
+    const date = await service.addPostToSchedule({
+      ...userContext,
+      mode: PublicationModesEnum.NIGHT_CRINGE,
+    } as any);
+    expect(date).toEqual(msk(2026, 1, 16, 2, 0));
+  });
+
+  it('обычный (не пользовательский) пост идёт прежним алгоритмом', async () => {
+    const { service, repo } = setup();
+    withNow(msk(2026, 1, 15, 12, 0));
+    repo.find.mockResolvedValue(gridAt(15));
+
+    const date = await service.addPostToSchedule({ ...baseContext, isUserPost: false } as any);
+    expect(date.getTime()).toBeGreaterThanOrEqual(msk(2026, 1, 15, 12, 0).getTime());
+  });
+
+  it('внутри окна считает старт от текущего времени', async () => {
+    const { service, repo } = setup();
+    withNow(msk(2026, 1, 15, 12, 10));
+    repo.find.mockResolvedValue([
+      { publishDate: msk(2026, 1, 15, 12, 30), isUserPost: false, mode: PublicationModesEnum.NEXT_INTERVAL },
+      { publishDate: msk(2026, 1, 15, 14, 0), isUserPost: false, mode: PublicationModesEnum.NEXT_INTERVAL },
+      { publishDate: msk(2026, 1, 15, 15, 30), isUserPost: false, mode: PublicationModesEnum.NEXT_INTERVAL },
+      { publishDate: msk(2026, 1, 15, 17, 0), isUserPost: false, mode: PublicationModesEnum.NEXT_INTERVAL },
+    ]);
+
+    const date = await service.addPostToSchedule(userContext as any);
+    expect(date).toEqual(msk(2026, 1, 15, 13, 15));
+  });
+
 });
