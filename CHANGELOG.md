@@ -1,3 +1,10 @@
+## [0.37.2](https://github.com/semirov/tg-bot/compare/v0.37.1...v0.37.2) (2026-09-23)
+
+
+### Bug Fixes
+
+* **troll:** теги участников снова нарекаются ([d84a4c1](https://github.com/semirov/tg-bot/commit/d84a4c1be554744113f835777a1362b15dabf34a))
+
 ## [0.37.1](https://github.com/semirov/tg-bot/compare/v0.37.0...v0.37.1) (2026-09-23)
 
 
