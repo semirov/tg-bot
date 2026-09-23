@@ -1,19 +1,22 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, MoreThan, Repository } from 'typeorm';
+import { In, MoreThan, MoreThanOrEqual, Repository } from 'typeorm';
 import {
+  TROLL_CONTEXT_MAX_TURNS,
+  TROLL_HISTORY_TTL_HOURS,
   TROLL_MEMBER_BIO_CANARY,
   TROLL_MEMBER_BIO_INJECT_MAX_CHARS,
   TROLL_MEMBER_BIO_INJECT_MAX_USERS,
   TROLL_MEMBER_BIO_MAX_CHARS,
   TROLL_MEMBER_BIO_MAX_MESSAGES,
   TROLL_MEMBER_BIO_MAX_TOKENS,
-  TROLL_MEMBER_BIO_TRANSCRIPT_CHARS,
   TROLL_MEMBER_BIO_MIN_INTERVAL_MS,
+  TROLL_MEMBER_BIO_TRANSCRIPT_CHARS,
   TROLL_MEMBER_BIO_UPDATE_EVERY,
 } from '../constants/troll-limits';
 import { MEMBER_BIO_EXTRACT_PROMPT } from '../constants/troll-prompts';
+import { TrollChatEntity } from '../entities/troll-chat.entity';
 import { TrollMemberBioEntity, TrollMemberBioFact } from '../entities/troll-member-bio.entity';
 import { TrollMessageEntity } from '../entities/troll-message.entity';
 import { sanitizeTranscript, wrapUserContent } from '../utils/troll-sanitizer';
@@ -37,7 +40,7 @@ export interface BioInjection {
  * в диалог подмешивается только владельцу видимым способом через buildInjection.
  */
 @Injectable()
-export class TrollMemberBioService {
+export class TrollMemberBioService implements OnModuleInit {
   private readonly logger = new Logger(TrollMemberBioService.name);
   /** Счётчик реплик участника с прошлого обновления (в памяти). */
   private readonly counters = new Map<string, number>();
@@ -45,6 +48,8 @@ export class TrollMemberBioService {
   private readonly lastRunAt = new Map<string, number>();
   /** Пары, досье которых сейчас обновляется — защита от гонок. */
   private readonly inFlight = new Set<string>();
+  /** Сколько досье дособирать по истории за один прогон бэкфилла. */
+  private static readonly BACKFILL_MAX_PER_RUN = 5;
 
   constructor(
     private readonly deepSeek: DeepSeekService,
@@ -52,8 +57,19 @@ export class TrollMemberBioService {
     @InjectRepository(TrollMemberBioEntity)
     private readonly bios: Repository<TrollMemberBioEntity>,
     @InjectRepository(TrollMessageEntity)
-    private readonly history: Repository<TrollMessageEntity>
+    private readonly history: Repository<TrollMessageEntity>,
+    @InjectRepository(TrollChatEntity)
+    private readonly chats: Repository<TrollChatEntity>
   ) {}
+
+  /**
+   * После старта один раз дособираем досье по уже накопленной истории, чтобы не
+   * ждать, пока участники напишут 20 новых реплик.
+   */
+  public onModuleInit(): void {
+    const timer = setTimeout(() => void this.backfillBiosJob(), 20_000);
+    timer.unref?.();
+  }
 
   /** Вызывается на каждую реплику пользователя; раз в N реплик запускает обновление. */
   public async noteUserMessage(chatId: number, userId: number, userName?: string): Promise<void> {
@@ -271,6 +287,79 @@ export class TrollMemberBioService {
   /** Досье чата для админ-просмотра владельцем. */
   public getChatBios(chatId: number): Promise<TrollMemberBioEntity[]> {
     return this.bios.find({ where: { chatId }, order: { updatedAt: 'DESC' } });
+  }
+
+  /**
+   * Бэкфилл досье по накопленной истории: раз в 10 минут дособираем участников,
+   * у которых накопилось ≥ UPDATE_EVERY необработанных реплик. Нужен, чтобы
+   * досье появлялись сразу по истории, а не только после 20 новых сообщений.
+   */
+  @Cron(CronExpression.EVERY_10_MINUTES)
+  public async backfillBiosJob(): Promise<void> {
+    const s = this.settings.current;
+    if (!s.enabled || !s.memberBioEnabled) {
+      return;
+    }
+    try {
+      const chats = await this.chats.find({ where: { isActive: true } });
+      const since = new Date(Date.now() - TROLL_HISTORY_TTL_HOURS * 60 * 60 * 1000);
+      let processed = 0;
+      for (const chat of chats) {
+        if (processed >= TrollMemberBioService.BACKFILL_MAX_PER_RUN) {
+          break;
+        }
+        const chatId = Number(chat.chatId);
+        const rows = await this.history.find({
+          where: { chatId, role: 'user', createdAt: MoreThanOrEqual(since) },
+          order: { id: 'DESC' },
+          take: TROLL_CONTEXT_MAX_TURNS,
+        });
+        if (!rows.length) {
+          continue;
+        }
+        const bios = await this.bios.find({ where: { chatId } });
+        const cursorByUser = new Map(
+          bios.map((bio) => [Number(bio.userId), Number(bio.lastMessageId ?? 0)])
+        );
+        const pending = new Map<number, { count: number; name: string }>();
+        for (const row of rows) {
+          const userId = Number(row.userId);
+          if (!Number.isFinite(userId) || (row.id ?? 0) <= (cursorByUser.get(userId) ?? 0)) {
+            continue;
+          }
+          const entry = pending.get(userId) ?? { count: 0, name: row.userName ?? 'участник' };
+          entry.count += 1;
+          if (row.userName) {
+            entry.name = row.userName;
+          }
+          pending.set(userId, entry);
+        }
+        const candidates = [...pending.entries()]
+          .filter(([, value]) => value.count >= TROLL_MEMBER_BIO_UPDATE_EVERY)
+          .sort((a, b) => b[1].count - a[1].count);
+        for (const [userId, value] of candidates) {
+          if (processed >= TrollMemberBioService.BACKFILL_MAX_PER_RUN) {
+            break;
+          }
+          const key = `${chatId}:${userId}`;
+          if (this.inFlight.has(key)) {
+            continue;
+          }
+          const last = this.lastRunAt.get(key) ?? 0;
+          if (Date.now() - last < TROLL_MEMBER_BIO_MIN_INTERVAL_MS) {
+            continue;
+          }
+          this.lastRunAt.set(key, Date.now());
+          await this.refreshBio(chatId, userId, value.name);
+          processed += 1;
+        }
+      }
+      if (processed) {
+        this.logger.log(`Био: бэкфилл — обработано досье ${processed}`);
+      }
+    } catch (error) {
+      this.logger.warn(`Био: бэкфилл не прошёл: ${this.describeError(error)}`);
+    }
   }
 
   /** Часовой распад досье: ослабшие факты вымываются без обращения к модели. */

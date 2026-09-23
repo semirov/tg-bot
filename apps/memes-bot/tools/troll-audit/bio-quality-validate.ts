@@ -21,7 +21,7 @@ const OUT_FILE = process.env.BIO_VALIDATE_OUT || '/tmp/opencode/bio-quality.json
 const WINDOW = Number(process.env.BIO_VALIDATE_WINDOW || 20);
 
 /** Пользователи: Аня и Владимир (проблемные), Филипп и Артём (много self-фактов). */
-const USERS = [409036649, 7826539120, 293337587, 427722121];
+const USERS = (process.env.BIO_VALIDATE_USERS || '409036649,7826539120,293337587,427722121').split(',').map((v) => Number(v.trim()));
 
 const OLD_PROMPT = `Ты ведёшь краткое нейтральное досье на участника Telegram-чата. Из новых реплик извлеки САМЫЕ ЗНАЧИМЫЕ устойчивые факты о нём. Верни строго JSON:
 {"facts":[{"text":"факт","importance":1}]} — не больше 6 фактов.

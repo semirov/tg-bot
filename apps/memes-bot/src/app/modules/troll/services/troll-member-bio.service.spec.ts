@@ -42,6 +42,7 @@ function setup(options: {
   count?: number;
   enabled?: boolean;
   bioEnabled?: boolean;
+  chats?: any[];
 } = {}) {
   const deepSeek = {
     completeJson: jest.fn().mockResolvedValue(
@@ -63,13 +64,17 @@ function setup(options: {
     save: jest.fn().mockResolvedValue(undefined),
     update: jest.fn().mockResolvedValue({ affected: 1 }),
   };
+  const chats = {
+    find: jest.fn().mockResolvedValue(options.chats ?? []),
+  };
   const service = new TrollMemberBioService(
     deepSeek as never,
     settings as never,
     bios as never,
-    history as never
+    history as never,
+    chats as never
   );
-  return { service, deepSeek, settings, history, bios };
+  return { service, deepSeek, settings, history, bios, chats };
 }
 
 describe('TrollMemberBioService', () => {
@@ -487,5 +492,164 @@ describe('TrollMemberBioService', () => {
       expect((service as any).lastRunAt.has(`${CHAT}:${USER}`)).toBe(false);
       expect((service as any).counters.has(`${CHAT}:${USER}`)).toBe(false);
     });
+  });
+});
+
+describe('TrollMemberBioService — бэкфилл по истории', () => {
+  afterEach(() => jest.restoreAllMocks());
+
+  function rows(userId: number, count: number): any[] {
+    return Array.from({ length: count }, (_, index) => ({
+      id: index + 1,
+      chatId: CHAT,
+      userId,
+      userName: 'Вася',
+      role: 'user',
+      content: 'реплика',
+      messageId: index + 1,
+      replyToMessageId: null,
+      createdAt: new Date(),
+    }));
+  }
+
+  it('выключено — ничего не делает', async () => {
+    const { service, chats } = setup({ bioEnabled: false });
+    await service.backfillBiosJob();
+    expect(chats.find).not.toHaveBeenCalled();
+  });
+
+  it('дособирает досье по накопленной истории', async () => {
+    const { service, chats } = setup({ chats: [{ chatId: CHAT, isActive: true }] });
+    const refresh = jest.spyOn(service, 'refreshBio').mockResolvedValue(undefined);
+    (service as any).history.find.mockResolvedValue(rows(USER, 25));
+
+    await service.backfillBiosJob();
+
+    expect(refresh).toHaveBeenCalledWith(CHAT, USER, 'Вася');
+  });
+
+  it('пропускает участников с малым числом реплик и уже учтённых', async () => {
+    const { service } = setup({ chats: [{ chatId: CHAT, isActive: true }] });
+    const refresh = jest.spyOn(service, 'refreshBio').mockResolvedValue(undefined);
+    (service as any).history.find.mockResolvedValue(rows(USER, 5));
+
+    await service.backfillBiosJob();
+    expect(refresh).not.toHaveBeenCalled();
+  });
+
+  it('сбой репозитория не роняет сервис', async () => {
+    const { service, chats } = setup();
+    chats.find.mockResolvedValue([{ chatId: CHAT, isActive: true }]);
+    (service as any).history.find.mockRejectedValue(new Error('db'));
+    await expect(service.backfillBiosJob()).resolves.toBeUndefined();
+  });
+});
+
+describe('TrollMemberBioService — бэкфилл: ветки', () => {
+  afterEach(() => {
+    jest.useRealTimers();
+    jest.restoreAllMocks();
+  });
+
+  function rows(userId: number, count: number, startId = 1): any[] {
+    return Array.from({ length: count }, (_, index) => ({
+      id: startId + index,
+      chatId: CHAT,
+      userId,
+      userName: `u${userId}`,
+      role: 'user',
+      content: 'реплика',
+      messageId: startId + index,
+      replyToMessageId: null,
+      createdAt: new Date(),
+    }));
+  }
+
+  it('onModuleInit планирует бэкфилл', () => {
+    jest.useFakeTimers();
+    const { service } = setup();
+    const spy = jest.spyOn(service, 'backfillBiosJob').mockResolvedValue(undefined);
+    service.onModuleInit();
+    jest.advanceTimersByTime(20_000);
+    expect(spy).toHaveBeenCalled();
+  });
+
+  it('пропускает пустые чаты и уже учтённые реплики', async () => {
+    const { service, chats, bios, history } = setup({
+      chats: [
+        { chatId: 1, isActive: true },
+        { chatId: 2, isActive: true },
+        { chatId: 3, isActive: true },
+      ],
+    });
+    const refresh = jest.spyOn(service, 'refreshBio').mockResolvedValue(undefined);
+    history.find.mockImplementation(async ({ where }: any) => {
+      if (where.chatId === 1) return [];
+      return rows(where.chatId * 10, 25);
+    });
+    bios.find.mockImplementation(async ({ where }: any) => {
+      if (where.chatId === 2) return [{ userId: 20, lastMessageId: 100 }];
+      return [];
+    });
+
+    await service.backfillBiosJob();
+
+    // chat1 — пусто; chat2 — всё учтено (курсор 100); chat3 — обрабатываем.
+    expect(refresh).toHaveBeenCalledTimes(1);
+    expect(refresh).toHaveBeenCalledWith(3, 30, 'u30');
+  });
+
+  it('останавливается на лимите за прогон', async () => {
+    const { service, chats, history } = setup({
+      chats: [1, 2, 3, 4, 5, 6].map((id) => ({ chatId: id, isActive: true })),
+    });
+    const refresh = jest.spyOn(service, 'refreshBio').mockResolvedValue(undefined);
+    history.find.mockImplementation(async ({ where }: any) => rows(where.chatId * 10, 25));
+
+    await service.backfillBiosJob();
+
+    expect(refresh).toHaveBeenCalledTimes(5);
+  });
+
+  it('пропускает занятые и недавно обновлённые досье', async () => {
+    const { service, chats, history } = setup({
+      chats: [
+        { chatId: 1, isActive: true },
+        { chatId: 2, isActive: true },
+      ],
+    });
+    const refresh = jest.spyOn(service, 'refreshBio').mockResolvedValue(undefined);
+    history.find.mockImplementation(async ({ where }: any) => rows(where.chatId * 10, 25));
+    (service as any).inFlight.add(`1:10`);
+    (service as any).lastRunAt.set(`2:20`, Date.now());
+
+    await service.backfillBiosJob();
+    expect(refresh).not.toHaveBeenCalled();
+  });
+
+  it('сортирует участников и останавливается внутри одного чата', async () => {
+    const { service, chats, history } = setup({ chats: [{ chatId: 1, isActive: true }] });
+    const refresh = jest.spyOn(service, 'refreshBio').mockResolvedValue(undefined);
+    const all: any[] = [];
+    for (let user = 1; user <= 6; user += 1) {
+      for (let index = 0; index < 21 + user; index += 1) {
+        all.push({
+          id: user * 1000 + index,
+          chatId: 1,
+          userId: user * 10,
+          userName: `u${user * 10}`,
+          role: 'user',
+          content: 'реплика',
+          messageId: user * 1000 + index,
+          replyToMessageId: null,
+          createdAt: new Date(),
+        });
+      }
+    }
+    history.find.mockResolvedValue(all);
+
+    await service.backfillBiosJob();
+
+    expect(refresh).toHaveBeenCalledTimes(5);
   });
 });
