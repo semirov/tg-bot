@@ -67,7 +67,7 @@ export class TrollMemberBioService implements OnModuleInit {
    * ждать, пока участники напишут 20 новых реплик.
    */
   public onModuleInit(): void {
-    const timer = setTimeout(() => void this.backfillBiosJob(), 20_000);
+    const timer = setTimeout(() => void this.backfillBiosJob(50), 20_000);
     timer.unref?.();
   }
 
@@ -295,7 +295,9 @@ export class TrollMemberBioService implements OnModuleInit {
    * досье появлялись сразу по истории, а не только после 20 новых сообщений.
    */
   @Cron(CronExpression.EVERY_10_MINUTES)
-  public async backfillBiosJob(): Promise<void> {
+  public async backfillBiosJob(
+    limit: number = TrollMemberBioService.BACKFILL_MAX_PER_RUN
+  ): Promise<void> {
     const s = this.settings.current;
     if (!s.enabled || !s.memberBioEnabled) {
       return;
@@ -305,7 +307,7 @@ export class TrollMemberBioService implements OnModuleInit {
       const since = new Date(Date.now() - TROLL_HISTORY_TTL_HOURS * 60 * 60 * 1000);
       let processed = 0;
       for (const chat of chats) {
-        if (processed >= TrollMemberBioService.BACKFILL_MAX_PER_RUN) {
+        if (processed >= limit) {
           break;
         }
         const chatId = Number(chat.chatId);
@@ -343,7 +345,7 @@ export class TrollMemberBioService implements OnModuleInit {
           .filter(([userId, value]) => value.count >= (hasFacts.has(userId) ? TROLL_MEMBER_BIO_UPDATE_EVERY : 1))
           .sort((a, b) => b[1].count - a[1].count);
         for (const [userId, value] of candidates) {
-          if (processed >= TrollMemberBioService.BACKFILL_MAX_PER_RUN) {
+          if (processed >= limit) {
             break;
           }
           const key = `${chatId}:${userId}`;
