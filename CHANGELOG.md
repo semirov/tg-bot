@@ -1,3 +1,10 @@
+## [0.36.2](https://github.com/semirov/tg-bot/compare/v0.36.1...v0.36.2) (2026-09-23)
+
+
+### Bug Fixes
+
+* **troll:** не сохранять разовые действия и реакции в досье ([8f0dd04](https://github.com/semirov/tg-bot/commit/8f0dd04fbd749932eea588f9fcad1abf66a5a104))
+
 ## [0.36.1](https://github.com/semirov/tg-bot/compare/v0.36.0...v0.36.1) (2026-09-22)
 
 

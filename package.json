@@ -1,6 +1,6 @@
 {
   "name": "filipp-tg",
-  "version": "0.36.1",
+  "version": "0.36.2",
   "license": "MIT",
   "scripts": {
     "start:memes-bot": "nx serve memes-bot",
