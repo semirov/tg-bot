@@ -204,10 +204,24 @@ describe('TrollMemberTagsService', () => {
     expect(deepSeek.completeJson).not.toHaveBeenCalled();
   });
 
-  it('не на границе десятка — анализа нет', async () => {
-    const { service, history } = setup({ count: TROLL_MEMBER_TAG_BATCH_MESSAGES + 5 });
+  it('меньше десятка реплик — анализа нет', async () => {
+    const { service, history } = setup({ count: TROLL_MEMBER_TAG_BATCH_MESSAGES - 1 });
     await service.onUserMessage(CHAT, USER);
     expect(history.find).not.toHaveBeenCalled();
+  });
+
+  it('троттл: не долбит модель повторной попыткой', async () => {
+    const { service, history } = setup({ suggestion: null });
+    await service.onUserMessage(CHAT, USER);
+    const calls = history.find.mock.calls.length;
+    await service.onUserMessage(CHAT, USER);
+    expect(history.find.mock.calls.length).toBe(calls);
+  });
+
+  it('при накоплении больше десятка анализ всё равно идёт', async () => {
+    const { service, history } = setup({ count: TROLL_MEMBER_TAG_BATCH_MESSAGES + 5 });
+    await service.onUserMessage(CHAT, USER);
+    expect(history.find).toHaveBeenCalled();
   });
 
   it('на 10-м сообщении нарекает, объявляет и сохраняет курсор', async () => {

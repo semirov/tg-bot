@@ -33,6 +33,8 @@ import { TrollSettingsService } from './troll-settings.service';
 const HOUR_MS = 60 * 60 * 1000;
 /** Как часто перепроверять права бота в чате, мс. */
 const ACCESS_TTL_MS = 10 * 60 * 1000;
+/** Пауза между попытками оценить тег участника, мс (антифлуд неудачных попыток). */
+const ATTEMPT_THROTTLE_MS = 5 * 60 * 1000;
 
 interface ChatAccess {
   ok: boolean;
@@ -54,6 +56,8 @@ interface ChatAccess {
 export class TrollMemberTagsService {
   private readonly logger = new Logger(TrollMemberTagsService.name);
   private readonly chatAccess = new Map<number, ChatAccess>();
+  /** Время последней попытки оценить тег (ключ chatId:userId) — антифлуд. */
+  private readonly lastAttemptAt = new Map<string, number>();
 
   constructor(
     @Inject(BOT) private readonly bot: Bot<BotContext>,
@@ -102,10 +106,7 @@ export class TrollMemberTagsService {
     };
 
     const freshCount = await this.history.count({ where });
-    if (
-      freshCount < TROLL_MEMBER_TAG_BATCH_MESSAGES ||
-      freshCount % TROLL_MEMBER_TAG_BATCH_MESSAGES !== 0
-    ) {
+    if (freshCount < TROLL_MEMBER_TAG_BATCH_MESSAGES) {
       return;
     }
     if (
@@ -115,6 +116,13 @@ export class TrollMemberTagsService {
     ) {
       return;
     }
+    // Короткий троттл: не долбим модель, если предыдущая попытка ничего не дала.
+    const attemptKey = `${chatId}:${uid}`;
+    const lastAttempt = this.lastAttemptAt.get(attemptKey) ?? 0;
+    if (now.getTime() - lastAttempt < ATTEMPT_THROTTLE_MS) {
+      return;
+    }
+    this.lastAttemptAt.set(attemptKey, now.getTime());
 
     const fresh = await this.history.find({
       where,
