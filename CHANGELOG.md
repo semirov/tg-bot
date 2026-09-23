@@ -1,3 +1,10 @@
+# [0.37.0](https://github.com/semirov/tg-bot/compare/v0.36.2...v0.37.0) (2026-09-23)
+
+
+### Features
+
+* **scheduler:** пользовательские посты вставляются в ближайшие зазоры сетки ([a2b62fc](https://github.com/semirov/tg-bot/commit/a2b62fc624fee2a30effa64433ff0e58fc3bb9d8))
+
 ## [0.36.2](https://github.com/semirov/tg-bot/compare/v0.36.1...v0.36.2) (2026-09-23)
 
 
