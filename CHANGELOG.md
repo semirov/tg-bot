@@ -1,3 +1,12 @@
+## [0.37.1](https://github.com/semirov/tg-bot/compare/v0.37.0...v0.37.1) (2026-09-23)
+
+
+### Bug Fixes
+
+* **troll:** досье собираются по истории (бэкфилл), а не только после 20 новых реплик ([9bb62bf](https://github.com/semirov/tg-bot/commit/9bb62bfb4f2333e6231f49bd5c0d5543d0734612))
+* **troll:** на старте бэкфилл досье берёт больше участников за раз ([fc274b3](https://github.com/semirov/tg-bot/commit/fc274b30890ef16b319ae8e765f9de00cc94d5ff))
+* **troll:** фильтр мусора на рендере досье и добор хвостов реплик ([50c048e](https://github.com/semirov/tg-bot/commit/50c048e8ef0f482b7fe6d30d894a71c3fc2019cb))
+
 # [0.37.0](https://github.com/semirov/tg-bot/compare/v0.36.2...v0.37.0) (2026-09-23)
 
 
