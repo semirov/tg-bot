@@ -19,7 +19,7 @@ import {
   TROLL_SUMMARY_MAX_CHARS,
   TROLL_SUMMARY_MAX_MESSAGES,
 } from '../constants/troll-limits';
-import { TrollService } from './troll.service';
+import { describeTimeOfDay, TrollService } from './troll.service';
 
 // DeepSeekService тянет axios (ESM) — подменяем модуль, сервис в тестах подменяется вручную.
 jest.mock('./deepseek.service', () => ({ DeepSeekService: class DeepSeekService {} }));
@@ -425,6 +425,14 @@ describe('TrollService — onMessage', () => {
     const { service, memberTags } = createService();
     await (service as any).onMessage(makeCtx({ message: { message_id: 10, text: 'привет' } }));
     expect(memberTags.onUserMessage).toHaveBeenCalledWith(CHAT, USER);
+  });
+
+  it('переживает сбой анализа тегов и обновления био', async () => {
+    const { service, memberTags, memberBio } = createService();
+    memberTags.onUserMessage.mockRejectedValue(new Error('tag boom'));
+    memberBio.noteUserMessage.mockRejectedValue(new Error('bio boom'));
+    await (service as any).onMessage(makeCtx({ message: { message_id: 10, text: 'привет' } }));
+    await flush();
   });
 
   it('отвечает списком команд на вопрос о возможностях', async () => {
@@ -1899,6 +1907,17 @@ describe('TrollService — кривляние и сарказм', () => {
   });
 });
 
+describe('describeTimeOfDay', () => {
+  const at = (utcHour: number) => new Date(Date.UTC(2026, 0, 1, utcHour));
+
+  it('определяет время суток по Москве (UTC+3)', () => {
+    expect(describeTimeOfDay(at(2))).toBe('утро'); // 5 МСК
+    expect(describeTimeOfDay(at(9))).toBe('день'); // 12 МСК
+    expect(describeTimeOfDay(at(15))).toBe('вечер'); // 18 МСК
+    expect(describeTimeOfDay(at(21))).toBe('ночь'); // 0 МСК
+  });
+});
+
 describe('TrollService — утилиты', () => {
   it('buildCriminalReply формирует текст с высокой серьёзностью и пояснением', () => {
     const { service } = createService();
@@ -2322,9 +2341,147 @@ describe('TrollService — дополнительные ветвления', () 
       deepSeek.describeImage.mockResolvedValue(null);
       await (service as any).enrichPhotoDescription(ctx, 1, '[картинка]');
 
+      deepSeek.describeImage.mockResolvedValue('{}');
+      await (service as any).enrichPhotoDescription(ctx, 1, '[картинка]');
+
       (axios as any).get.mockRejectedValue(new Error('net'));
       await (service as any).enrichPhotoDescription(ctx, 1, '[картинка]');
     });
+
+    it('enrichStickerDescription: без стикера и без ключа выходит', async () => {
+      const { service, config } = createService();
+      await (service as any).enrichStickerDescription(
+        makeCtx({ message: { message_id: 10 } }),
+        1,
+        '[стикер]'
+      );
+
+      config.deepseekApiKey = 'key';
+      const noSticker = makeCtx({ message: { message_id: 11 } });
+      await (service as any).enrichStickerDescription(noSticker, 1, '[стикер]');
+    });
+
+    it('enrichStickerDescription: статичный стикер — file_id и эмодзи', async () => {
+      const { service, config, deepSeek, history } = createService();
+      config.deepseekApiKey = 'key';
+      config.botToken = 'token';
+      const ctx = makeCtx({
+        message: {
+          message_id: 10,
+          sticker: { file_id: 'sf1', emoji: '😂', is_animated: false, is_video: false },
+        },
+      });
+      (axios as any).get.mockResolvedValue({
+        data: Buffer.from('x'),
+        headers: { 'content-type': 'image/webp' },
+      });
+      deepSeek.describeImage.mockResolvedValue(
+        JSON.stringify({ category: 'стикер', summary: 'кот плачет' })
+      );
+
+      await (service as any).enrichStickerDescription(ctx, 5, '[стикер]');
+
+      expect(ctx.api.getFile).toHaveBeenCalledWith('sf1');
+      expect(history.update).toHaveBeenCalledWith(
+        5,
+        expect.objectContaining({ content: expect.stringContaining('[стикер 😂]') })
+      );
+      expect(history.update).toHaveBeenCalledWith(
+        5,
+        expect.objectContaining({ content: expect.stringContaining('кот плачет') })
+      );
+    });
+
+    it('enrichStickerDescription: анимированный/видео — thumbnail (первый кадр)', async () => {
+      const { service, config, deepSeek } = createService();
+      config.deepseekApiKey = 'key';
+      config.botToken = 'token';
+      const ctx = makeCtx({
+        message: {
+          message_id: 10,
+          sticker: {
+            file_id: 'tgs1',
+            emoji: '🔥',
+            is_animated: true,
+            is_video: false,
+            thumbnail: { file_id: 'thumb1' },
+          },
+        },
+      });
+      (axios as any).get.mockResolvedValue({ data: Buffer.from('x'), headers: {} });
+      deepSeek.describeImage.mockResolvedValue(
+        JSON.stringify({ category: 'стикер', summary: 'огонь' })
+      );
+
+      await (service as any).enrichStickerDescription(ctx, 5, '[стикер]');
+
+      expect(ctx.api.getFile).toHaveBeenCalledWith('thumb1');
+      expect(ctx.api.getFile).not.toHaveBeenCalledWith('tgs1');
+    });
+
+    it('enrichStickerDescription: анимированный без превью и пустое описание не роняют', async () => {
+      const { service, config, deepSeek } = createService();
+      config.deepseekApiKey = 'key';
+      config.botToken = 'token';
+
+      // Анимированный без thumbnail → fileId пуст → тихий выход.
+      const noThumb = makeCtx({
+        message: {
+          message_id: 10,
+          sticker: { file_id: 'tgs1', emoji: '🔥', is_animated: true, is_video: false },
+        },
+      });
+      await (service as any).enrichStickerDescription(noThumb, 1, '[стикер]');
+      expect(deepSeek.describeImage).not.toHaveBeenCalled();
+
+      // Пустое описание модели → тихий выход.
+      const staticCtx = makeCtx({
+        message: {
+          message_id: 11,
+          sticker: { file_id: 'sf1', emoji: '😂', is_animated: false, is_video: false },
+        },
+      });
+      (axios as any).get.mockResolvedValue({ data: Buffer.from('x'), headers: {} });
+      deepSeek.describeImage.mockResolvedValue(null);
+      await (service as any).enrichStickerDescription(staticCtx, 1, '[стикер]');
+
+      // Пустой JSON-ответ модели → renderImageDescription даёт null → тихий выход.
+      deepSeek.describeImage.mockResolvedValue('{}');
+      await (service as any).enrichStickerDescription(staticCtx, 1, '[стикер]');
+    });
+  });
+
+  it('onMessage разбирает стикер vision-моделью и пишет эмодзи в историю', async () => {
+    const { service, history, deepSeek, settingsSvc, config } = createService();
+    settingsSvc.current = settings({ visionEnabled: true });
+    config.deepseekApiKey = 'key';
+    config.botToken = 'token';
+    config.tgEnv = 'prod';
+    history.insert.mockResolvedValue({ identifiers: [{ id: 124 }] });
+    (axios as any).get.mockResolvedValue({
+      data: Buffer.from('image-bytes'),
+      headers: { 'content-type': 'image/webp' },
+    });
+    deepSeek.describeImage.mockResolvedValue(
+      JSON.stringify({ category: 'стикер', summary: 'кот в шляпе' })
+    );
+
+    await (service as any).onMessage(
+      makeCtx({
+        message: {
+          message_id: 10,
+          sticker: { file_id: 'sf1', emoji: '🤡', is_animated: false, is_video: false },
+        },
+      })
+    );
+    await flush();
+    await flush();
+
+    expect(deepSeek.describeImage).toHaveBeenCalledTimes(1);
+    expect(history.update).toHaveBeenCalledWith(
+      124,
+      expect.objectContaining({ content: expect.stringContaining('[стикер 🤡]') })
+    );
   });
 
   describe('vision: maybeCommentOnImage', () => {

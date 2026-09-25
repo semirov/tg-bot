@@ -122,6 +122,20 @@ describe('TrollMemberBioService', () => {
       expect(saved.facts[0].text).toBe('Живёт в Санкт-Петербурге');
     });
 
+    it('сохраняет события и мнение', async () => {
+      const { service, bios } = setup({
+        extracted: {
+          facts: [{ text: 'Живёт в Санкт-Петербурге', importance: 4, self: true, evidence: 'живу в спб' }],
+          events: ['проебал дедлайн', 42, ''],
+          opinion: 'зануда, но смешной',
+        },
+      });
+      await service.refreshBio(CHAT, USER, 'Вася');
+      const saved = bios.save.mock.calls[0][0];
+      expect(saved.events).toEqual([{ text: 'проебал дедлайн', seenAt: expect.any(Number) }]);
+      expect(saved.opinion).toBe('зануда, но смешной');
+    });
+
     it('сливает с существующим досье и считает ядро', async () => {
       const stored = bioRow({
         lastMessageId: 5,
@@ -204,6 +218,39 @@ describe('TrollMemberBioService', () => {
       expect(result!.facts).toEqual(['Живёт в СПб']);
     });
 
+    it('включает события и мнение, даже без фактов', async () => {
+      const all = [
+        bioRow({
+          userId: USER,
+          userName: 'Вася',
+          facts: [],
+          events: [{ text: 'проебал дедлайн', seenAt: Date.now() }],
+          opinion: 'зануда, но смешной',
+        }),
+      ];
+      const { service } = setup({ all });
+      const result = await service.buildInjection(CHAT, [USER]);
+      expect(result).not.toBeNull();
+      expect(result!.body).toContain('недавно: проебал дедлайн');
+      expect(result!.body).toContain('мнение: зануда, но смешной');
+    });
+
+    it('подставляет «участник», когда имя сантайзится в пустоту', async () => {
+      const fact = {
+        text: 'Живёт в СПб',
+        importance: 3,
+        count: 2,
+        firstSeenAt: Date.now(),
+        lastSeenAt: Date.now(),
+        baseWeight: 2,
+        weight: 2,
+      };
+      const all = [bioRow({ userId: USER, userName: '<>', facts: [fact] })];
+      const { service } = setup({ all });
+      const result = await service.buildInjection(CHAT, [USER]);
+      expect(result!.body).toContain('участник');
+    });
+
     it('сбой репозитория — null', async () => {
       const { service, bios } = setup();
       bios.find.mockRejectedValue(new Error('db'));
@@ -270,6 +317,27 @@ describe('TrollMemberBioService', () => {
       await service.refreshBio(CHAT, USER, 'Вася');
       const saved = bios.save.mock.calls[0][0];
       expect(saved.facts.map((item: any) => item.text)).toEqual(['строковый факт про спб']);
+    });
+
+    it('распознаёт valence: позитив, негатив, нейтраль и мусор', async () => {
+      const { service, bios } = setup({
+        extracted: {
+          facts: [
+            { text: 'позитив', importance: 3, self: true, evidence: 'да', valence: 1 },
+            { text: 'негатив', importance: 3, self: true, evidence: 'да', valence: -1 },
+            { text: 'нейтраль', importance: 3, self: true, evidence: 'да', valence: 0 },
+            { text: 'мусор', importance: 3, self: true, evidence: 'да', valence: 'abc' },
+          ],
+        },
+      });
+      await service.refreshBio(CHAT, USER, 'Вася');
+      const saved = bios.save.mock.calls[0][0];
+      expect(saved.facts.map((f: any) => [f.text, f.valence])).toEqual([
+        ['позитив', 1],
+        ['негатив', -1],
+        ['нейтраль', 0],
+        ['мусор', 0],
+      ]);
     });
 
     it('обрезает факты по потолку символов', async () => {

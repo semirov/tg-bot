@@ -11,7 +11,7 @@ import {
   TROLL_MEMBER_BIO_WEIGHT_INITIAL,
   TROLL_MEMBER_BIO_WEIGHT_MAX,
 } from '../constants/troll-limits';
-import { TrollMemberBioFact } from '../entities/troll-member-bio.entity';
+import { TrollMemberBioEvent, TrollMemberBioFact } from '../entities/troll-member-bio.entity';
 
 const HOUR_MS = 60 * 60 * 1000;
 
@@ -141,6 +141,8 @@ export function decayedWeight(fact: TrollMemberBioFact, nowMs: number): number {
 export interface ExtractedFact {
   text: string;
   importance: number;
+  /** Эмоциональная окраска: +1 позитив, 0 нейтрально, -1 негатив. По умолчанию 0. */
+  valence?: number;
 }
 
 export interface MergeResult {
@@ -148,6 +150,15 @@ export interface MergeResult {
   added: number;
   promoted: number;
   dropped: number;
+}
+
+/** Приводит valence к -1/0/1. */
+function clampValence(value: unknown): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return 0;
+  if (parsed > 0) return 1;
+  if (parsed < 0) return -1;
+  return 0;
 }
 
 /**
@@ -173,6 +184,7 @@ export function mergeFacts(
     if (!text || text.length < 3 || looksLikePii(text) || looksLikeTopicNotBiography(text)) {
       continue;
     }
+    const valence = clampValence(candidate.valence);
     let best: TrollMemberBioFact | null = null;
     let bestScore = 0;
     for (const fact of facts) {
@@ -188,6 +200,8 @@ export function mergeFacts(
       best.baseWeight = Math.min(TROLL_MEMBER_BIO_WEIGHT_MAX, best.baseWeight + TROLL_MEMBER_BIO_WEIGHT_BOOST);
       best.lastSeenAt = nowMs;
       best.importance = Math.max(best.importance, Math.min(5, Math.max(1, Math.round(candidate.importance) || 1)));
+      // Свежая окраска перекрывает старую (последний тон важнее).
+      best.valence = valence;
       if (!wasCore && best.count >= TROLL_MEMBER_BIO_CORE_MIN) {
         promoted += 1;
       }
@@ -200,6 +214,7 @@ export function mergeFacts(
         lastSeenAt: nowMs,
         baseWeight: TROLL_MEMBER_BIO_WEIGHT_INITIAL,
         weight: TROLL_MEMBER_BIO_WEIGHT_INITIAL,
+        valence,
       });
       added += 1;
     }
@@ -224,6 +239,57 @@ export function decayOnly(existing: TrollMemberBioFact[], nowMs: number): { fact
   return { facts: alive, dropped: facts.length - alive.length };
 }
 
+/** Полное извлечение досье: факты + события + мнение о человеке. */
+export interface BioExtraction {
+  facts: ExtractedFact[];
+  events: string[];
+  opinion: string | null;
+}
+
+/** Сколько живёт событие эпизодической памяти, мс (7 суток). */
+const EVENT_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+/** Максимум событий в досье. */
+const EVENT_MAX = 10;
+
+/**
+ * Сливает новые события с уже хранящимися: повторные обновляют seenAt,
+ * старые (дольше EVENT_TTL_MS) вымываются.
+ */
+export function mergeEvents(
+  existing: TrollMemberBioEvent[] | null,
+  extracted: string[],
+  nowMs: number
+): TrollMemberBioEvent[] {
+  const map = new Map<string, TrollMemberBioEvent>();
+  for (const event of existing ?? []) {
+    if (event && event.text) {
+      map.set(event.text, { text: event.text, seenAt: Number(event.seenAt) || nowMs });
+    }
+  }
+  for (const raw of extracted) {
+    const text = sanitizeMemoryText(raw, 80);
+    if (!text || text.length < 3 || looksLikePii(text) || looksLikeTopicNotBiography(text)) {
+      continue;
+    }
+    map.set(text, { text, seenAt: nowMs });
+  }
+  return [...map.values()]
+    .filter((event) => nowMs - event.seenAt < EVENT_TTL_MS)
+    .slice(0, EVENT_MAX);
+}
+
+/** Очищает мнение бота о человеке: одна строка, без разметки и PII. */
+export function sanitizeOpinion(raw: unknown): string | null {
+  if (typeof raw !== 'string') {
+    return null;
+  }
+  const text = sanitizeMemoryText(raw, 120);
+  if (!text || text.length < 3 || looksLikePii(text)) {
+    return null;
+  }
+  return text;
+}
+
 /** Рендерит досье текстом: только «живые» факты, в потолок символов (стабильные — первыми). */
 export function renderBioText(facts: TrollMemberBioFact[], maxChars: number, nowMs = Date.now()): string {
   const lines: string[] = [];
@@ -236,7 +302,8 @@ export function renderBioText(facts: TrollMemberBioFact[], maxChars: number, now
     if (!text || looksLikePii(text) || looksLikeTopicNotBiography(text)) {
       continue;
     }
-    const line = `- ${text}`;
+    const marker = fact.valence === 1 ? '[+] ' : fact.valence === -1 ? '[-] ' : '';
+    const line = `- ${marker}${text}`;
     if (used + line.length + 1 > maxChars) {
       continue;
     }

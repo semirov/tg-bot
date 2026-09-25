@@ -48,6 +48,11 @@ describe('restoreNameCase', () => {
   it('не трогает текст без имени', () => {
     expect(restoreNameCase('всем привет', 'Вася Пупкин (@vasya)')).toBe('всем привет');
   });
+
+  it('пустой текст и пустое имя возвращаются как есть', () => {
+    expect(restoreNameCase('', 'Вася Пупкин (@vasya)')).toBe('');
+    expect(restoreNameCase('привет', '(@onlynick)')).toBe('привет');
+  });
 });
 
 describe('TrollNameRegistry', () => {
@@ -122,6 +127,7 @@ describe('TrollNameRegistry', () => {
     expect(registry.firstName(1, 42)).toBe('Konstantin');
     expect(registry.firstName(1, 999)).toBeNull();
     expect(registry.firstName(1)).toBeNull();
+    expect(registry.firstName(999, 42)).toBeNull();
   });
 
   it('restoreNames использует каноническое имя даже для строчного отображаемого', () => {

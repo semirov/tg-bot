@@ -17,9 +17,11 @@ import {
   looksLikePii,
   looksLikeTopicNotBiography,
   evidenceLooksCopied,
+  mergeEvents,
   mergeFacts,
   normalizeFact,
   renderBioText,
+  sanitizeOpinion,
 } from './troll-bio';
 
 const HOUR_MS = 60 * 60 * 1000;
@@ -99,6 +101,7 @@ describe('troll-bio', () => {
       expect(evidenceLooksCopied('плачу 1к за безлимит')).toBe(false);
       expect(evidenceLooksCopied('у нас в падике ремонт')).toBe(false);
       expect(evidenceLooksCopied('мы с коллегами сделали')).toBe(false);
+      expect(evidenceLooksCopied('наш отдел и я')).toBe(false);
     });
   });
 
@@ -278,6 +281,87 @@ describe('troll-bio', () => {
       const big = fact({ text: 'б'.repeat(50) });
       const small = fact({ text: 'мелкий' });
       expect(renderBioText([stale, empty, big, small], 20, NOW)).toBe('- мелкий');
+    });
+
+    it('помечает valence маркером [+] и [-]', () => {
+      const pos = fact({ text: 'любит мемы', valence: 1 });
+      const neg = fact({ text: 'вечно ноет', valence: -1 });
+      const neu = fact({ text: 'живёт в спб' });
+      expect(renderBioText([pos, neg, neu], 500, NOW)).toBe(
+        '- [+] любит мемы\n- [-] вечно ноет\n- живёт в спб'
+      );
+    });
+  });
+
+  describe('mergeEvents', () => {
+    const TTL = 7 * 24 * 60 * 60 * 1000;
+
+    it('добавляет новые события и вымывает старые по TTL', () => {
+      const now = 2_000_000_000_000;
+      const old = now - TTL - 1;
+      const result = mergeEvents(
+        [
+          { text: 'старое событие', seenAt: old },
+          { text: 'свежее событие', seenAt: now - 1000 },
+        ],
+        ['проебал дедлайн'],
+        now
+      );
+      const texts = result.map((e) => e.text);
+      expect(texts).toContain('свежее событие');
+      expect(texts).toContain('проебал дедлайн');
+      expect(texts).not.toContain('старое событие');
+    });
+
+    it('дедуплицирует повторные события и обновляет seenAt', () => {
+      const now = 2_000_000_000_000;
+      const result = mergeEvents([{ text: 'сходил на шашлыки', seenAt: now - 5000 }], ['сходил на шашлыки'], now);
+      expect(result).toHaveLength(1);
+      expect(result[0].seenAt).toBe(now);
+    });
+
+    it('отсеивает пустые, короткие, PII и темы', () => {
+      const now = 2_000_000_000_000;
+      const result = mergeEvents(
+        null,
+        ['', 'ab', 'телефон +7 900 123 45 67', 'обсуждал блокчейн'],
+        now
+      );
+      expect(result).toHaveLength(0);
+    });
+
+    it('принимает null существующих', () => {
+      const result = mergeEvents(null, ['событие'], 2_000_000_000_000);
+      expect(result).toHaveLength(1);
+      expect(result[0].text).toBe('событие');
+    });
+
+    it('пропускает null и пустые события в существующих', () => {
+      const now = 2_000_000_000_000;
+      const result = mergeEvents(
+        [null, { text: '', seenAt: now }, { text: 'ок', seenAt: now }] as never,
+        [],
+        now
+      );
+      expect(result).toHaveLength(1);
+      expect(result[0].text).toBe('ок');
+    });
+  });
+
+  describe('sanitizeOpinion', () => {
+    it('возвращает null для не-строки и короткого', () => {
+      expect(sanitizeOpinion(undefined)).toBeNull();
+      expect(sanitizeOpinion(42)).toBeNull();
+      expect(sanitizeOpinion('')).toBeNull();
+      expect(sanitizeOpinion('ab')).toBeNull();
+    });
+
+    it('возвращает null для PII', () => {
+      expect(sanitizeOpinion('живёт на ул. Ленина 5')).toBeNull();
+    });
+
+    it('возвращает очищенное мнение', () => {
+      expect(sanitizeOpinion('зануда, но смешной')).toBe('зануда, но смешной');
     });
   });
 

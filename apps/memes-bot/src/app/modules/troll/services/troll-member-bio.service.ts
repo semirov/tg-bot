@@ -20,7 +20,7 @@ import { TrollChatEntity } from '../entities/troll-chat.entity';
 import { TrollMemberBioEntity, TrollMemberBioFact } from '../entities/troll-member-bio.entity';
 import { TrollMessageEntity } from '../entities/troll-message.entity';
 import { sanitizeTranscript, wrapUserContent } from '../utils/troll-sanitizer';
-import { ExtractedFact, decayOnly, evidenceLooksCopied, mergeFacts, renderBioText, sanitizeMemoryText } from '../utils/troll-bio';
+import { BioExtraction, ExtractedFact, decayOnly, evidenceLooksCopied, mergeEvents, mergeFacts, renderBioText, sanitizeMemoryText, sanitizeOpinion } from '../utils/troll-bio';
 import { DeepSeekService } from './deepseek.service';
 import { TrollSettingsService } from './troll-settings.service';
 
@@ -148,8 +148,10 @@ export class TrollMemberBioService implements OnModuleInit {
       }
 
       const now = Date.now();
-      const merged = mergeFacts(bio?.facts ?? [], extracted, now);
+      const merged = mergeFacts(bio?.facts ?? [], extracted.facts, now);
       const capped = this.capFacts(merged.facts, TROLL_MEMBER_BIO_MAX_CHARS);
+      const events = mergeEvents(bio?.events ?? null, extracted.events, now);
+      const opinion = extracted.opinion ?? bio?.opinion ?? null;
       const newestId = rows[rows.length - 1].id;
       await this.bios.save({
         ...(bio ? { id: bio.id } : {}),
@@ -157,12 +159,14 @@ export class TrollMemberBioService implements OnModuleInit {
         userId,
         userName: userName ?? bio?.userName ?? null,
         facts: capped,
+        events,
+        opinion,
         lastMessageId: newestId,
         lastEvaluatedAt: new Date(now),
       });
       this.counters.set(key, 0);
       this.logger.log(
-        `Био: чат ${chatId} участник ${userId} — фактов ${capped.length} (+${merged.added}, ядро +${merged.promoted}, вымыто ${merged.dropped})`
+        `Био: чат ${chatId} участник ${userId} — фактов ${capped.length} (+${merged.added}, ядро +${merged.promoted}, вымыто ${merged.dropped}), событий ${events.length}${opinion ? ', мнение есть' : ''}`
       );
     } catch (error) {
       this.logger.warn(`Био: чат ${chatId} участник ${userId} — сбой: ${this.describeError(error)}`);
@@ -175,7 +179,7 @@ export class TrollMemberBioService implements OnModuleInit {
     name: string,
     dossier: string[],
     rows: TrollMessageEntity[]
-  ): Promise<ExtractedFact[] | null> {
+  ): Promise<BioExtraction | null> {
     const transcript = sanitizeTranscript(
       rows
         .map((row, index) => `${index + 1}) ${(row.content ?? '').replace(/\s*\n+\s*/g, ' ⏎ ').trim()}`)
@@ -191,7 +195,7 @@ export class TrollMemberBioService implements OnModuleInit {
       transcript,
     ].join('\n');
 
-    const parsed = await this.deepSeek.completeJson<{ facts?: unknown }>(
+    const parsed = await this.deepSeek.completeJson<{ facts?: unknown; events?: unknown; opinion?: unknown }>(
       MEMBER_BIO_EXTRACT_PROMPT,
       wrapUserContent(user),
       { temperature: 0.2, maxTokens: TROLL_MEMBER_BIO_MAX_TOKENS, label: 'био' }
@@ -201,12 +205,18 @@ export class TrollMemberBioService implements OnModuleInit {
       return null;
     }
     const raw = parsed.facts;
-    return raw
+    const facts = raw
       .map((item): ExtractedFact | null => {
         if (!item || typeof item !== 'object') {
           return null;
         }
-        const record = item as { text?: unknown; importance?: unknown; self?: unknown; evidence?: unknown };
+        const record = item as {
+          text?: unknown;
+          importance?: unknown;
+          self?: unknown;
+          evidence?: unknown;
+          valence?: unknown;
+        };
         const text = typeof record.text === 'string' ? record.text : '';
         const evidence = typeof record.evidence === 'string' ? record.evidence.trim() : '';
         // Факт без подтверждения «человек сказал это о себе» не берём.
@@ -215,9 +225,24 @@ export class TrollMemberBioService implements OnModuleInit {
           return null;
         }
         const importance = Math.min(5, Math.max(1, Math.round(Number(record.importance) || 3)));
-        return { text, importance };
+        const valenceNumber = Number(record.valence);
+        const valence = Number.isFinite(valenceNumber)
+          ? valenceNumber > 0
+            ? 1
+            : valenceNumber < 0
+              ? -1
+              : 0
+          : 0;
+        return { text, importance, valence };
       })
       .filter((fact): fact is ExtractedFact => fact !== null);
+
+    const events = Array.isArray(parsed.events)
+      ? parsed.events.filter((item): item is string => typeof item === 'string')
+      : [];
+    const opinion = sanitizeOpinion(parsed.opinion);
+
+    return { facts, events, opinion };
   }
 
   /** Оставляет столько фактов, сколько влезает в потолок символов. */
@@ -260,11 +285,22 @@ export class TrollMemberBioService implements OnModuleInit {
         }
         const rowFacts = row.facts ?? [];
         const rendered = renderBioText(rowFacts, TROLL_MEMBER_BIO_MAX_CHARS);
-        if (!rendered) {
+        const events = (row.events ?? [])
+          .map((event) => sanitizeMemoryText(event.text, 80))
+          .filter(Boolean);
+        const opinion = sanitizeOpinion(row.opinion);
+        if (!rendered && !events.length && !opinion) {
           continue;
         }
         const safeName = sanitizeMemoryText(row.userName ?? 'участник', 64) || 'участник';
-        const block = `${safeName} (${Number(row.userId)}):\n${rendered}`;
+        const parts = [rendered];
+        if (events.length) {
+          parts.push(`недавно: ${events.join('; ')}`);
+        }
+        if (opinion) {
+          parts.push(`мнение: ${opinion}`);
+        }
+        const block = `${safeName} (${Number(row.userId)}):\n${parts.filter(Boolean).join('\n')}`;
         if (blocks.length >= TROLL_MEMBER_BIO_INJECT_MAX_USERS || used + block.length > TROLL_MEMBER_BIO_INJECT_MAX_CHARS) {
           break;
         }

@@ -172,6 +172,15 @@ const TROLL_BIO_SAFE_REPLY = 'не твоего ума дело, спрашив�
 /** Правило учёта свежести переписки: чем старше реплика, тем меньше её влияние. */
 const RECENCY_RULE = `В расшифровке у реплик указан возраст в квадратных скобках ([5м назад], [2ч назад]). Свежие реплики важнее: опирайся на последние сообщения и текущую тему, а старое — только фон. Не продолжай закрытые темы и не тяни старый контекст, если свежие реплики его не продолжают.`;
 
+/** Время суток по Москве (UTC+3): «утро», «день», «вечер» или «ночь». */
+export function describeTimeOfDay(date = new Date()): string {
+  const hour = (date.getUTCHours() + 3) % 24;
+  if (hour >= 5 && hour < 12) return 'утро';
+  if (hour >= 12 && hour < 18) return 'день';
+  if (hour >= 18 && hour < 23) return 'вечер';
+  return 'ночь';
+}
+
 /** Кому адресован ответ — для персонализации контекста. */
 interface TrollFocus {
   userId?: number;
@@ -484,10 +493,12 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
         messageId: ctx.message?.message_id,
         replyToMessageId: ctx.message?.reply_to_message?.message_id,
       });
-      // Картинки разбираем в фоне: реплика уже сохранена как `[картинка]`,
-      // описание приедет через пару секунд и перезапишет запись.
+      // Картинки и стикеры разбираем в фоне: реплика уже сохранена как
+      // `[картинка]` / `[стикер]`, описание приедет через пару секунд и перезапишет.
       if (historyId && s.visionEnabled && ctx.message.photo?.length) {
         void this.enrichPhotoDescription(ctx, historyId, entry);
+      } else if (historyId && s.visionEnabled && ctx.message.sticker) {
+        void this.enrichStickerDescription(ctx, historyId, entry);
       }
       // Теги участников: на каждое 10-е сообщение (событийно, не по крону).
       void this.memberTags
@@ -2098,8 +2109,8 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
         ? `${focusName} (${focus.userId})`
         : focusName;
     const directive = focusLabel
-      ? `Отвечай участнику «${focusLabel}» — он к тебе обратился, id в ответ не пиши. По имени обращайся НЕ всегда: обычно просто отвечай по сути, а имя используй изредка (и тогда с большой буквы). В истории у каждого автора в скобках указан его id: если имена совпадают, различай собеседников по id и не приписывай одному чужие реплики. ${MESSAGE_REFS_RULE} ${CONVERSATION_PAUSE_RULE} ${RECENCY_RULE}`
-      : `В истории у каждого автора в скобках указан его id — не путай собеседников и не приписывай одному участнику слова другого. ${MESSAGE_REFS_RULE} ${CONVERSATION_PAUSE_RULE} ${RECENCY_RULE}`;
+      ? `Отвечай участнику «${focusLabel}» — он к тебе обратился, id в ответ не пиши. По имени обращайся НЕ всегда: обычно просто отвечай по сути, а имя используй изредка (и тогда с большой буквы). В истории у каждого автора в скобках указан его id: если имена совпадают, различай собеседников по id и не приписывай одному чужие реплики. ${MESSAGE_REFS_RULE} ${CONVERSATION_PAUSE_RULE} ${RECENCY_RULE} Сейчас: ${describeTimeOfDay()}.`
+      : `В истории у каждого автора в скобках указан его id — не путай собеседников и не приписывай одному участнику слова другого. ${MESSAGE_REFS_RULE} ${CONVERSATION_PAUSE_RULE} ${RECENCY_RULE} Сейчас: ${describeTimeOfDay()}.`;
 
     return { transcript, directive, injection };
   }
@@ -2362,11 +2373,89 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
     }
 
     const startedAt = Date.now();
+    const raw = await this.analyzeMedia(ctx, fileId);
+    if (!raw) {
+      return;
+    }
+    const description = renderImageDescription(raw);
+    if (!description) {
+      this.logger.warn(`${this.tag(ctx.chat?.id)}: vision — пустое описание`);
+      return;
+    }
+
+    const base = entry?.trim() || '[картинка]';
+    const content = `${base} — ${description}`.slice(0, TROLL_HISTORY_MAX_CHARS);
+    await this.history.update(historyId, { content });
+    this.logger.log(
+      `${this.tag(ctx.chat?.id)}: vision — картинка разобрана за ${
+        Date.now() - startedAt
+      }мс (${description.length} симв.)`
+    );
+
+    // Если модель уверена в разборе — у бота появляется шанс самому
+    // прокомментировать картинку (тот же подкол, что и на текстовые сообщения).
+    await this.maybeCommentOnImage(ctx, readImageConfidence(raw));
+  }
+
+  /**
+   * Разбирает стикер: берёт эмодзи из метаданных и описание картинки.
+   * Статичный стикер — сам файл (PNG/WebP); анимированный (TGS) и видеостикер
+   * (WebM) — статичное превью `thumbnail` (первый кадр), чтобы не рендерить
+   * анимацию.
+   */
+  private async enrichStickerDescription(
+    ctx: BotContext,
+    historyId: number,
+    _entry: string | null
+  ): Promise<void> {
+    if (!this.config.deepseekApiKey) {
+      return;
+    }
+    const sticker = ctx.message?.sticker;
+    if (!sticker) {
+      return;
+    }
+
+    const animated = sticker.is_animated || sticker.is_video;
+    const fileId = animated ? sticker.thumbnail?.file_id : sticker.file_id;
+    if (!fileId) {
+      this.logger.warn(`${this.tag(ctx.chat?.id)}: vision — у стикера нет файла/превью`);
+      return;
+    }
+
+    const startedAt = Date.now();
+    const raw = await this.analyzeMedia(ctx, fileId);
+    if (!raw) {
+      return;
+    }
+    const description = renderImageDescription(raw);
+    if (!description) {
+      this.logger.warn(`${this.tag(ctx.chat?.id)}: vision — пустое описание стикера`);
+      return;
+    }
+
+    const emoji = sticker.emoji ? ` ${sticker.emoji}` : '';
+    const content = `[стикер${emoji}] — ${description}`.slice(0, TROLL_HISTORY_MAX_CHARS);
+    await this.history.update(historyId, { content });
+    this.logger.log(
+      `${this.tag(ctx.chat?.id)}: vision — стикер${emoji} разобран за ${
+        Date.now() - startedAt
+      }мс (${description.length} симв.)`
+    );
+
+    await this.maybeCommentOnImage(ctx, readImageConfidence(raw));
+  }
+
+  /**
+   * Скачивает файл по file_id и прогоняет через vision. Возвращает сырой ответ
+   * модели или null (файл не получен, сеть, ошибка модели).
+   */
+  private async analyzeMedia(ctx: BotContext, fileId: string): Promise<string | null> {
     try {
       const file = await ctx.api.getFile(fileId);
       if (!file?.file_path) {
         this.logger.warn(`${this.tag(ctx.chat?.id)}: vision — не получил путь к файлу`);
-        return;
+        return null;
       }
 
       const url = buildTelegramFileUrl(this.config.botToken, file.file_path, this.config.tgEnv);
@@ -2377,32 +2466,15 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
       const mime = this.detectImageMime(response.headers?.['content-type'], file.file_path);
       const dataUrl = `data:${mime};base64,${Buffer.from(response.data).toString('base64')}`;
 
-      const raw = await this.deepSeek.describeImage(dataUrl, {
+      return await this.deepSeek.describeImage(dataUrl, {
         prompt: IMAGE_ANALYSIS_PROMPT,
         label: 'vision',
       });
-      const description = renderImageDescription(raw);
-      if (!description) {
-        this.logger.warn(`${this.tag(ctx.chat?.id)}: vision — пустое описание`);
-        return;
-      }
-
-      const base = entry?.trim() || '[картинка]';
-      const content = `${base} — ${description}`.slice(0, TROLL_HISTORY_MAX_CHARS);
-      await this.history.update(historyId, { content });
-      this.logger.log(
-        `${this.tag(ctx.chat?.id)}: vision — картинка разобрана за ${
-          Date.now() - startedAt
-        }мс (${description.length} симв.)`
-      );
-
-      // Если модель уверена в разборе — у бота появляется шанс самому
-      // прокомментировать картинку (тот же подкол, что и на текстовые сообщения).
-      await this.maybeCommentOnImage(ctx, readImageConfidence(raw));
     } catch (error) {
       this.logger.warn(
-        `${this.tag(ctx.chat?.id)}: vision — не удалось разобрать картинку: ${this.describeError(error)}`
+        `${this.tag(ctx.chat?.id)}: vision — не удалось разобрать файл: ${this.describeError(error)}`
       );
+      return null;
     }
   }
 
