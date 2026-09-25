@@ -47,3 +47,20 @@ Thumbs.db
 
 # Отчёты прогонов аудита: сами утилиты лежат в apps/memes-bot/tools/troll-audit
 /apps/memes-bot/tools/troll-audit/report.json
+
+# Тестовые скрипты с секретами (API ключи, пароли)
+test-*.js
+test-*.py
+analyze-*.js
+fetch_*.py
+fetch-*.js
+get-*.sh
+real-*.json
+butcher-*.md
+
+# Кэш сборки
+.angular/
+.nx/
+
+# Отдельные проекты
+obsidian-livesync/
