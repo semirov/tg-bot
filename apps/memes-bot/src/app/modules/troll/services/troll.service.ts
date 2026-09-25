@@ -1,6 +1,7 @@
 import { Inject, Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { InjectRepository } from '@nestjs/typeorm';
+import axios from 'axios';
 import { Bot, InlineKeyboard } from 'grammy';
 import type { ReactionTypeEmoji, User } from 'grammy/types';
 import { Between, In, LessThan, LessThanOrEqual, MoreThanOrEqual, Repository } from 'typeorm';
@@ -30,6 +31,7 @@ import {
   TROLL_HISTORY_MAX_CHARS,
   TROLL_HISTORY_TTL_HOURS,
   TROLL_JERK_MAX_TOKENS,
+  TROLL_LLM_TIMEOUT_MS,
   TROLL_MAX_BATCH_MESSAGES,
   TROLL_MAX_CRIMINAL_REASON_CHARS,
   TROLL_MAX_CRIMINAL_TITLE_CHARS,
@@ -50,6 +52,7 @@ import {
   TROLL_SUMMARY_MAX_MESSAGES,
   TROLL_SUMMARY_MAX_REPLY_CHARS,
   TROLL_SUMMARY_MAX_TOKENS,
+  TROLL_VISION_CONFIDENCE_MIN,
 } from '../constants/troll-limits';
 import {
   CONVERSATION_PAUSE_RULE,
@@ -59,6 +62,7 @@ import {
   FUTURE_ANGRY_PROMPT,
   FUTURE_BAD_PROMPT,
   FUTURE_GOOD_PROMPT,
+  IMAGE_ANALYSIS_PROMPT,
   JERK_PROMPT,
   MEME_DENY_PROMPT,
   MIRROR_PROMPT,
@@ -78,6 +82,11 @@ import {
 } from '../constants/troll-prompts';
 import { isAddressedToBot, isCapabilityQuestion, isNamedCall } from '../constants/troll-addresses';
 import { buildPostUrl } from '../../../shared/publication/telegram-link';
+import {
+  buildTelegramFileUrl,
+  extractTelegramFileId,
+  TelegramMediaMessageInterface,
+} from '../../../shared/publication/media-url';
 import { TrollChatEntity } from '../entities/troll-chat.entity';
 import { TrollDefectEntity } from '../entities/troll-defect.entity';
 import { TrollMessageEntity } from '../entities/troll-message.entity';
@@ -96,6 +105,7 @@ import {
 } from '../utils/troll-context';
 import { DefectCandidate, normalizeMatchText, pickDefectAnswer } from '../utils/troll-defect';
 import { findBioLeak, renderBioText } from '../utils/troll-bio';
+import { readImageConfidence, renderImageDescription } from '../utils/troll-vision';
 import {
   containsLink,
   sanitizeModelField,
@@ -435,12 +445,17 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
     );
 
     if (entry) {
-      await this.remember(chat.id, 'user', entry, {
+      const historyId = await this.remember(chat.id, 'user', entry, {
         userId: ctx.from?.id,
         userName: this.describeUser(ctx.from),
         messageId: ctx.message?.message_id,
         replyToMessageId: ctx.message?.reply_to_message?.message_id,
       });
+      // Картинки разбираем в фоне: реплика уже сохранена как `[картинка]`,
+      // описание приедет через пару секунд и перезапишет запись.
+      if (historyId && s.visionEnabled && ctx.message.photo?.length) {
+        void this.enrichPhotoDescription(ctx, historyId, entry);
+      }
       // Теги участников: на каждое 10-е сообщение (событийно, не по крону).
       void this.memberTags
         .onUserMessage(chat.id, ctx.from.id)
@@ -2250,16 +2265,16 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
       messageId?: number;
       replyToMessageId?: number;
     }
-  ): Promise<void> {
+  ): Promise<number | null> {
     const cleaned = content.trim().slice(0, TROLL_HISTORY_MAX_CHARS);
     if (!cleaned) {
-      return;
+      return null;
     }
     if (role === 'user') {
       this.trackName(chatId, meta?.userId, meta?.userName);
     }
     try {
-      await this.history.insert({
+      const result = await this.history.insert({
         chatId,
         role,
         content: cleaned,
@@ -2268,9 +2283,126 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
         messageId: meta?.messageId ?? null,
         replyToMessageId: meta?.replyToMessageId ?? null,
       });
+      return result.identifiers?.[0]?.id ?? null;
     } catch (error) {
       this.logger.warn(`История: не удалось сохранить реплику: ${this.describeError(error)}`);
+      return null;
     }
+  }
+
+  /**
+   * Смотрит картинку сообщения vision-моделью и дополняет уже сохранённую
+   * реплику описанием. Работает в фоне: реплика лежит в истории как `[картинка]`,
+   * описание приезжает через пару секунд и перезаписывает запись, чтобы бот мог
+   * ответить на вопросы по изображению. Видео и прочее медиа не анализируются.
+   */
+  private async enrichPhotoDescription(
+    ctx: BotContext,
+    historyId: number,
+    entry: string | null
+  ): Promise<void> {
+    if (!this.config.deepseekApiKey) {
+      return;
+    }
+
+    const fileId = extractTelegramFileId(
+      ctx.message as unknown as TelegramMediaMessageInterface
+    );
+    if (!fileId) {
+      return;
+    }
+
+    const startedAt = Date.now();
+    try {
+      const file = await ctx.api.getFile(fileId);
+      if (!file?.file_path) {
+        this.logger.warn(`${this.tag(ctx.chat?.id)}: vision — не получил путь к файлу`);
+        return;
+      }
+
+      const url = buildTelegramFileUrl(this.config.botToken, file.file_path, this.config.tgEnv);
+      const response = await axios.get<ArrayBuffer>(url, {
+        responseType: 'arraybuffer',
+        timeout: TROLL_LLM_TIMEOUT_MS,
+      });
+      const mime = this.detectImageMime(response.headers?.['content-type'], file.file_path);
+      const dataUrl = `data:${mime};base64,${Buffer.from(response.data).toString('base64')}`;
+
+      const raw = await this.deepSeek.describeImage(dataUrl, {
+        prompt: IMAGE_ANALYSIS_PROMPT,
+        label: 'vision',
+      });
+      const description = renderImageDescription(raw);
+      if (!description) {
+        this.logger.warn(`${this.tag(ctx.chat?.id)}: vision — пустое описание`);
+        return;
+      }
+
+      const base = entry?.trim() || '[картинка]';
+      const content = `${base} — ${description}`.slice(0, TROLL_HISTORY_MAX_CHARS);
+      await this.history.update(historyId, { content });
+      this.logger.log(
+        `${this.tag(ctx.chat?.id)}: vision — картинка разобрана за ${
+          Date.now() - startedAt
+        }мс (${description.length} симв.)`
+      );
+
+      // Если модель уверена в разборе — у бота появляется шанс самому
+      // прокомментировать картинку (тот же подкол, что и на текстовые сообщения).
+      await this.maybeCommentOnImage(ctx, readImageConfidence(raw));
+    } catch (error) {
+      this.logger.warn(
+        `${this.tag(ctx.chat?.id)}: vision — не удалось разобрать картинку: ${this.describeError(error)}`
+      );
+    }
+  }
+
+  /** MIME картинки по заголовку ответа или расширению файла Telegram. */
+  private detectImageMime(contentType: unknown, filePath: string): string {
+    if (typeof contentType === 'string') {
+      const mime = contentType.split(';')[0].trim().toLowerCase();
+      if (mime.startsWith('image/')) {
+        return mime;
+      }
+    }
+    const extension = filePath.split('.').pop()?.toLowerCase();
+    if (extension === 'png') return 'image/png';
+    if (extension === 'gif') return 'image/gif';
+    if (extension === 'webp') return 'image/webp';
+    return 'image/jpeg';
+  }
+
+  /**
+   * Случайный комментарий к картинке: срабатывает, только если vision-модель
+   * уверена в разборе, а обычный бросок подкола и кулдаун чата разрешают ответ.
+   * Если бот уже отвечает на прямое обращение — картинку не комментируем, чтобы
+   * не сдвоить реплики.
+   */
+  private async maybeCommentOnImage(ctx: BotContext, confidence: number): Promise<void> {
+    const chatId = ctx.chat?.id;
+    if (chatId === undefined) {
+      return;
+    }
+
+    const s = this.settings.current;
+    if (!s.enabled || !s.sarcasmEnabled) {
+      return;
+    }
+    if (confidence < TROLL_VISION_CONFIDENCE_MIN) {
+      this.logger.debug(
+        `${this.tag(chatId)}: картинка разобрана неуверенно (${confidence.toFixed(2)}) — без реакции`
+      );
+      return;
+    }
+    if (this.jerkBatches.has(chatId)) {
+      this.logger.debug(`${this.tag(chatId)}: идёт ответ на обращение — картинку не комментирую`);
+      return;
+    }
+
+    this.logger.log(
+      `${this.tag(chatId)}: уверенный разбор картинки (${confidence.toFixed(2)}) — пробую подкол`
+    );
+    await this.replyWithSarcasm(ctx, s);
   }
 
   /**

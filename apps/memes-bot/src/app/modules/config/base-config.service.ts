@@ -148,6 +148,16 @@ export class BaseConfigService {
   }
 
   /**
+   * Модель для разбора изображений. DeepSeek V4.1 Flash (`deepseek-flash`)
+   * принимает картинки нативно; текстовые модели (например `deepseek-v4-pro`)
+   * картинку не видят. Отдельная переменная — чтобы рабочую модель для текста
+   * можно было менять, не теряя vision.
+   */
+  get deepseekVisionModel(): string {
+    return this.configService.get<string>('DEEPSEEK_VISION_MODEL') || 'deepseek-flash';
+  }
+
+  /**
    * Режим «размышлений» модели: none | minimal | low | medium | high | xhigh | max.
    *
    * По умолчанию выключен: deepseek-flash — reasoning-модель, и при коротких

@@ -8,8 +8,9 @@ import {
   TROLL_LLM_RETRY_DELAY_MS,
   TROLL_LLM_TIMEOUT_MS,
   TROLL_MAX_CONCURRENT_REQUESTS,
+  TROLL_VISION_MAX_TOKENS,
 } from '../constants/troll-limits';
-import { DeepSeekMessage, DeepSeekOptions } from '../interfaces/troll.interface';
+import { DeepSeekContentPart, DeepSeekMessage, DeepSeekOptions } from '../interfaces/troll.interface';
 import { parseLlmJson } from '../utils/llm-json';
 import {
   DeepSeekTariff,
@@ -289,6 +290,58 @@ export class DeepSeekService {
     }
   }
 
+  /**
+   * Возвращает короткое текстовое описание изображения (vision).
+   *
+   * Изображение передаётся как base64 data URL. Изображения DeepSeek принимает
+   * только в сообщениях роли `user`, поэтому системного промпта здесь нет.
+   * Видео не поддерживается: анализируются только картинки.
+   *
+   * @param imageDataUrl data URL вида `data:image/jpeg;base64,...`
+   * @param options промпт, метка, бюджет и детализация (`low` дешевле)
+   * @returns описание или `null`, если модель не ответила/выключена
+   */
+  public async describeImage(
+    imageDataUrl: string,
+    options: {
+      prompt: string;
+      label?: string;
+      maxTokens?: number;
+      detail?: 'low' | 'high' | 'original' | 'auto';
+      model?: string;
+    }
+  ): Promise<string | null> {
+    const label = options.label ?? 'vision';
+    const maxTokens = options.maxTokens ?? TROLL_VISION_MAX_TOKENS;
+    try {
+      const result = await this.complete(
+        [
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: options.prompt },
+              {
+                type: 'image_url',
+                image_url: { url: imageDataUrl, detail: options.detail ?? 'low' },
+              },
+            ] satisfies DeepSeekContentPart[],
+          },
+        ],
+        {
+          temperature: 0.2,
+          maxTokens,
+          json: true,
+          label,
+          model: options.model ?? this.config.deepseekVisionModel,
+        }
+      );
+      return result || null;
+    } catch (error) {
+      this.logger.error(`DeepSeek vision request failed: ${this.describeError(error)}`);
+      return null;
+    }
+  }
+
   /** Текущее потребление DeepSeek за сутки (для админки). */
   public get usage(): { requests: number; tokens: number; costUsd: number; peak: boolean } {
     this.rolloverCounters();
@@ -344,7 +397,9 @@ export class DeepSeekService {
    * процесс — так удобно проверить, какая версия промпта задеплоена.
    */
   private logPrompt(messages: DeepSeekMessage[], tag = ''): void {
-    const system = messages.find((message) => message.role === 'system')?.content;
+    const system = this.messageText(
+      messages.find((message) => message.role === 'system')?.content
+    );
     if (system && !this.loggedPrompts.has(system)) {
       this.loggedPrompts.add(system);
       this.logger.debug(`${tag}LLM-промпт (${system.length} символов): ${this.flatten(system)}`);
@@ -352,9 +407,25 @@ export class DeepSeekService {
 
     const payload = messages
       .filter((message) => message.role !== 'system')
-      .map((message) => message.content)
+      .map((message) => this.messageText(message.content))
       .join('\n---\n');
     this.logger.debug(`${tag}LLM-данные (${payload.length} символов): ${this.flatten(payload)}`);
+  }
+
+  /**
+   * Приводит содержимое сообщения к тексту для лога: у мультимодального
+   * сообщения текстовые части склеиваются, а изображение помечается `[изображение]`.
+   */
+  private messageText(content: string | DeepSeekContentPart[] | undefined): string {
+    if (!content) {
+      return '';
+    }
+    if (typeof content === 'string') {
+      return content;
+    }
+    return content
+      .map((part) => (part.type === 'text' ? part.text : '[изображение]'))
+      .join(' ');
   }
 
   /** Текст одним рядом без переносов — чтобы запись лога не разваливалась. */

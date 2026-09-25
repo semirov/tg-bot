@@ -28,9 +28,26 @@ export interface CriminalStat {
   reason?: string;
 }
 
+/**
+ * Часть мультимодального сообщения. Текст — обычная строка; изображение —
+ * блок `image_url` (base64 data URL или публичная ссылка). Формат совпадает с
+ * OpenAI-совместимым Chat Completions, который принимает DeepSeek V4.1 Flash.
+ */
+export type DeepSeekContentPart =
+  | { type: 'text'; text: string }
+  | {
+      type: 'image_url';
+      image_url: { url: string; detail?: 'low' | 'high' | 'original' | 'auto' };
+    };
+
 export interface DeepSeekMessage {
   role: 'system' | 'user' | 'assistant';
-  content: string;
+  /**
+   * Строка для обычных текстовых сообщений либо массив частей, когда в
+   * сообщении есть изображение. Изображения DeepSeek принимает только в
+   * сообщениях роли `user`.
+   */
+  content: string | DeepSeekContentPart[];
 }
 
 export interface DeepSeekOptions {
@@ -108,6 +125,11 @@ export interface TrollRuntimeSettings {
   memberTagsEnabled: boolean;
   /** Вести внутренние биографии участников (долгая память) и подмешивать в диалог. */
   memberBioEnabled: boolean;
+  /**
+   * Смотреть картинки из чата vision-моделью и класть описание в историю,
+   * чтобы бот мог отвечать на вопросы по изображениям. Видео не анализируется.
+   */
+  visionEnabled: boolean;
 }
 
 /** Один предложенный тег участника от модели. */

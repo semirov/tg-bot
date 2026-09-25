@@ -28,6 +28,7 @@ describe('configuration', () => {
     'DEEPSEEK_API_KEY',
     'DEEPSEEK_BASE_URL',
     'DEEPSEEK_MODEL',
+    'DEEPSEEK_VISION_MODEL',
     'TROLL_SARCASM_CHANCE',
     'TROLL_SARCASM_COOLDOWN',
     'TROLL_MIRROR_CHANCE',
