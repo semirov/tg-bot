@@ -131,8 +131,37 @@ import { TrollSettingsService } from './troll-settings.service';
 /** Как часто обновлять «печатает…», пока идёт накопление. */
 const TYPING_REFRESH_MS = 4500;
 
-/** Реакции-эмодзи, которые бот с шансом ставит на сообщения. */
-const REACTION_EMOJIS = ['🤡', '💩'] as const;
+/** Тролльские реакции по умолчанию — бот чередует их, когда тема не распознана. */
+const DEFAULT_REACTION_EMOJIS = ['🤡', '💩'] as const;
+
+/** Тип эмодзи, которое принимает Telegram для реакции (см. ReactionTypeEmoji). */
+type ReactionEmoji = ReactionTypeEmoji['emoji'];
+
+/**
+ * Реакции «в тему»: по ключевым словам сообщения бот ставит подходящий эмодзи,
+ * а не только 🤡/💩. Порядок важен — срабатывает первое совпадение. Каждое
+ * правило — регулярка по тексту и набор эмодзи на выбор (только из допустимого
+ * Telegram-набора реакций).
+ */
+const TOPIC_REACTION_RULES: ReadonlyArray<{ pattern: RegExp; emojis: readonly ReactionEmoji[] }> = [
+  { pattern: /(смерт|уби[лйю]|труп|помер|похорон|гроб|могил|мертв)/i, emojis: ['👻'] },
+  { pattern: /(люблю|любовь|свадьб|жени|замуж|мил(ый|ая|ое)|няш|целую)/i, emojis: ['❤', '😍', '🥰'] },
+  { pattern: /(🔥|огонь|жар\b|горяч|топчик|кайф|охуенно|шикарн|красав)/i, emojis: ['🔥', '🏆', '💯'] },
+  { pattern: /(🤣|😁|смешн|ржу|лол|ахах|хах|орну|угар|прикол|порж)/i, emojis: ['🤣', '😁'] },
+  { pattern: /(😢|😭|грустн|печал|плачу|тоск|депрес|обидн|жалко)/i, emojis: ['😢', '😭', '💔'] },
+  { pattern: /(😡|🤬|злюсь|бесит|ненавижу|ярость|заебал|раздража|бешусь)/i, emojis: ['😡', '🤬', '🖕'] },
+  { pattern: /(🌭|🍌|🍓|еда|жрат|вкусн|пицц|бургер|шашлык|борщ|пельмен|кушат|голодн)/i, emojis: ['🌭', '🍌'] },
+  { pattern: /(🍾|алко|пив|буха|водк|выпить|пьян|похмел)/i, emojis: ['🍾', '🤪'] },
+  { pattern: /(🏆|спорт|качал|фитнес|бег\b|трени|гантел|пресс|рекорд)/i, emojis: ['🏆', '👏'] },
+  { pattern: /(💯|деньг|бабл|зарплат|богат|кэш|миллион|крипт|инвест)/i, emojis: ['💯', '😎'] },
+  { pattern: /(🤓|гени|умн|мозг|идея|осенило|придумал|айкью|умни)/i, emojis: ['🤓'] },
+  { pattern: /(😱|🤯|шок|охуел|офигел|афиг|пиздец|охуеть|вахуе|с ума)/i, emojis: ['🤯', '😱'] },
+  { pattern: /(🤔|сомн|не знаю|хз\b|вопро|задумал|хм)/i, emojis: ['🤔', '🤨'] },
+  { pattern: /(🥱|😴|сон\b|спат|устал|сплю|зева|высп|не высп)/i, emojis: ['😴', '🥱'] },
+  { pattern: /(👀|смотр|глянь|зацени|посмотри|видос|фото|картинк)/i, emojis: ['👀'] },
+  { pattern: /(🤡|клоун|цирк)/i, emojis: ['🤡'] },
+  { pattern: /(💩|говн|какаш|срать|насрать|дерьмо|говё)/i, emojis: ['💩'] },
+];
 
 /**
  * Ответ, если все сгенерированные варианты раскрывали внутреннюю память.
@@ -170,7 +199,7 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
   /** Чаты, по которым уже идёт анализ — чтобы не плодить запросы к DeepSeek. */
   private readonly analyzingChats = new Set<number>();
   /** Последняя поставленная реакция по чату — чтобы эмодзи чередовались. */
-  private readonly lastReactionEmoji = new Map<number, (typeof REACTION_EMOJIS)[number]>();
+  private readonly lastReactionEmoji = new Map<number, string>();
   /** Накопители обращений к боту по чатам. */
   private readonly jerkBatches = new Map<number, JerkBatch>();
 
@@ -740,7 +769,7 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
     this.logger.log(`${this.tag(chatId)}: ответ отправлен`);
   }
 
-  /** Иногда ставит на сообщение реакцию-эмодзи (🤡 или 💩). */
+  /** Иногда ставит на сообщение реакцию-эмодзи: в тему по словам, иначе 🤡/💩. */
   private maybeReact(ctx: BotContext, s: TrollRuntimeSettings): void {
     if (!s.reactionEnabled) {
       return;
@@ -761,9 +790,24 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
 
     // Чередуем эмодзи: одну и ту же реакцию дважды подряд не ставим.
     const previous = this.lastReactionEmoji.get(chatId);
-    const candidates = REACTION_EMOJIS.filter((candidate) => candidate !== previous);
-    const emoji = candidates[Math.floor(Math.random() * candidates.length)];
+    const text = (ctx.message?.text ?? ctx.message?.caption ?? '').trim();
+    const emoji = this.pickReactionEmoji(text, previous);
     void this.setReaction(chatId, messageId, emoji);
+  }
+
+  /**
+   * Подбирает эмодзи реакции: если в сообщении есть ключевое слово — берём
+   * подходящую реакцию «в тему», иначе — тролльскую по умолчанию.
+   */
+  private pickReactionEmoji(text: string, previous?: string): ReactionEmoji {
+    for (const rule of TOPIC_REACTION_RULES) {
+      if (rule.pattern.test(text)) {
+        const candidates = rule.emojis.filter((emoji) => emoji !== previous);
+        return candidates[Math.floor(Math.random() * candidates.length)] ?? rule.emojis[0];
+      }
+    }
+    const defaults = DEFAULT_REACTION_EMOJIS.filter((emoji) => emoji !== previous);
+    return defaults[Math.floor(Math.random() * defaults.length)] ?? DEFAULT_REACTION_EMOJIS[0];
   }
 
   private async setReaction(
@@ -774,11 +818,11 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
     try {
       await this.bot.api.setMessageReaction(chatId, messageId, [{ type: 'emoji', emoji }]);
       this.lastReactionAt.set(chatId, Date.now());
-      this.lastReactionEmoji.set(chatId, emoji as (typeof REACTION_EMOJIS)[number]);
+      this.lastReactionEmoji.set(chatId, emoji);
       this.logger.log(`${this.tag(chatId)}: поставил реакцию ${emoji}`);
     } catch (error) {
       // Некоторые чаты ограничивают набор реакций — пробуем вторую.
-      const alternative = REACTION_EMOJIS.find((candidate) => candidate !== emoji);
+      const alternative = DEFAULT_REACTION_EMOJIS.find((candidate) => candidate !== emoji);
       if (alternative) {
         try {
           await this.bot.api.setMessageReaction(chatId, messageId, [
@@ -1954,7 +1998,10 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
         }
         // Запоминаем имена из истории — чтобы вернуть регистр в ответе.
         this.trackName(chatId, row.userId, row.userName);
-        const name = this.cleanName(row.userName) ?? 'участник';
+        // Показываем чистое имя (первое слово, с большой буквы), а не полное
+        // «Имя Фамилия (@nick)»: по нему модель обращается к человеку.
+        const name =
+          this.names.firstName(chatId, row.userId) ?? this.cleanName(row.userName) ?? 'участник';
         const label =
           row.userId !== null && row.userId !== undefined ? `${name} (${row.userId})` : name;
         return `${age}${label}${ids}: ${row.content}`;

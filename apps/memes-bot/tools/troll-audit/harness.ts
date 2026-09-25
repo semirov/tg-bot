@@ -4,6 +4,7 @@
  */
 
 import { CONVERSATION_PAUSE_RULE, MESSAGE_REFS_RULE } from '../../src/app/modules/troll/constants/troll-prompts';
+import { extractFirstName } from '../../src/app/modules/troll/services/troll-name-registry';
 import {
   ConversationMessage,
   buildConversationContext,
@@ -101,7 +102,7 @@ export function buildTranscript(rows: FixtureRow[]): string {
       if (row.role === 'assistant') {
         return `бот${ids}: ${row.content}`;
       }
-      const name = row.userName ?? 'участник';
+      const name = extractFirstName(row.userName) ?? row.userName ?? 'участник';
       const label =
         row.userId !== null && row.userId !== undefined ? `${name} (${row.userId})` : name;
       return `${label}${ids}: ${row.content}`;

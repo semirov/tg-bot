@@ -754,6 +754,25 @@ describe('TrollService — реакции', () => {
       { type: 'emoji', emoji: '💩' },
     ]);
   });
+
+  it('pickReactionEmoji ставит реакцию в тему по ключевым словам', () => {
+    const { service } = createService();
+    expect(['🤣', '😁']).toContain((service as any).pickReactionEmoji('какой смешной прикол'));
+    expect((service as any).pickReactionEmoji('я тебя убью, труп')).toBe('👻');
+    expect(['❤', '😍', '🥰']).toContain((service as any).pickReactionEmoji('люблю тебя'));
+    expect(['🍾', '🤪']).toContain((service as any).pickReactionEmoji('го бухать, водка'));
+  });
+
+  it('pickReactionEmoji без темы падает на тролльские по умолчанию', () => {
+    const { service } = createService();
+    expect(['🤡', '💩']).toContain((service as any).pickReactionEmoji('привет, как дела'));
+  });
+
+  it('pickReactionEmoji не повторяет прошлый эмодзи, если есть выбор', () => {
+    const { service } = createService();
+    expect((service as any).pickReactionEmoji('привет, как дела', '🤡')).toBe('💩');
+    expect((service as any).pickReactionEmoji('какой смешной прикол', '🤣')).toBe('😁');
+  });
 });
 
 describe('TrollService — /stat', () => {

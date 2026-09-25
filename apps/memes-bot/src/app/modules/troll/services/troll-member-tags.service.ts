@@ -27,6 +27,7 @@ import {
   toChatStyle,
   wrapUserContent,
 } from '../utils/troll-sanitizer';
+import { extractFirstName, restoreNameCase } from './troll-name-registry';
 import { DeepSeekService } from './deepseek.service';
 import { TrollSettingsService } from './troll-settings.service';
 
@@ -263,10 +264,13 @@ export class TrollMemberTagsService {
 
   /**
    * Объявление о наречении генерирует модель: коротко, матерно и смешно, но без
-   * оскорблений. Если модель не ответила — уходим в детерминированный шаблон.
+   * оскорблений. Имя передаётся чистое (первое слово с большой буквы) и после
+   * генерации восстанавливается в регистре, даже если модель написала его
+   * строчными. Если модель не ответила — уходим в детерминированный шаблон.
    */
   private async buildAnnouncement(name: string, tag: string, reason: string): Promise<string> {
-    const payload = JSON.stringify({ имя: name, тег: tag, причина: reason });
+    const canonical = extractFirstName(name) ?? name;
+    const payload = JSON.stringify({ имя: canonical, тег: tag, причина: reason });
     const raw = await this.deepSeek.completeText(
       MEMBER_TAG_ANNOUNCE_PROMPT,
       wrapUserContent(payload),
@@ -274,10 +278,10 @@ export class TrollMemberTagsService {
     );
     const text = toChatStyle(sanitizeModelText(raw ?? '', TROLL_MEMBER_TAG_ANNOUNCE_MAX_CHARS));
     if (text) {
-      return text;
+      return restoreNameCase(text, name);
     }
     const why = reason || 'ты сам всё понимаешь';
-    return `нарекаю ${name} — ${tag}! потому что ${why}`;
+    return `нарекаю ${canonical} — ${tag}! потому что ${why}`;
   }
 
   /** Объявление о наречении — ответом на последнее учтённое сообщение участника. */

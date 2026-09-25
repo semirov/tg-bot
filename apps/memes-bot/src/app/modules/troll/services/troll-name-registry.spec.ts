@@ -1,4 +1,4 @@
-import { cleanName, TrollNameRegistry } from './troll-name-registry';
+import { cleanName, extractFirstName, restoreNameCase, TrollNameRegistry } from './troll-name-registry';
 
 describe('cleanName', () => {
   it('возвращает null для пустых значений', () => {
@@ -14,6 +14,39 @@ describe('cleanName', () => {
 
   it('возвращает null, если после очистки ничего не осталось', () => {
     expect(cleanName('\n\n')).toBeNull();
+  });
+});
+
+describe('extractFirstName', () => {
+  it('вытаскивает первое слово и убирает @username', () => {
+    expect(extractFirstName('Konstantin Khimenkov (@khimenkov)')).toBe('Konstantin');
+    expect(extractFirstName('Nastia (@no_lamas)')).toBe('Nastia');
+    expect(extractFirstName('Андрей Соколов [Авто.ру] (@sokolov2049)')).toBe('Андрей');
+  });
+
+  it('приводит первую букву к верхнему регистру', () => {
+    expect(extractFirstName('вася пупкин (@vasya)')).toBe('Вася');
+    expect(extractFirstName('konstantin khimenkov')).toBe('Konstantin');
+  });
+
+  it('возвращает null для пустого, ника или слишком короткого', () => {
+    expect(extractFirstName('(@vasya)')).toBeNull();
+    expect(extractFirstName(null)).toBeNull();
+    expect(extractFirstName(undefined)).toBeNull();
+    expect(extractFirstName('Я')).toBeNull();
+    expect(extractFirstName('   ')).toBeNull();
+  });
+});
+
+describe('restoreNameCase', () => {
+  it('возвращает имени регистр в тексте', () => {
+    expect(restoreNameCase('нарекаю вася - подмыхан', 'Вася Пупкин (@vasya)')).toBe(
+      'нарекаю Вася - подмыхан'
+    );
+  });
+
+  it('не трогает текст без имени', () => {
+    expect(restoreNameCase('всем привет', 'Вася Пупкин (@vasya)')).toBe('всем привет');
   });
 });
 
@@ -80,5 +113,21 @@ describe('TrollNameRegistry', () => {
 
     expect(registry.cleanName('Вася\nПупкин')).toBe('Вася Пупкин');
     expect(registry.cleanName(null)).toBeNull();
+  });
+
+  it('firstName возвращает чистое имя с большой буквы', () => {
+    const registry = new TrollNameRegistry();
+    registry.trackName(1, 42, 'Konstantin Khimenkov (@khimenkov)');
+
+    expect(registry.firstName(1, 42)).toBe('Konstantin');
+    expect(registry.firstName(1, 999)).toBeNull();
+    expect(registry.firstName(1)).toBeNull();
+  });
+
+  it('restoreNames использует каноническое имя даже для строчного отображаемого', () => {
+    const registry = new TrollNameRegistry();
+    registry.trackName(1, 42, 'konstantin khimenkov (@khimenkov)');
+
+    expect(registry.restoreNames(1, 'konstantin куда')).toBe('Konstantin куда');
   });
 });

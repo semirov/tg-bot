@@ -232,7 +232,7 @@ describe('TrollMemberTagsService', () => {
     expect(bot.api.setChatMemberTag).toHaveBeenCalledWith(CHAT, USER, 'подмыхан');
     const [chatId, text, opts] = bot.api.sendMessage.mock.calls[0];
     expect(chatId).toBe(CHAT);
-    expect(text).toBe('нарекаю вася - подмыхан, дымит как паровоз, хули');
+    expect(text).toBe('нарекаю Вася - подмыхан, дымит как паровоз, хули');
     expect(opts).toMatchObject({ reply_to_message_id: 1000 });
     expect(tags.save).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -383,7 +383,7 @@ describe('TrollMemberTagsService', () => {
       announcement: null,
     });
     await service.onUserMessage(CHAT, USER);
-    expect(bot.api.sendMessage.mock.calls[0][1]).toContain('нарекаю участник');
+    expect(bot.api.sendMessage.mock.calls[0][1]).toContain('нарекаю Участник');
   });
 
   it('без messageId объявление уходит без ответа', async () => {

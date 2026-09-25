@@ -19,6 +19,57 @@ export function cleanName(name?: string | null): string | null {
 }
 
 /**
+ * Извлекает чистое имя человека из отображаемого имени Telegram.
+ *
+ * Отбрасывает `@username` (в скобках и без), эмодзи и прочие не-буквенные
+ * символы, берёт первое слово и приводит первую букву к верхнему регистру.
+ * Возвращает `null`, если настоящего имени нет (только ник или пусто).
+ *
+ * @param displayName отображаемое имя вида «Имя Фамилия (@nick)»
+ * @returns чистое имя с большой буквы или `null`
+ */
+export function extractFirstName(displayName?: string | null): string | null {
+  if (!displayName) {
+    return null;
+  }
+  const cleaned = displayName
+    .replace(/\(@[^)]*\)/g, ' ')
+    .replace(/@\S+/g, ' ')
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!cleaned) {
+    return null;
+  }
+  const first = cleaned.split(' ')[0];
+  if (!first || first.length < 2) {
+    return null;
+  }
+  return first.charAt(0).toUpperCase() + first.slice(1);
+}
+
+/**
+ * Возвращает регистр имени в тексте: находит каноническое имя (без учёта
+ * регистра) и подставляет его с большой буквы. Используется там, где нет
+ * полного реестра чата (например, в объявлении тега).
+ *
+ * @param text текст ответа модели (обычно уже в нижнем регистре)
+ * @param displayName отображаемое имя участника
+ * @returns текст с именем в правильном регистре
+ */
+export function restoreNameCase(text: string, displayName: string): string {
+  const canonical = extractFirstName(displayName);
+  if (!canonical || !text) {
+    return text;
+  }
+  const escaped = canonical.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return text.replace(
+    new RegExp(`(^|[^a-zа-яё0-9])(${escaped})(?=[^a-zа-яё0-9]|$)`, 'gi'),
+    (_match, prefix: string) => `${prefix}${canonical}`
+  );
+}
+
+/**
  * Реестр имён участников по чатам и восстановление регистра в ответах модели.
  *
  * Модель получает переписку в «чатовом» стиле (всё в нижнем регистре), поэтому
@@ -80,6 +131,12 @@ export class TrollNameRegistry {
       if (short && short.length >= 2) {
         candidates.add(short);
       }
+      // Каноническое имя с большой буквы: даже если отображаемое имя написано
+      // строчными, в ответе оно вернётся в правильном регистре.
+      const canonical = extractFirstName(display);
+      if (canonical) {
+        candidates.add(canonical);
+      }
     }
 
     let result = text;
@@ -89,5 +146,22 @@ export class TrollNameRegistry {
       result = result.replace(re, (_match, prefix: string) => `${prefix}${name}`);
     }
     return result;
+  }
+
+  /**
+   * Каноническое имя участника: первое слово отображаемого имени с большой
+   * буквы. Используется для подписей в расшифровке, чтобы модель видела чистые
+   * имена, а не «Имя Фамилия (@nick)».
+   *
+   * @param chatId идентификатор чата
+   * @param userId идентификатор пользователя
+   * @returns чистое имя или `null`
+   */
+  public firstName(chatId: number, userId?: number | null): string | null {
+    if (userId === undefined || userId === null) {
+      return null;
+    }
+    const display = this.chatNames.get(chatId)?.get(Number(userId));
+    return extractFirstName(display);
   }
 }
