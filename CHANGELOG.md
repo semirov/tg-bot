@@ -1,3 +1,19 @@
+# [0.39.0](https://github.com/semirov/tg-bot/compare/v0.38.0...v0.39.0) (2026-09-25)
+
+
+### Bug Fixes
+
+* **bio:** ослабить гайки генерации биографий ([c510d73](https://github.com/semirov/tg-bot/commit/c510d73eb2ac3a7babdd79fcd9fe64f360b824a5))
+* **bio:** усилить guard-промпты против раскрытия фактов ([a44a618](https://github.com/semirov/tg-bot/commit/a44a618e137d750d8a6387dfee05f2032a6bf4ee))
+* **troll:** убрать примеры концовок из суммаризации для предотвращения копирования ([66b7b77](https://github.com/semirov/tg-bot/commit/66b7b7793604bae9dcd4697bc17fefdd67030e83))
+
+
+### Features
+
+* **troll:** внедрить персонаж Батчера во все промпты и улучшить суммаризацию ([474f739](https://github.com/semirov/tg-bot/commit/474f739a6fc5b09cce4b356c0f0b7b2ec2e03c72))
+* **troll:** внедрить персонаж Батчера во все промпты и улучшить суммаризацию ([66b7d9c](https://github.com/semirov/tg-bot/commit/66b7d9c0ce51d74291ef0c378596d9bb458224da))
+* **troll:** добавить обязательную концовку-шутку в суммаризацию ([de81050](https://github.com/semirov/tg-bot/commit/de810505632a6dbb9a812d29d10457e79d4260e2))
+
 # [0.38.0](https://github.com/semirov/tg-bot/compare/v0.37.2...v0.38.0) (2026-09-25)
 
 
