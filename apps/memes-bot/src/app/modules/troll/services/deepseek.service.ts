@@ -333,28 +333,21 @@ export class DeepSeekService {
   ): Promise<string | null> {
     const label = options.label ?? 'vision';
     const maxTokens = options.maxTokens ?? TROLL_VISION_MAX_TOKENS;
+    const content: DeepSeekContentPart[] = [
+      { type: 'text', text: options.prompt },
+      {
+        type: 'image_url',
+        image_url: { url: imageDataUrl, detail: options.detail ?? 'low' },
+      },
+    ];
     try {
-      const result = await this.complete(
-        [
-          {
-            role: 'user',
-            content: [
-              { type: 'text', text: options.prompt },
-              {
-                type: 'image_url',
-                image_url: { url: imageDataUrl, detail: options.detail ?? 'low' },
-              },
-            ] satisfies DeepSeekContentPart[],
-          },
-        ],
-        {
-          temperature: 0.2,
-          maxTokens,
-          json: true,
-          label,
-          model: options.model ?? this.config.deepseekVisionModel,
-        }
-      );
+      const result = await this.complete([{ role: 'user', content }], {
+        temperature: 0.2,
+        maxTokens,
+        json: true,
+        label,
+        model: options.model ?? this.config.deepseekVisionModel,
+      });
       return result || null;
     } catch (error) {
       this.logger.error(`DeepSeek vision request failed: ${this.describeError(error)}`);
