@@ -58,6 +58,10 @@ get-*.sh
 real-*.json
 butcher-*.md
 
+# Выгрузки реальных данных продакшена (личные данные участников)
+prod_data.json
+SECURITY_AUDIT.md
+
 # Кэш сборки
 .angular/
 .nx/
