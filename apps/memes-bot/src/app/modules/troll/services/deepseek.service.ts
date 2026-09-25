@@ -10,7 +10,7 @@ import {
   TROLL_MAX_CONCURRENT_REQUESTS,
   TROLL_VISION_MAX_TOKENS,
 } from '../constants/troll-limits';
-import { DeepSeekContentPart, DeepSeekMessage, DeepSeekOptions } from '../interfaces/troll.interface';
+import { DeepSeekContentPart, DeepSeekDailyUsage, DeepSeekMessage, DeepSeekOptions } from '../interfaces/troll.interface';
 import { parseLlmJson } from '../utils/llm-json';
 import {
   DeepSeekTariff,
@@ -48,6 +48,8 @@ export class DeepSeekService {
   private dailyRequests = 0;
   private dailyTokens = 0;
   private dailyCostUsd = 0;
+  /** Суточный расход в разрезе моделей: model → { requests, tokens, costUsd }. */
+  private dailyByModel = new Map<string, { requests: number; tokens: number; costUsd: number }>();
   private lastBudgetWarnAt = 0;
 
   constructor(
@@ -72,6 +74,23 @@ export class DeepSeekService {
   }
 
   /**
+   * Главная модель текстовых ответов. Тумблер в админке: pro (по умолчанию)
+   * или flash. Если настройка недоступна (узкие тесты) — откат на
+   * `DEEPSEEK_MODEL` из env. Разбор картинок этот геттер не использует:
+   * vision всегда идёт на `deepseekVisionModel`.
+   */
+  private get mainModel(): string {
+    const usePro = this.settings.current?.useProModel;
+    if (usePro === true) {
+      return 'deepseek-v4-pro';
+    }
+    if (usePro === false) {
+      return 'deepseek-flash';
+    }
+    return this.config.deepseekModel;
+  }
+
+  /**
    * Возвращает текстовый ответ модели. Пустая строка означает, что запрос
    * не был выполнен (лимит, перегрузка) или модель вернула пустой ответ.
    */
@@ -81,8 +100,9 @@ export class DeepSeekService {
   ): Promise<string> {
     const { temperature = 0.9, maxTokens = 400, json = false, label, model } = options;
     // Модель можно переопределить для отдельного вызова: диагностика дефекта
-    // идёт на старшей модели, вся остальная работа — на рабочей.
-    const useModel = model ?? this.config.deepseekModel;
+    // идёт на старшей модели, vision — на модели с распознаванием, а вся
+    // остальная работа — на главной модели из админ-тумблера (pro/flash).
+    const useModel = model ?? this.mainModel;
     const llmLabel = label ?? 'default';
     if (!this.enabled) {
       metrics.llm.requests.inc({ model: useModel, label: llmLabel, result: 'disabled' });
@@ -354,6 +374,25 @@ export class DeepSeekService {
     };
   }
 
+  /**
+   * Суточный расход с разбивкой по моделям — для отчёта владельцу в конце дня.
+   * Модели отсортированы по стоимости (дороже — выше).
+   */
+  public get dailyReport(): DeepSeekDailyUsage {
+    this.rolloverCounters();
+    this.syncDailyGauges();
+    return {
+      date: this.dailyKey,
+      models: [...this.dailyByModel.entries()]
+        .map(([model, usage]) => ({ model, ...usage }))
+        .sort((a, b) => b.costUsd - a.costUsd || b.tokens - a.tokens),
+      requests: this.dailyRequests,
+      tokens: this.dailyTokens,
+      costUsd: this.dailyCostUsd,
+      peak: isDeepSeekPeak(),
+    };
+  }
+
   /** Проставляет дневные гейджи (лимит берётся из настроек). */
   private syncDailyGauges(): void {
     metrics.llm.dailyRequests.set(this.dailyRequests);
@@ -452,9 +491,13 @@ export class DeepSeekService {
       prompt_cache_miss_tokens?: unknown;
     };
 
+    const entry = this.dailyByModel.get(model) ?? { requests: 0, tokens: 0, costUsd: 0 };
+    entry.requests += 1;
+
     const total = Number(usage.total_tokens);
     if (Number.isFinite(total) && total > 0) {
       this.dailyTokens += total;
+      entry.tokens += total;
       metrics.llm.tokens.inc({ model, type: 'total' }, total);
       metrics.llm.dailyTokens.set(this.dailyTokens);
     }
@@ -477,18 +520,19 @@ export class DeepSeekService {
       metrics.llm.tokens.inc({ model, type: 'cache_miss' }, cacheMissTokens);
     }
 
-    if (!promptTokens && !completionTokens) {
-      return;
+    if (promptTokens || completionTokens) {
+      const cost = estimateCostUsd(
+        model,
+        { promptTokens, completionTokens, cacheHitTokens, cacheMissTokens },
+        { tariff: this.priceOverride }
+      );
+      this.dailyCostUsd += cost;
+      entry.costUsd += cost;
+      metrics.llm.costUsd.inc({ model }, cost);
+      metrics.llm.dailyCostUsd.set(this.dailyCostUsd);
     }
 
-    const cost = estimateCostUsd(
-      model,
-      { promptTokens, completionTokens, cacheHitTokens, cacheMissTokens },
-      { tariff: this.priceOverride }
-    );
-    this.dailyCostUsd += cost;
-    metrics.llm.costUsd.inc({ model }, cost);
-    metrics.llm.dailyCostUsd.set(this.dailyCostUsd);
+    this.dailyByModel.set(model, entry);
   }
 
   /** Значение токенов из ответа API, отсекает мусор и отрицательные числа. */
@@ -521,6 +565,7 @@ export class DeepSeekService {
       this.dailyRequests = 0;
       this.dailyTokens = 0;
       this.dailyCostUsd = 0;
+      this.dailyByModel = new Map();
       this.syncDailyGauges();
     }
   }

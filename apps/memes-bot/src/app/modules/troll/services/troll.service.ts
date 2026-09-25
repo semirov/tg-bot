@@ -52,6 +52,7 @@ import {
   TROLL_SUMMARY_MAX_MESSAGES,
   TROLL_SUMMARY_MAX_REPLY_CHARS,
   TROLL_SUMMARY_MAX_TOKENS,
+  TROLL_USAGE_REPORT_CRON,
   TROLL_VISION_CONFIDENCE_MIN,
 } from '../constants/troll-limits';
 import {
@@ -95,6 +96,7 @@ import { ChannelMemeEntity } from '../../channel-monitor/entities/channel-meme.e
 import {
   CriminalAssessment,
   CriminalStat,
+  DeepSeekDailyUsage,
   DeepSeekMessage,
   TrollRuntimeSettings,
 } from '../interfaces/troll.interface';
@@ -117,6 +119,7 @@ import {
   wrapUserContent,
 } from '../utils/troll-sanitizer';
 import { DeepSeekService } from './deepseek.service';
+import { formatUsd } from '../constants/deepseek-pricing';
 import { TrollCooldownRegistry } from './troll-cooldown-registry';
 import { TrollNameRegistry } from './troll-name-registry';
 import { MIN_TEXT_LENGTH, TrollReplyFormatter } from './troll-reply-formatter';
@@ -2412,6 +2415,53 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
   @Cron(CronExpression.EVERY_HOUR)
   public async cleanupHistoryJob(): Promise<void> {
     await this.cleanupHistory();
+  }
+
+  /**
+   * Отчёт о расходе DeepSeek за сутки — владельцу в личку в конце дня.
+   * Токены и стоимость разбиты по моделям (pro/flash и др.), чтобы видеть,
+   * куда уходит бюджет. Отправляется один раз в 23:55 по расписанию процесса.
+   */
+  @Cron(TROLL_USAGE_REPORT_CRON)
+  public async dailyUsageReportJob(): Promise<void> {
+    const report = this.deepSeek.dailyReport;
+    if (!report.requests) {
+      this.logger.debug('Отчёт о расходе DeepSeek: за сутки запросов не было — пропуск');
+      return;
+    }
+
+    const text = this.formatUsageReport(report);
+    try {
+      await this.bot.api.sendMessage(this.config.ownerId, text, { disable_notification: true });
+      this.logger.log(`Отчёт о расходе DeepSeek за ${report.date} отправлен владельцу`);
+    } catch (error) {
+      this.logger.warn(`Отчёт о расходе DeepSeek: не удалось отправить — ${this.describeError(error)}`);
+    }
+  }
+
+  /** Человекочитаемый отчёт о суточном расходе с разбивкой по моделям. */
+  private formatUsageReport(report: DeepSeekDailyUsage): string {
+    const lines = [`📊 DeepSeek за ${report.date} (UTC):`];
+    for (const model of report.models) {
+      lines.push(
+        `• ${model.model} — ${this.formatInt(model.requests)} запр., ${this.formatInt(
+          model.tokens
+        )} ток., ${formatUsd(model.costUsd)}`
+      );
+    }
+    lines.push(
+      `Итого: ${this.formatInt(report.requests)} запр., ${this.formatInt(
+        report.tokens
+      )} ток., ${formatUsd(report.costUsd)}${report.peak ? ' (пик)' : ''}`
+    );
+    return lines.join('\n');
+  }
+
+  /** Целое с разделителями разрядов: 1234567 → «1 234 567». */
+  private formatInt(value: number): string {
+    return Math.round(value)
+      .toString()
+      .replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
   }
 
   /**

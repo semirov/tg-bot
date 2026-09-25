@@ -97,6 +97,13 @@ export class TrollSettingsEntity {
   @Column('boolean', { default: true })
   visionEnabled: boolean;
 
+  /**
+   * Главная модель текстовых ответов: true — deepseek-v4-pro, false — deepseek-flash.
+   * Разбор картинок всегда идёт на vision-модели (flash) независимо от этого флага.
+   */
+  @Column('boolean', { default: true })
+  useProModel: boolean;
+
   /** Порог оценки: ниже него ответ уходит на переписывание. */
   @Column('real', { default: 0.6 })
   selfCheckThreshold: number;

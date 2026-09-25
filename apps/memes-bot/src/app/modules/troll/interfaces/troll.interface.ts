@@ -50,6 +50,31 @@ export interface DeepSeekMessage {
   content: string | DeepSeekContentPart[];
 }
 
+/** Суточный расход DeepSeek по одной модели. */
+export interface DeepSeekModelUsage {
+  /** id модели, например `deepseek-flash` или `deepseek-v4-pro`. */
+  model: string;
+  /** Успешных ответов модели за сутки. */
+  requests: number;
+  /** Суммарные токены (prompt + completion). */
+  tokens: number;
+  /** Стоимость по тарифу модели, $. */
+  costUsd: number;
+}
+
+/** Итоги суточного расхода DeepSeek — для отчёта владельцу. */
+export interface DeepSeekDailyUsage {
+  /** Дата в UTC (YYYY-MM-DD). */
+  date: string;
+  /** Разбивка по моделям, дороже — выше. */
+  models: DeepSeekModelUsage[];
+  requests: number;
+  tokens: number;
+  costUsd: number;
+  /** Идёт ли пиковый тариф в момент отчёта. */
+  peak: boolean;
+}
+
 export interface DeepSeekOptions {
   temperature?: number;
   maxTokens?: number;
@@ -130,6 +155,12 @@ export interface TrollRuntimeSettings {
    * чтобы бот мог отвечать на вопросы по изображениям. Видео не анализируется.
    */
   visionEnabled: boolean;
+  /**
+   * Главная модель для текстовых ответов: `true` — deepseek-v4-pro,
+   * `false` — deepseek-flash. По умолчанию pro. На разбор картинок не влияет:
+   * vision всегда идёт на стабильную модель с распознаванием (flash).
+   */
+  useProModel: boolean;
 }
 
 /** Один предложенный тег участника от модели. */

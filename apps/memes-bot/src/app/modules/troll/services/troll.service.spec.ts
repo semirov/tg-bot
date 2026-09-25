@@ -61,6 +61,7 @@ function settings(over: Partial<TrollRuntimeSettings> = {}): TrollRuntimeSetting
     memberTagsEnabled: true,
     memberBioEnabled: true,
     visionEnabled: false,
+    useProModel: true,
     ...over,
   };
 }
@@ -100,6 +101,7 @@ function createService() {
     completeJson: jest.fn(async () => null),
     completeText: jest.fn(async () => null),
     describeImage: jest.fn(async () => null),
+    dailyReport: { date: '2026-01-01', models: [], requests: 0, tokens: 0, costUsd: 0, peak: false },
   };
   const settingsSvc: any = { current: settings() };
   const chats = makeRepo();
@@ -2241,6 +2243,48 @@ describe('TrollService — дополнительные ветвления', () 
     spy.mockClear();
     await (service as any).maybeCommentOnImage(ctx, 0.2);
     expect(spy).not.toHaveBeenCalled();
+  });
+
+  it('ежедневный отчёт о расходе уходит владельцу с разбивкой по моделям', async () => {
+    const { service, deepSeek, bot, config } = createService();
+    deepSeek.dailyReport = {
+      date: '2026-09-24',
+      models: [
+        { model: 'deepseek-v4-pro', requests: 3, tokens: 1000, costUsd: 0.01 },
+        { model: 'deepseek-flash', requests: 10, tokens: 5000, costUsd: 0.002 },
+      ],
+      requests: 13,
+      tokens: 6000,
+      costUsd: 0.012,
+      peak: false,
+    };
+
+    await (service as any).dailyUsageReportJob();
+
+    expect(bot.api.sendMessage).toHaveBeenCalledTimes(1);
+    const [chatId, text, opts] = bot.api.sendMessage.mock.calls[0];
+    expect(chatId).toBe(config.ownerId);
+    expect(text).toContain('deepseek-v4-pro');
+    expect(text).toContain('deepseek-flash');
+    expect(text).toContain('Итого');
+    expect(text).toContain('1 000');
+    expect(opts.disable_notification).toBe(true);
+  });
+
+  it('ежедневный отчёт не отправляется, если за сутки не было запросов', async () => {
+    const { service, deepSeek, bot } = createService();
+    deepSeek.dailyReport = {
+      date: '2026-09-24',
+      models: [],
+      requests: 0,
+      tokens: 0,
+      costUsd: 0,
+      peak: false,
+    };
+
+    await (service as any).dailyUsageReportJob();
+
+    expect(bot.api.sendMessage).not.toHaveBeenCalled();
   });
 
   it('onMessage отвечает списком команд даже при сбое отправки', async () => {

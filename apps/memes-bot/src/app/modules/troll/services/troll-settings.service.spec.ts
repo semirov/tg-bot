@@ -134,6 +134,7 @@ describe('TrollSettingsService', () => {
         memberTagsEnabled: true,
         memberBioEnabled: true,
         visionEnabled: true,
+        useProModel: true,
       });
       expect(service.current).toBe(result);
     });
