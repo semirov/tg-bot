@@ -28,9 +28,51 @@ export interface CriminalStat {
   reason?: string;
 }
 
+/**
+ * Часть мультимодального сообщения. Текст — обычная строка; изображение —
+ * блок `image_url` (base64 data URL или публичная ссылка). Формат совпадает с
+ * OpenAI-совместимым Chat Completions, который принимает DeepSeek V4.1 Flash.
+ */
+export type DeepSeekContentPart =
+  | { type: 'text'; text: string }
+  | {
+      type: 'image_url';
+      image_url: { url: string; detail?: 'low' | 'high' | 'original' | 'auto' };
+    };
+
 export interface DeepSeekMessage {
   role: 'system' | 'user' | 'assistant';
-  content: string;
+  /**
+   * Строка для обычных текстовых сообщений либо массив частей, когда в
+   * сообщении есть изображение. Изображения DeepSeek принимает только в
+   * сообщениях роли `user`.
+   */
+  content: string | DeepSeekContentPart[];
+}
+
+/** Суточный расход DeepSeek по одной модели. */
+export interface DeepSeekModelUsage {
+  /** id модели, например `deepseek-flash` или `deepseek-v4-pro`. */
+  model: string;
+  /** Успешных ответов модели за сутки. */
+  requests: number;
+  /** Суммарные токены (prompt + completion). */
+  tokens: number;
+  /** Стоимость по тарифу модели, $. */
+  costUsd: number;
+}
+
+/** Итоги суточного расхода DeepSeek — для отчёта владельцу. */
+export interface DeepSeekDailyUsage {
+  /** Дата в UTC (YYYY-MM-DD). */
+  date: string;
+  /** Разбивка по моделям, дороже — выше. */
+  models: DeepSeekModelUsage[];
+  requests: number;
+  tokens: number;
+  costUsd: number;
+  /** Идёт ли пиковый тариф в момент отчёта. */
+  peak: boolean;
 }
 
 export interface DeepSeekOptions {
@@ -108,6 +150,17 @@ export interface TrollRuntimeSettings {
   memberTagsEnabled: boolean;
   /** Вести внутренние биографии участников (долгая память) и подмешивать в диалог. */
   memberBioEnabled: boolean;
+  /**
+   * Смотреть картинки из чата vision-моделью и класть описание в историю,
+   * чтобы бот мог отвечать на вопросы по изображениям. Видео не анализируется.
+   */
+  visionEnabled: boolean;
+  /**
+   * Главная модель для текстовых ответов: `true` — deepseek-v4-pro,
+   * `false` — deepseek-flash. По умолчанию pro. На разбор картинок не влияет:
+   * vision всегда идёт на стабильную модель с распознаванием (flash).
+   */
+  useProModel: boolean;
 }
 
 /** Один предложенный тег участника от модели. */

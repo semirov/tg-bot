@@ -8,8 +8,9 @@ import {
   TROLL_LLM_RETRY_DELAY_MS,
   TROLL_LLM_TIMEOUT_MS,
   TROLL_MAX_CONCURRENT_REQUESTS,
+  TROLL_VISION_MAX_TOKENS,
 } from '../constants/troll-limits';
-import { DeepSeekMessage, DeepSeekOptions } from '../interfaces/troll.interface';
+import { DeepSeekContentPart, DeepSeekDailyUsage, DeepSeekMessage, DeepSeekOptions } from '../interfaces/troll.interface';
 import { parseLlmJson } from '../utils/llm-json';
 import {
   DeepSeekTariff,
@@ -47,6 +48,8 @@ export class DeepSeekService {
   private dailyRequests = 0;
   private dailyTokens = 0;
   private dailyCostUsd = 0;
+  /** Суточный расход в разрезе моделей: model → { requests, tokens, costUsd }. */
+  private dailyByModel = new Map<string, { requests: number; tokens: number; costUsd: number }>();
   private lastBudgetWarnAt = 0;
 
   constructor(
@@ -71,6 +74,23 @@ export class DeepSeekService {
   }
 
   /**
+   * Главная модель текстовых ответов. Тумблер в админке: pro (по умолчанию)
+   * или flash. Если настройка недоступна (узкие тесты) — откат на
+   * `DEEPSEEK_MODEL` из env. Разбор картинок этот геттер не использует:
+   * vision всегда идёт на `deepseekVisionModel`.
+   */
+  private get mainModel(): string {
+    const usePro = this.settings.current.useProModel;
+    if (usePro === true) {
+      return 'deepseek-v4-pro';
+    }
+    if (usePro === false) {
+      return 'deepseek-flash';
+    }
+    return this.config.deepseekModel;
+  }
+
+  /**
    * Возвращает текстовый ответ модели. Пустая строка означает, что запрос
    * не был выполнен (лимит, перегрузка) или модель вернула пустой ответ.
    */
@@ -80,8 +100,9 @@ export class DeepSeekService {
   ): Promise<string> {
     const { temperature = 0.9, maxTokens = 400, json = false, label, model } = options;
     // Модель можно переопределить для отдельного вызова: диагностика дефекта
-    // идёт на старшей модели, вся остальная работа — на рабочей.
-    const useModel = model ?? this.config.deepseekModel;
+    // идёт на старшей модели, vision — на модели с распознаванием, а вся
+    // остальная работа — на главной модели из админ-тумблера (pro/flash).
+    const useModel = model ?? this.mainModel;
     const llmLabel = label ?? 'default';
     if (!this.enabled) {
       metrics.llm.requests.inc({ model: useModel, label: llmLabel, result: 'disabled' });
@@ -289,11 +310,75 @@ export class DeepSeekService {
     }
   }
 
+  /**
+   * Возвращает короткое текстовое описание изображения (vision).
+   *
+   * Изображение передаётся как base64 data URL. Изображения DeepSeek принимает
+   * только в сообщениях роли `user`, поэтому системного промпта здесь нет.
+   * Видео не поддерживается: анализируются только картинки.
+   *
+   * @param imageDataUrl data URL вида `data:image/jpeg;base64,...`
+   * @param options промпт, метка, бюджет и детализация (`low` дешевле)
+   * @returns описание или `null`, если модель не ответила/выключена
+   */
+  public async describeImage(
+    imageDataUrl: string,
+    options: {
+      prompt: string;
+      label?: string;
+      maxTokens?: number;
+      detail?: 'low' | 'high' | 'original' | 'auto';
+      model?: string;
+    }
+  ): Promise<string | null> {
+    const label = options.label ?? 'vision';
+    const maxTokens = options.maxTokens ?? TROLL_VISION_MAX_TOKENS;
+    const content: DeepSeekContentPart[] = [
+      { type: 'text', text: options.prompt },
+      {
+        type: 'image_url',
+        image_url: { url: imageDataUrl, detail: options.detail ?? 'low' },
+      },
+    ];
+    try {
+      const result = await this.complete([{ role: 'user', content }], {
+        temperature: 0.2,
+        maxTokens,
+        json: true,
+        label,
+        model: options.model ?? this.config.deepseekVisionModel,
+      });
+      return result || null;
+    } catch (error) {
+      this.logger.error(`DeepSeek vision request failed: ${this.describeError(error)}`);
+      return null;
+    }
+  }
+
   /** Текущее потребление DeepSeek за сутки (для админки). */
   public get usage(): { requests: number; tokens: number; costUsd: number; peak: boolean } {
     this.rolloverCounters();
     this.syncDailyGauges();
     return {
+      requests: this.dailyRequests,
+      tokens: this.dailyTokens,
+      costUsd: this.dailyCostUsd,
+      peak: isDeepSeekPeak(),
+    };
+  }
+
+  /**
+   * Суточный расход с разбивкой по моделям — для отчёта владельцу в конце дня.
+   * Модели отсортированы по стоимости (дороже — выше).
+   */
+  public get dailyReport(): DeepSeekDailyUsage {
+    this.rolloverCounters();
+    this.syncDailyGauges();
+    return {
+      date: this.dailyKey,
+      models: [...this.dailyByModel.entries()]
+        .map(([model, usage]) => ({ model, ...usage }))
+        .sort((a, b) => b.costUsd - a.costUsd || b.tokens - a.tokens),
       requests: this.dailyRequests,
       tokens: this.dailyTokens,
       costUsd: this.dailyCostUsd,
@@ -344,7 +429,9 @@ export class DeepSeekService {
    * процесс — так удобно проверить, какая версия промпта задеплоена.
    */
   private logPrompt(messages: DeepSeekMessage[], tag = ''): void {
-    const system = messages.find((message) => message.role === 'system')?.content;
+    const system = this.messageText(
+      messages.find((message) => message.role === 'system')?.content
+    );
     if (system && !this.loggedPrompts.has(system)) {
       this.loggedPrompts.add(system);
       this.logger.debug(`${tag}LLM-промпт (${system.length} символов): ${this.flatten(system)}`);
@@ -352,9 +439,25 @@ export class DeepSeekService {
 
     const payload = messages
       .filter((message) => message.role !== 'system')
-      .map((message) => message.content)
+      .map((message) => this.messageText(message.content))
       .join('\n---\n');
     this.logger.debug(`${tag}LLM-данные (${payload.length} символов): ${this.flatten(payload)}`);
+  }
+
+  /**
+   * Приводит содержимое сообщения к тексту для лога: у мультимодального
+   * сообщения текстовые части склеиваются, а изображение помечается `[изображение]`.
+   */
+  private messageText(content: string | DeepSeekContentPart[] | undefined): string {
+    if (!content) {
+      return '';
+    }
+    if (typeof content === 'string') {
+      return content;
+    }
+    return content
+      .map((part) => (part.type === 'text' ? part.text : '[изображение]'))
+      .join(' ');
   }
 
   /** Текст одним рядом без переносов — чтобы запись лога не разваливалась. */
@@ -381,9 +484,13 @@ export class DeepSeekService {
       prompt_cache_miss_tokens?: unknown;
     };
 
+    const entry = this.dailyByModel.get(model) ?? { requests: 0, tokens: 0, costUsd: 0 };
+    entry.requests += 1;
+
     const total = Number(usage.total_tokens);
     if (Number.isFinite(total) && total > 0) {
       this.dailyTokens += total;
+      entry.tokens += total;
       metrics.llm.tokens.inc({ model, type: 'total' }, total);
       metrics.llm.dailyTokens.set(this.dailyTokens);
     }
@@ -406,18 +513,19 @@ export class DeepSeekService {
       metrics.llm.tokens.inc({ model, type: 'cache_miss' }, cacheMissTokens);
     }
 
-    if (!promptTokens && !completionTokens) {
-      return;
+    if (promptTokens || completionTokens) {
+      const cost = estimateCostUsd(
+        model,
+        { promptTokens, completionTokens, cacheHitTokens, cacheMissTokens },
+        { tariff: this.priceOverride }
+      );
+      this.dailyCostUsd += cost;
+      entry.costUsd += cost;
+      metrics.llm.costUsd.inc({ model }, cost);
+      metrics.llm.dailyCostUsd.set(this.dailyCostUsd);
     }
 
-    const cost = estimateCostUsd(
-      model,
-      { promptTokens, completionTokens, cacheHitTokens, cacheMissTokens },
-      { tariff: this.priceOverride }
-    );
-    this.dailyCostUsd += cost;
-    metrics.llm.costUsd.inc({ model }, cost);
-    metrics.llm.dailyCostUsd.set(this.dailyCostUsd);
+    this.dailyByModel.set(model, entry);
   }
 
   /** Значение токенов из ответа API, отсекает мусор и отрицательные числа. */
@@ -450,12 +558,19 @@ export class DeepSeekService {
       this.dailyRequests = 0;
       this.dailyTokens = 0;
       this.dailyCostUsd = 0;
+      this.dailyByModel = new Map();
       this.syncDailyGauges();
     }
   }
 
+  /**
+   * Ключ учётного дня — по Москве (UTC+3), а не по UTC. Так отчёт в 21:00 МСК
+   * подводит итог того же календарного дня, а суточные лимиты сбрасываются
+   * в полночь по Москве.
+   */
   private todayKey(): string {
-    return new Date().toISOString().slice(0, 10);
+    const moscow = new Date(Date.now() + 3 * 60 * 60 * 1000);
+    return moscow.toISOString().slice(0, 10);
   }
 
   /** Логирует предупреждение о лимите не чаще раза в минуту, чтобы не залить лог. */

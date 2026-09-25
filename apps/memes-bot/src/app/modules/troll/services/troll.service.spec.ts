@@ -1,4 +1,5 @@
 import { Logger } from '@nestjs/common';
+import axios from 'axios';
 import { TrollRuntimeSettings } from '../interfaces/troll.interface';
 import { TROLL_CALLBACK_REGEXP } from '../constants/troll-callback.enum';
 import {
@@ -22,6 +23,8 @@ import { TrollService } from './troll.service';
 
 // DeepSeekService тянет axios (ESM) — подменяем модуль, сервис в тестах подменяется вручную.
 jest.mock('./deepseek.service', () => ({ DeepSeekService: class DeepSeekService {} }));
+// axios нужен troll.service для скачивания картинок — подменяем загрузку.
+jest.mock('axios', () => ({ __esModule: true, default: { get: jest.fn() } }));
 
 const OWNER = 777;
 const CHAT = 100;
@@ -57,6 +60,8 @@ function settings(over: Partial<TrollRuntimeSettings> = {}): TrollRuntimeSetting
     selfCheckThreshold: 0.6,
     memberTagsEnabled: true,
     memberBioEnabled: true,
+    visionEnabled: false,
+    useProModel: true,
     ...over,
   };
 }
@@ -95,6 +100,8 @@ function createService() {
     complete: jest.fn(async () => ''),
     completeJson: jest.fn(async () => null),
     completeText: jest.fn(async () => null),
+    describeImage: jest.fn(async () => null),
+    dailyReport: { date: '2026-01-01', models: [], requests: 0, tokens: 0, costUsd: 0, peak: false },
   };
   const settingsSvc: any = { current: settings() };
   const chats = makeRepo();
@@ -145,6 +152,7 @@ function makeCtx(over: any = {}): any {
     message: { message_id: 10, text: 'приветствие' },
     api: {
       getChatMember: jest.fn(async () => ({ status: 'member' })),
+      getFile: jest.fn(async () => ({ file_path: 'photos/file.jpg' })),
       sendMessage: jest.fn(async () => ({ message_id: 555 })),
     },
     reply: jest.fn(async () => ({ message_id: 777 })),
@@ -2146,6 +2154,252 @@ describe('TrollService — дополнительные ветвления', () 
     const linkEntry = history.insert.mock.calls[0][0].content;
     expect(linkEntry).toContain('[ссылка]');
     expect(linkEntry).not.toContain('example.com');
+  });
+
+  it('onMessage разбирает картинку vision-моделью и дописывает описание в историю', async () => {
+    const { service, history, deepSeek, settingsSvc, config } = createService();
+    settingsSvc.current = settings({ visionEnabled: true });
+    config.deepseekApiKey = 'key';
+    config.botToken = 'token';
+    config.tgEnv = 'prod';
+    history.insert.mockResolvedValue({ identifiers: [{ id: 123 }] });
+    (axios as any).get.mockResolvedValue({
+      data: Buffer.from('image-bytes'),
+      headers: { 'content-type': 'image/jpeg' },
+    });
+    deepSeek.describeImage.mockResolvedValue(
+      JSON.stringify({
+        category: 'мем',
+        subtype: 'двухпанельный мем',
+        summary: 'скрин уведомления и кадр с ухмылкой',
+        meme_template: 'Джеймс Бонд с телефоном',
+        true_meaning: 'шутка про претензию хозяйки',
+        text: 'Я ВАМ КВАРТИРУ БЕЗ ЧЕРКАШЕЙ СДАВАЛА',
+      })
+    );
+
+    await (service as any).onMessage(
+      makeCtx({ message: { message_id: 10, photo: [{ file_id: 'f1' }] } })
+    );
+    await flush();
+    await flush();
+
+    expect(history.insert).toHaveBeenCalledWith(
+      expect.objectContaining({ content: expect.stringContaining('[картинка]') })
+    );
+    expect(deepSeek.describeImage).toHaveBeenCalledTimes(1);
+    const dataUrl = deepSeek.describeImage.mock.calls[0][0] as string;
+    expect(dataUrl.startsWith('data:image/jpeg;base64,')).toBe(true);
+    expect(history.update).toHaveBeenCalledWith(
+      123,
+      expect.objectContaining({
+        content: expect.stringContaining('истинный смысл: шутка про претензию хозяйки'),
+      })
+    );
+    expect(history.update).toHaveBeenCalledWith(
+      123,
+      expect.objectContaining({
+        content: expect.stringContaining('мем-шаблон: Джеймс Бонд с телефоном'),
+      })
+    );
+  });
+
+  it('onMessage не разбирает картинку, когда vision выключен', async () => {
+    const { service, deepSeek, settingsSvc, config } = createService();
+    settingsSvc.current = settings({ visionEnabled: false });
+    config.deepseekApiKey = 'key';
+    await (service as any).onMessage(
+      makeCtx({ message: { message_id: 10, photo: [{ file_id: 'f1' }] } })
+    );
+    await flush();
+    await flush();
+    expect(deepSeek.describeImage).not.toHaveBeenCalled();
+  });
+
+  it('onMessage не разбирает картинку без ключа DeepSeek', async () => {
+    const { service, deepSeek, settingsSvc } = createService();
+    settingsSvc.current = settings({ visionEnabled: true });
+    await (service as any).onMessage(
+      makeCtx({ message: { message_id: 10, photo: [{ file_id: 'f1' }] } })
+    );
+    await flush();
+    await flush();
+    expect(deepSeek.describeImage).not.toHaveBeenCalled();
+  });
+
+  it('maybeCommentOnImage комментирует только уверенно распознанную картинку', async () => {
+    const { service, settingsSvc } = createService();
+    settingsSvc.current = settings({
+      sarcasmEnabled: true,
+      sarcasmChance: 1,
+      sarcasmCooldownSec: 0,
+    });
+    const ctx = makeCtx({ message: { message_id: 10, photo: [{ file_id: 'f1' }] } });
+    const spy = jest.spyOn(service as any, 'replyWithSarcasm').mockResolvedValue(undefined);
+
+    await (service as any).maybeCommentOnImage(ctx, 0.9);
+    expect(spy).toHaveBeenCalledTimes(1);
+
+    spy.mockClear();
+    await (service as any).maybeCommentOnImage(ctx, 0.2);
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  describe('vision: enrich и detectImageMime', () => {
+    it('detectImageMime: content-type, расширения и фолбэк', () => {
+      const { service } = createService();
+      const mime = (c: unknown, p: string) => (service as any).detectImageMime(c, p);
+      expect(mime('image/png; charset=utf-8', 'a.jpg')).toBe('image/png');
+      expect(mime('text/plain', 'a.png')).toBe('image/png');
+      expect(mime(undefined, 'a.GIF')).toBe('image/gif');
+      expect(mime(null, 'a.webp')).toBe('image/webp');
+      expect(mime(undefined, 'a.txt')).toBe('image/jpeg');
+    });
+
+    it('enrichPhotoDescription: без ключа и без fileId выходит', async () => {
+      const { service, config } = createService();
+      const ctx = makeCtx({ message: { message_id: 10, photo: [{ file_id: 'f1' }] } });
+      await (service as any).enrichPhotoDescription(ctx, 1, '[картинка]');
+
+      config.deepseekApiKey = 'key';
+      const noMedia = makeCtx({ message: { message_id: 11 } });
+      await (service as any).enrichPhotoDescription(noMedia, 1, '[картинка]');
+    });
+
+    it('enrichPhotoDescription: нет file_path или file — тихо выходит', async () => {
+      const { service, config } = createService();
+      config.deepseekApiKey = 'key';
+      const ctx = makeCtx({ message: { message_id: 10, photo: [{ file_id: 'f1' }] } });
+      ctx.api.getFile.mockResolvedValueOnce({ file_path: undefined });
+      await (service as any).enrichPhotoDescription(ctx, 1, '[картинка]');
+      ctx.api.getFile.mockResolvedValueOnce(undefined);
+      await (service as any).enrichPhotoDescription(ctx, 1, '[картинка]');
+    });
+
+    it('enrichPhotoDescription: успешный разбор, entry пустой и без заголовков', async () => {
+      const { service, config, deepSeek, history } = createService();
+      config.deepseekApiKey = 'key';
+      config.botToken = 'token';
+      const ctx = makeCtx({ message: { message_id: 10, photo: [{ file_id: 'f1' }] } });
+      // без headers — проверяем опциональную цепочку content-type
+      (axios as any).get.mockResolvedValue({ data: Buffer.from('x') });
+      deepSeek.describeImage.mockResolvedValue(
+        JSON.stringify({ category: 'мем', summary: 'кот в тапках' })
+      );
+
+      await (service as any).enrichPhotoDescription(ctx, 5, null);
+
+      expect(history.update).toHaveBeenCalledWith(5, {
+        content: expect.stringContaining('[картинка]'),
+      });
+    });
+
+    it('enrichPhotoDescription: пустое описание и сетевая ошибка не роняют', async () => {
+      const { service, config, deepSeek } = createService();
+      config.deepseekApiKey = 'key';
+      config.botToken = 'token';
+      const ctx = makeCtx({ message: { message_id: 10, photo: [{ file_id: 'f1' }] } });
+      (axios as any).get.mockResolvedValue({ data: Buffer.from('x'), headers: {} });
+      deepSeek.describeImage.mockResolvedValue(null);
+      await (service as any).enrichPhotoDescription(ctx, 1, '[картинка]');
+
+      (axios as any).get.mockRejectedValue(new Error('net'));
+      await (service as any).enrichPhotoDescription(ctx, 1, '[картинка]');
+    });
+  });
+
+  describe('vision: maybeCommentOnImage', () => {
+    it('не комментирует без чата и при выключенном сарказме', async () => {
+      const { service, settingsSvc } = createService();
+      await (service as any).maybeCommentOnImage({ chat: undefined }, 1);
+
+      settingsSvc.current = settings({ sarcasmEnabled: false });
+      const ctx = makeCtx({ message: { message_id: 10, photo: [{ file_id: 'f1' }] } });
+      const spy = jest.spyOn(service as any, 'replyWithSarcasm').mockResolvedValue(undefined);
+      await (service as any).maybeCommentOnImage(ctx, 1);
+      expect(spy).not.toHaveBeenCalled();
+    });
+
+    it('пропускает, если идёт ответ на обращение', async () => {
+      const { service, settingsSvc } = createService();
+      settingsSvc.current = settings({ sarcasmEnabled: true, sarcasmChance: 1, sarcasmCooldownSec: 0 });
+      const ctx = makeCtx({ message: { message_id: 10, photo: [{ file_id: 'f1' }] } });
+      (service as any).jerkBatches.set(CHAT, { timer: null });
+      const spy = jest.spyOn(service as any, 'replyWithSarcasm').mockResolvedValue(undefined);
+      await (service as any).maybeCommentOnImage(ctx, 1);
+      expect(spy).not.toHaveBeenCalled();
+      (service as any).jerkBatches.delete(CHAT);
+    });
+  });
+
+  it('remember возвращает id из insert, а без identifiers — null', async () => {
+    const { service, history } = createService();
+    history.insert.mockResolvedValueOnce({ identifiers: [{ id: 5 }] });
+    expect(await (service as any).remember(CHAT, 'user', 'текст')).toBe(5);
+
+    history.insert.mockResolvedValueOnce({});
+    expect(await (service as any).remember(CHAT, 'user', 'текст')).toBeNull();
+
+    history.insert.mockResolvedValueOnce({ identifiers: [{}] });
+    expect(await (service as any).remember(CHAT, 'user', 'текст')).toBeNull();
+  });
+
+  it('ежедневный отчёт с пиком переживает сбой отправки', async () => {
+    const { service, deepSeek, bot } = createService();
+    deepSeek.dailyReport = {
+      date: '2026-09-24',
+      models: [{ model: 'deepseek-v4-pro', requests: 1, tokens: 10, costUsd: 0.01 }],
+      requests: 1,
+      tokens: 10,
+      costUsd: 0.01,
+      peak: true,
+    };
+    bot.api.sendMessage.mockRejectedValueOnce(new Error('tg'));
+
+    await expect((service as any).dailyUsageReportJob()).resolves.toBeUndefined();
+    expect(bot.api.sendMessage).toHaveBeenCalled();
+  });
+
+  it('ежедневный отчёт о расходе уходит владельцу с разбивкой по моделям', async () => {
+    const { service, deepSeek, bot, config } = createService();
+    deepSeek.dailyReport = {
+      date: '2026-09-24',
+      models: [
+        { model: 'deepseek-v4-pro', requests: 3, tokens: 1000, costUsd: 0.01 },
+        { model: 'deepseek-flash', requests: 10, tokens: 5000, costUsd: 0.002 },
+      ],
+      requests: 13,
+      tokens: 6000,
+      costUsd: 0.012,
+      peak: false,
+    };
+
+    await (service as any).dailyUsageReportJob();
+
+    expect(bot.api.sendMessage).toHaveBeenCalledTimes(1);
+    const [chatId, text, opts] = bot.api.sendMessage.mock.calls[0];
+    expect(chatId).toBe(config.ownerId);
+    expect(text).toContain('deepseek-v4-pro');
+    expect(text).toContain('deepseek-flash');
+    expect(text).toContain('Итого');
+    expect(text).toContain('1 000');
+    expect(opts.disable_notification).toBe(true);
+  });
+
+  it('ежедневный отчёт не отправляется, если за сутки не было запросов', async () => {
+    const { service, deepSeek, bot } = createService();
+    deepSeek.dailyReport = {
+      date: '2026-09-24',
+      models: [],
+      requests: 0,
+      tokens: 0,
+      costUsd: 0,
+      peak: false,
+    };
+
+    await (service as any).dailyUsageReportJob();
+
+    expect(bot.api.sendMessage).not.toHaveBeenCalled();
   });
 
   it('onMessage отвечает списком команд даже при сбое отправки', async () => {

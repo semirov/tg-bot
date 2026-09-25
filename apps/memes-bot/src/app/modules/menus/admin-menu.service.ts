@@ -700,6 +700,26 @@ export class AdminMenuService implements OnModuleInit {
       )
       .row()
       .text(
+        () => `Модель ответов: ${current().useProModel ? 'deepseek-v4-pro' : 'deepseek-flash'}`,
+        this.ownerGuard(async (ctx) => {
+          await this.trollSettings.update({
+            useProModel: AdminSettingsPresets.toggle(current().useProModel),
+          });
+          ctx.menu.update();
+        })
+      )
+      .row()
+      .text(
+        () => `Разбор картинок: ${current().visionEnabled ? '🟢 вкл' : '⚪️ выкл'} (vision: flash)`,
+        this.ownerGuard(async (ctx) => {
+          await this.trollSettings.update({
+            visionEnabled: AdminSettingsPresets.toggle(current().visionEnabled),
+          });
+          ctx.menu.update();
+        })
+      )
+      .row()
+      .text(
         () => {
           const usage = this.deepSeek.usage;
           return `📊 DeepSeek сегодня: ${usage.requests} запр., ${usage.tokens} ток., ≈ ${formatUsd(

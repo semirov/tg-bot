@@ -151,6 +151,8 @@ function settingsBase(): any {
     selfCheckThreshold: 0.6,
     memberTagsEnabled: true,
     memberBioEnabled: true,
+    visionEnabled: true,
+    useProModel: true,
   };
 }
 
@@ -216,6 +218,8 @@ const TROLL_ROWS: { row: number; field: string; type: 'toggle' | 'cycle'; preset
   { row: 24, field: 'selfCheckThreshold', type: 'cycle', presets: [0.4, 0.5, 0.6, 0.7, 0.8] },
   { row: 25, field: 'memberTagsEnabled', type: 'toggle' },
   { row: 26, field: 'memberBioEnabled', type: 'toggle' },
+  { row: 27, field: 'useProModel', type: 'toggle' },
+  { row: 28, field: 'visionEnabled', type: 'toggle' },
 ];
 
 describe('AdminMenuService', () => {
@@ -1078,8 +1082,8 @@ describe('AdminMenuService', () => {
       expect(await buttonText(kb[2][0], ctx)).toBe('Порог статьи: 50%');
       expect(await buttonText(kb[4][0], ctx)).toBe('Пауза анализа УК: 10 с');
       expect(await buttonText(kb[7][0], ctx)).toBe('Пауза сарказма: 5 мин');
-      expect(await buttonText(kb[27][0], ctx)).toContain('DeepSeek');
-      expect(await buttonText(kb[27][0], ctx)).not.toContain('(пик)');
+      expect(await buttonText(kb[29][0], ctx)).toContain('DeepSeek');
+      expect(await buttonText(kb[29][0], ctx)).not.toContain('(пик)');
 
       deepSeek.usage.peak = true;
       deepSeek.usage.costUsd = 0.00005;
@@ -1109,6 +1113,8 @@ describe('AdminMenuService', () => {
         jerkBatchWindowSec: 0,
         jerkCooldownSec: 0,
         dialogPauseMin: 0,
+        visionEnabled: false,
+        useProModel: false,
       };
       kb = await rawKeyboard(settingsMenu, ctx);
       for (const row of kb) for (const btn of row) if (typeof btn.text === 'function') await btn.text(ctx);
@@ -1117,8 +1123,10 @@ describe('AdminMenuService', () => {
       expect(await buttonText(kb[4][0], ctx)).toBe('Пауза анализа УК: без паузы');
       expect(await buttonText(kb[7][0], ctx)).toBe('Пауза сарказма: 1 ч');
       expect(await buttonText(kb[10][0], ctx)).toBe('Пауза кривляния: 30 с');
-      expect(await buttonText(kb[27][0], ctx)).toContain('(пик)');
-      expect(await buttonText(kb[27][0], ctx)).toContain('< $0.0001');
+      expect(await buttonText(kb[27][0], ctx)).toBe('Модель ответов: deepseek-flash');
+      expect(await buttonText(kb[28][0], ctx)).toContain('Разбор картинок: ⚪️ выкл');
+      expect(await buttonText(kb[29][0], ctx)).toContain('(пик)');
+      expect(await buttonText(kb[29][0], ctx)).toContain('< $0.0001');
     });
 
     it('все переключатели и циклы обновляют настройки', async () => {
@@ -1152,18 +1160,18 @@ describe('AdminMenuService', () => {
         }
       }
 
-      await kb[27][0].middleware[0](ctx, jest.fn());
+      await kb[29][0].middleware[0](ctx, jest.fn());
       expect(ctx.answerCallbackQuery).toHaveBeenCalledWith('Обновлено');
 
-      await kb[29][0].middleware[0](ctx, jest.fn());
+      await kb[31][0].middleware[0](ctx, jest.fn());
       expect(ctx.menu.nav).toHaveBeenCalledWith(AdminMenusEnum.TROLL_CHATS_MENU);
 
       trollSettings.reset.mockClear();
-      await kb[30][0].middleware[0](ctx, jest.fn());
+      await kb[32][0].middleware[0](ctx, jest.fn());
       expect(trollSettings.reset).toHaveBeenCalled();
       expect(ctx.answerCallbackQuery).toHaveBeenCalledWith('Настройки сброшены');
 
-      await kb[31][0].middleware[0](ctx, jest.fn());
+      await kb[33][0].middleware[0](ctx, jest.fn());
       expect(ctx.menu.back).toHaveBeenCalled();
     });
 

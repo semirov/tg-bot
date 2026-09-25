@@ -28,6 +28,7 @@ interface ConfigOverrides {
   deepseekApiKey?: string;
   deepseekBaseUrl?: string;
   deepseekModel?: string;
+  deepseekVisionModel?: string;
   deepseekReasoningEffort?: string;
   deepseekPriceCacheHit?: number;
   deepseekPriceCacheMiss?: number;
@@ -39,6 +40,7 @@ function makeConfig(overrides: ConfigOverrides = {}): any {
     deepseekApiKey: 'test-key',
     deepseekBaseUrl: 'https://api.deepseek.test',
     deepseekModel: 'deepseek-flash',
+    deepseekVisionModel: 'deepseek-flash',
     deepseekReasoningEffort: 'none',
     deepseekPriceCacheHit: undefined,
     deepseekPriceCacheMiss: undefined,
@@ -140,6 +142,130 @@ describe('DeepSeekService', () => {
         temperature: 0.9,
         max_tokens: 400,
       });
+    });
+
+    it('главная модель берётся из тумблера (pro/flash)', async () => {
+      mockPost.mockResolvedValue(reply('ok'));
+      const pro = makeService(makeConfig(), {
+        current: { dailyRequestLimit: 2000, useProModel: true },
+      });
+      await pro.complete(USER);
+      expect(mockPost.mock.calls[0][1].model).toBe('deepseek-v4-pro');
+
+      mockPost.mockClear();
+      const flash = makeService(makeConfig(), {
+        current: { dailyRequestLimit: 2000, useProModel: false },
+      });
+      await flash.complete(USER);
+      expect(mockPost.mock.calls[0][1].model).toBe('deepseek-flash');
+    });
+
+    it('dailyReport разбивает суточный расход по моделям', async () => {
+      mockPost.mockResolvedValue(
+        reply('ok', { total_tokens: 100, prompt_tokens: 60, completion_tokens: 40 })
+      );
+      const service = makeService(makeConfig(), {
+        current: { dailyRequestLimit: 2000, useProModel: false },
+      });
+
+      await service.complete(USER); // flash по тумблеру
+      await service.complete(USER, { model: 'deepseek-v4-pro' }); // pro явно
+
+      const report = service.dailyReport;
+      expect(report.requests).toBe(2);
+      expect(report.tokens).toBe(200);
+      expect(report.models.map((m) => m.model).sort()).toEqual([
+        'deepseek-flash',
+        'deepseek-v4-pro',
+      ]);
+      expect(report.models.find((m) => m.model === 'deepseek-flash')?.requests).toBe(1);
+      expect(report.models.find((m) => m.model === 'deepseek-v4-pro')?.tokens).toBe(100);
+      // Дороже — выше в отчёте; pro тарифицируется выше flash при тех же токенах.
+      expect(report.models[0].model).toBe('deepseek-v4-pro');
+    });
+
+    it('dailyReport сбрасывает счётчики при смене суток', async () => {
+      mockPost.mockResolvedValue(
+        reply('ok', { total_tokens: 100, prompt_tokens: 60, completion_tokens: 40 })
+      );
+      const service = makeService();
+      await service.complete(USER);
+      expect(service.dailyReport.tokens).toBe(100);
+
+      (service as any).dailyKey = '2000-01-01';
+      const afterRollover = service.dailyReport;
+      expect(afterRollover.tokens).toBe(0);
+      expect(afterRollover.models).toEqual([]);
+      expect(afterRollover.date).not.toBe('2000-01-01');
+    });
+
+    it('describeImage идёт на vision-модель и передаёт картинку отдельной частью', async () => {
+      mockPost.mockResolvedValue(reply('описание'));
+      const service = makeService(makeConfig(), {
+        current: { dailyRequestLimit: 2000, useProModel: true },
+      });
+
+      const result = await service.describeImage('data:image/jpeg;base64,AAA', {
+        prompt: 'разбери картинку',
+        label: 'vision',
+      });
+
+      expect(result).toBe('описание');
+      const body = mockPost.mock.calls[0][1];
+      expect(body.model).toBe('deepseek-flash');
+      expect(body.response_format).toEqual({ type: 'json_object' });
+      expect(body.messages[0].content[0]).toEqual({ type: 'text', text: 'разбери картинку' });
+      expect(body.messages[0].content[1]).toEqual({
+        type: 'image_url',
+        image_url: { url: 'data:image/jpeg;base64,AAA', detail: 'low' },
+      });
+    });
+
+    it('describeImage: опции переопределяют детализацию, модель и бюджет', async () => {
+      mockPost.mockResolvedValue(reply('ок'));
+      const service = makeService(makeConfig(), {
+        current: { dailyRequestLimit: 2000, useProModel: true },
+      });
+
+      await service.describeImage('data:image/png;base64,BBB', {
+        prompt: 'p',
+        label: 'vision2',
+        maxTokens: 123,
+        detail: 'high',
+        model: 'deepseek-custom',
+      });
+
+      const body = mockPost.mock.calls[0][1];
+      expect(body.model).toBe('deepseek-custom');
+      expect(body.max_tokens).toBe(123);
+      expect(body.messages[0].content[1].image_url.detail).toBe('high');
+    });
+
+    it('describeImage без label и при пустом ответе модели — null', async () => {
+      mockPost.mockResolvedValue(reply(''));
+      const service = makeService();
+
+      expect(await service.describeImage('data:image/jpeg;base64,AAA', { prompt: 'p' })).toBeNull();
+    });
+
+    it('describeImage переживает ошибку модели', async () => {
+      mockPost.mockRejectedValue(new Error('boom'));
+      const service = makeService();
+
+      expect(await service.describeImage('data:image/jpeg;base64,AAA', { prompt: 'p' })).toBeNull();
+    });
+
+    it('dailyReport сортирует модели и добирает сравнение по токенам', async () => {
+      // Нулевые токены → у обеих моделей стоимость 0, компаратор уходит в сравнение по токенам.
+      mockPost.mockResolvedValue(reply('ok', { total_tokens: 0 }));
+      const service = makeService(makeConfig(), {
+        current: { dailyRequestLimit: 2000, useProModel: false },
+      });
+
+      await service.complete(USER);
+      await service.complete(USER, { model: 'deepseek-v4-pro' });
+
+      expect(service.dailyReport.models).toHaveLength(2);
     });
 
     it('обрезает max_tokens жёстким потолком и снизу единицей', async () => {

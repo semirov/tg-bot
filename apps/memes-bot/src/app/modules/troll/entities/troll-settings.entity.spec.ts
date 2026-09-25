@@ -31,6 +31,8 @@ describe('TrollSettingsEntity', () => {
       'selfCheckEnabled',
       'memberTagsEnabled',
       'memberBioEnabled',
+      'visionEnabled',
+      'useProModel',
     ];
 
     for (const toggle of toggles) {

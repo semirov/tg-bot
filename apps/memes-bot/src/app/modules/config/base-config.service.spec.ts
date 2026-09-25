@@ -77,6 +77,7 @@ describe('BaseConfigService', () => {
       ['mattermostImageBaseUrl', 'MATTERMOST_IMAGE_BASE_URL', ''],
       ['deepseekBaseUrl', 'DEEPSEEK_BASE_URL', 'https://api.deepseek.com'],
       ['deepseekModel', 'DEEPSEEK_MODEL', 'deepseek-flash'],
+      ['deepseekVisionModel', 'DEEPSEEK_VISION_MODEL', 'deepseek-flash'],
       ['deepseekReasoningEffort', 'DEEPSEEK_REASONING_EFFORT', 'none'],
       ['deepseekJudgeModel', 'DEEPSEEK_JUDGE_MODEL', 'deepseek-v4-pro'],
       ['deepseekApiKey', 'DEEPSEEK_API_KEY', ''],
