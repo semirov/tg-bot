@@ -141,10 +141,14 @@ export const TROLL_VISION_MAX_CHARS = 800;
 export const TROLL_VISION_CONFIDENCE_MIN = 0.6;
 
 /**
- * Расписание отчёта о расходе DeepSeek: каждый день в 23:55 (время процесса).
+ * Расписание отчёта о расходе DeepSeek: каждый день в 21:00 по Москве.
  * Отчёт уходит владельцу в личку и содержит суточные токены/стоимость по моделям.
+ * Таймзона задаётся явно, поэтому не зависит от TZ процесса.
  */
-export const TROLL_USAGE_REPORT_CRON = '55 23 * * *';
+export const TROLL_USAGE_REPORT_CRON = '0 21 * * *';
+
+/** Таймзона расписания отчёта (и учётного дня расхода). */
+export const TROLL_REPORT_TIMEZONE = 'Europe/Moscow';
 
 /** Максимальная длина переделанного слова (кривляние), символов. */
 export const TROLL_MIRROR_MAX_CHARS = 32;

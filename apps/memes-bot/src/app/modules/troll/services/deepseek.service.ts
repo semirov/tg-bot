@@ -570,8 +570,14 @@ export class DeepSeekService {
     }
   }
 
+  /**
+   * Ключ учётного дня — по Москве (UTC+3), а не по UTC. Так отчёт в 21:00 МСК
+   * подводит итог того же календарного дня, а суточные лимиты сбрасываются
+   * в полночь по Москве.
+   */
   private todayKey(): string {
-    return new Date().toISOString().slice(0, 10);
+    const moscow = new Date(Date.now() + 3 * 60 * 60 * 1000);
+    return moscow.toISOString().slice(0, 10);
   }
 
   /** Логирует предупреждение о лимите не чаще раза в минуту, чтобы не залить лог. */

@@ -52,6 +52,7 @@ import {
   TROLL_SUMMARY_MAX_MESSAGES,
   TROLL_SUMMARY_MAX_REPLY_CHARS,
   TROLL_SUMMARY_MAX_TOKENS,
+  TROLL_REPORT_TIMEZONE,
   TROLL_USAGE_REPORT_CRON,
   TROLL_VISION_CONFIDENCE_MIN,
 } from '../constants/troll-limits';
@@ -2420,9 +2421,9 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
   /**
    * Отчёт о расходе DeepSeek за сутки — владельцу в личку в конце дня.
    * Токены и стоимость разбиты по моделям (pro/flash и др.), чтобы видеть,
-   * куда уходит бюджет. Отправляется один раз в 23:55 по расписанию процесса.
+   * куда уходит бюджет. Отправляется один раз в 21:00 по Москве.
    */
-  @Cron(TROLL_USAGE_REPORT_CRON)
+  @Cron(TROLL_USAGE_REPORT_CRON, { timeZone: TROLL_REPORT_TIMEZONE })
   public async dailyUsageReportJob(): Promise<void> {
     const report = this.deepSeek.dailyReport;
     if (!report.requests) {
@@ -2441,7 +2442,7 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
 
   /** Человекочитаемый отчёт о суточном расходе с разбивкой по моделям. */
   private formatUsageReport(report: DeepSeekDailyUsage): string {
-    const lines = [`📊 DeepSeek за ${report.date} (UTC):`];
+    const lines = [`📊 DeepSeek за ${report.date} (МСК):`];
     for (const model of report.models) {
       lines.push(
         `• ${model.model} — ${this.formatInt(model.requests)} запр., ${this.formatInt(
