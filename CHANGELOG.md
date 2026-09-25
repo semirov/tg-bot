@@ -1,3 +1,10 @@
+# [0.38.0](https://github.com/semirov/tg-bot/compare/v0.37.2...v0.38.0) (2026-09-25)
+
+
+### Features
+
+* **troll:** vision в чатах — картинки, вопросы, тумблер модели pro/flash, суточный отчёт (21:00 МСК) ([efc27ad](https://github.com/semirov/tg-bot/commit/efc27addccfff1ea19f0d2d30374fe2e525a6f5d)), closes [#102](https://github.com/semirov/tg-bot/issues/102)
+
 ## [0.37.2](https://github.com/semirov/tg-bot/compare/v0.37.1...v0.37.2) (2026-09-23)
 
 
