@@ -91,12 +91,14 @@ describe('troll-bio', () => {
   describe('evidenceLooksCopied', () => {
     it('коллективное «мы» без личного «я» — чужой текст', () => {
       expect(evidenceLooksCopied('Наша IT компания создала первую блокчейн-платформу')).toBe(true);
-      expect(evidenceLooksCopied('мы с коллегами поздравляем')).toBe(true);
+      expect(evidenceLooksCopied('мы поздравляем с праздником')).toBe(true);
     });
 
     it('личное высказывание принимается', () => {
       expect(evidenceLooksCopied('не, я же у дистра работала')).toBe(false);
       expect(evidenceLooksCopied('плачу 1к за безлимит')).toBe(false);
+      expect(evidenceLooksCopied('у нас в падике ремонт')).toBe(false);
+      expect(evidenceLooksCopied('мы с коллегами сделали')).toBe(false);
     });
   });
 

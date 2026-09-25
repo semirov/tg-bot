@@ -246,10 +246,10 @@ export const TROLL_MEMBER_TAG_ANNOUNCE_MAX_CHARS = 250;
 export const TROLL_MEMBER_BIO_MAX_CHARS = 1000;
 
 /**
- * Через сколько новых реплик участника обновлять досье. По эксперименту:
- * каждые ~20 сообщений — та же полнота, что каждые 10, но вдвое дешевле.
+ * Через сколько новых реплик участника обновлять досье.
+ * Снижен с 20 до 10 для более активного сбора биографий.
  */
-export const TROLL_MEMBER_BIO_UPDATE_EVERY = 20;
+export const TROLL_MEMBER_BIO_UPDATE_EVERY = 10;
 
 /** Минимальный интервал между обновлениями одного досье, мс (антифлуд). */
 export const TROLL_MEMBER_BIO_MIN_INTERVAL_MS = 10 * 60 * 1000;
@@ -278,9 +278,15 @@ export const TROLL_MEMBER_BIO_WEIGHT_BOOST = 1;
 export const TROLL_MEMBER_BIO_WEIGHT_MAX = 4;
 export const TROLL_MEMBER_BIO_DROP_THRESHOLD = 0.3;
 
-/** Базовый и максимальный период полураспада факта, часы. */
-export const TROLL_MEMBER_BIO_HALF_LIFE_BASE_HOURS = 6;
-export const TROLL_MEMBER_BIO_HALF_LIFE_MAX_HOURS = 336; // 14 суток
+/**
+ * Базовый и максимальный период полураспада факта, часы.
+ * Факт живёт ~1.74 × halfLife часов до вымывания (вес падает с 1 до 0.3).
+ * 
+ * BASE = 168ч (7 дней): importance=1 живёт ~12 дней, importance=3 ~36 дней.
+ * MAX = 1008ч (42 дня): потолок для важных фактов с подтверждениями.
+ */
+export const TROLL_MEMBER_BIO_HALF_LIFE_BASE_HOURS = 168; // 7 суток
+export const TROLL_MEMBER_BIO_HALF_LIFE_MAX_HOURS = 1008; // 42 суток
 
 /** Сколько досье (участников) подмешивать в диалог и их суммарный потолок. */
 export const TROLL_MEMBER_BIO_INJECT_MAX_USERS = 5;

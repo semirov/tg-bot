@@ -89,15 +89,20 @@ export function looksLikeTopicNotBiography(text: string): boolean {
 }
 
 const COLLECTIVE_FIRST_PERSON = /(^|\s)(наш(а|е|и|ей|его|их|ему)?|мы)(\s|$)/i;
-const SINGULAR_FIRST_PERSON = /(^|\s)(я|мне|меня|мной|мой|моя|моё|мои|у меня)(\s|$)/i;
+const SINGULAR_FIRST_PERSON = /(^|\s)(я|мне|меня|мной|мой|моя|моё|мои|у меня|мы с|у нас)(\s|$)/i;
 
 /**
  * Доказательство-цитата похоже на скопированный чужой текст: коллективное
- * первое лицо («наша компания», «мы») без личного «я». Такие поздравления и
- * новости — не биография участника.
+ * первое лицо («наша компания», «мы») без личного «я» И без контекста
+ * принадлежности («у нас», «мы с»). Такие поздравления и новости — не
+ * биография участника.
  */
 export function evidenceLooksCopied(evidence: string): boolean {
   const trimmed = evidence.trim();
+  // Если есть "у нас" или "мы с" — это личное, не скопированное
+  if (/\b(у нас|мы с)\b/i.test(trimmed)) {
+    return false;
+  }
   return COLLECTIVE_FIRST_PERSON.test(trimmed) && !SINGULAR_FIRST_PERSON.test(trimmed);
 }
 
