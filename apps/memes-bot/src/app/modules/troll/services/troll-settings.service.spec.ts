@@ -139,6 +139,21 @@ describe('TrollSettingsService', () => {
       expect(service.current).toBe(result);
     });
 
+    it('берёт заданные visionEnabled и useProModel из строки БД', async () => {
+      const repo = makeRepo();
+      repo.findOne.mockResolvedValue({
+        id: TROLL_SETTINGS_ID,
+        visionEnabled: false,
+        useProModel: false,
+      });
+      const { service } = makeService(makeConfig(), repo);
+
+      const result = await service.refresh();
+
+      expect(result.visionEnabled).toBe(false);
+      expect(result.useProModel).toBe(false);
+    });
+
     it('берёт из строки явно заданные булевы флаги', async () => {
       const repo = makeRepo();
       repo.findOne.mockResolvedValue({

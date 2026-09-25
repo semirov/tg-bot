@@ -221,6 +221,53 @@ describe('DeepSeekService', () => {
       });
     });
 
+    it('describeImage: опции переопределяют детализацию, модель и бюджет', async () => {
+      mockPost.mockResolvedValue(reply('ок'));
+      const service = makeService(makeConfig(), {
+        current: { dailyRequestLimit: 2000, useProModel: true },
+      });
+
+      await service.describeImage('data:image/png;base64,BBB', {
+        prompt: 'p',
+        label: 'vision2',
+        maxTokens: 123,
+        detail: 'high',
+        model: 'deepseek-custom',
+      });
+
+      const body = mockPost.mock.calls[0][1];
+      expect(body.model).toBe('deepseek-custom');
+      expect(body.max_tokens).toBe(123);
+      expect(body.messages[0].content[1].image_url.detail).toBe('high');
+    });
+
+    it('describeImage без label и при пустом ответе модели — null', async () => {
+      mockPost.mockResolvedValue(reply(''));
+      const service = makeService();
+
+      expect(await service.describeImage('data:image/jpeg;base64,AAA', { prompt: 'p' })).toBeNull();
+    });
+
+    it('describeImage переживает ошибку модели', async () => {
+      mockPost.mockRejectedValue(new Error('boom'));
+      const service = makeService();
+
+      expect(await service.describeImage('data:image/jpeg;base64,AAA', { prompt: 'p' })).toBeNull();
+    });
+
+    it('dailyReport сортирует модели и добирает сравнение по токенам', async () => {
+      // Нулевые токены → у обеих моделей стоимость 0, компаратор уходит в сравнение по токенам.
+      mockPost.mockResolvedValue(reply('ok', { total_tokens: 0 }));
+      const service = makeService(makeConfig(), {
+        current: { dailyRequestLimit: 2000, useProModel: false },
+      });
+
+      await service.complete(USER);
+      await service.complete(USER, { model: 'deepseek-v4-pro' });
+
+      expect(service.dailyReport.models).toHaveLength(2);
+    });
+
     it('обрезает max_tokens жёстким потолком и снизу единицей', async () => {
       mockPost.mockResolvedValue(reply('ok'));
       const service = makeService();

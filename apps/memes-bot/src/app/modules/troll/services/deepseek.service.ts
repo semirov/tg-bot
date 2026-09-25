@@ -80,7 +80,7 @@ export class DeepSeekService {
    * vision всегда идёт на `deepseekVisionModel`.
    */
   private get mainModel(): string {
-    const usePro = this.settings.current?.useProModel;
+    const usePro = this.settings.current.useProModel;
     if (usePro === true) {
       return 'deepseek-v4-pro';
     }

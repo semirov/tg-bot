@@ -1113,6 +1113,8 @@ describe('AdminMenuService', () => {
         jerkBatchWindowSec: 0,
         jerkCooldownSec: 0,
         dialogPauseMin: 0,
+        visionEnabled: false,
+        useProModel: false,
       };
       kb = await rawKeyboard(settingsMenu, ctx);
       for (const row of kb) for (const btn of row) if (typeof btn.text === 'function') await btn.text(ctx);
@@ -1121,6 +1123,8 @@ describe('AdminMenuService', () => {
       expect(await buttonText(kb[4][0], ctx)).toBe('Пауза анализа УК: без паузы');
       expect(await buttonText(kb[7][0], ctx)).toBe('Пауза сарказма: 1 ч');
       expect(await buttonText(kb[10][0], ctx)).toBe('Пауза кривляния: 30 с');
+      expect(await buttonText(kb[27][0], ctx)).toBe('Модель ответов: deepseek-flash');
+      expect(await buttonText(kb[28][0], ctx)).toContain('Разбор картинок: ⚪️ выкл');
       expect(await buttonText(kb[29][0], ctx)).toContain('(пик)');
       expect(await buttonText(kb[29][0], ctx)).toContain('< $0.0001');
     });

@@ -1,5 +1,5 @@
 import { TROLL_VISION_MAX_CHARS } from '../constants/troll-limits';
-import { renderImageDescription } from './troll-vision';
+import { readImageConfidence, renderImageDescription } from './troll-vision';
 
 describe('renderImageDescription', () => {
   it('разворачивает JSON-описание в одну строку с метками', () => {
@@ -48,5 +48,26 @@ describe('renderImageDescription', () => {
     expect(renderImageDescription('')).toBeNull();
     expect(renderImageDescription(null)).toBeNull();
     expect(renderImageDescription(JSON.stringify({}))).toBeNull();
+  });
+
+  it('не-JSON из одних пробелов даёт null', () => {
+    expect(renderImageDescription('   \n  ')).toBeNull();
+  });
+});
+
+describe('readImageConfidence', () => {
+  it('достаёт уверенность из JSON и клампит в 0..1', () => {
+    expect(readImageConfidence(JSON.stringify({ confidence: 0.8 }))).toBe(0.8);
+    expect(readImageConfidence(JSON.stringify({ confidence: 1.7 }))).toBe(1);
+    expect(readImageConfidence(JSON.stringify({ confidence: -2 }))).toBe(0);
+  });
+
+  it('возвращает 0 для пустого, не-JSON, отсутствия поля и мусора', () => {
+    expect(readImageConfidence(null)).toBe(0);
+    expect(readImageConfidence(undefined)).toBe(0);
+    expect(readImageConfidence('')).toBe(0);
+    expect(readImageConfidence('не json')).toBe(0);
+    expect(readImageConfidence(JSON.stringify({}))).toBe(0);
+    expect(readImageConfidence(JSON.stringify({ confidence: 'abc' }))).toBe(0);
   });
 });
