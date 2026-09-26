@@ -235,6 +235,17 @@ describe('ParserDeliveryService', () => {
     expect(bot.api.sendPhoto).not.toHaveBeenCalled();
   });
 
+  it('случайная пара (схожесть < порога published-duplicate) → НЕ дубликат', async () => {
+    const { service, dedup } = setup();
+    // 0.6 — выше случайного шума (~0.48), но ниже порога PUBLISHED_DUPLICATE_SIMILARITY
+    dedup.checkDuplicateSameLength.mockResolvedValue([{ memePostId: 7, distance: 0.6 }]);
+
+    const result = await service.deliver(candidate());
+
+    expect(result).toMatchObject({ ok: true, status: ObservedStatus.DELIVERED });
+    expect(dedup.checkDuplicateSameLength).toHaveBeenCalled();
+  });
+
   it('медиа слишком большое → FAILED media-too-large', async () => {
     const { service, bot } = setup({ download: Buffer.alloc(11 * 1024 * 1024, 1) });
 

@@ -14,7 +14,7 @@ import { DeduplicationService } from '../../bot/services/deduplication.service';
 import { metrics, sourceLabel } from '../../../shared/metrics';
 import { channelInternalId, buildPostUrl, escapeHtml } from '../../../shared/publication/telegram-link';
 import { CLOCK, Clock } from '../../../shared/clock';
-import { CARD_CB_PREFIX, MAX_PHOTO_BYTES, MAX_VIDEO_BYTES, ObservedStatus, QUEUE_MERGE_SIMILARITY, VIDEO_MERGE_SIMILARITY } from '../constants/parser.constants';
+import { CARD_CB_PREFIX, MAX_PHOTO_BYTES, MAX_VIDEO_BYTES, ObservedStatus, PUBLISHED_DUPLICATE_SIMILARITY, QUEUE_MERGE_SIMILARITY, VIDEO_MERGE_SIMILARITY } from '../constants/parser.constants';
 import { ObservedPostEntity } from '../entities/observed-post.entity';
 import { SourceChannelEntity } from '../entities/source-channel.entity';
 import { ParserMtprotoGuard } from './parser-mtproto-guard.service';
@@ -76,10 +76,15 @@ export class ParserDeliveryService {
     }
     // «В сетке» и опубликованное считаются опубликованными: фото — по 16-бит
     // хешу, видео — по обложке (64-бит). Такие посты больше не предлагаются.
+    // Порог PUBLISHED_DUPLICATE_SIMILARITY (0.85), а не 0.5: случайная пара
+    // картинок даёт ~0.48 совпадения битов, мемы с однотонным фоном — легко
+    // >0.5, при 0.5 дедуп браковал почти весь поток.
     const publishedHash = imageHash ?? perceptualHash;
     if (publishedHash) {
       const duplicates = await this.deduplication.checkDuplicateSameLength(publishedHash);
-      const isDuplicate = (duplicates ?? []).some((item) => item.distance >= 0.5);
+      const isDuplicate = (duplicates ?? []).some(
+        (item) => item.distance >= PUBLISHED_DUPLICATE_SIMILARITY
+      );
       if (isDuplicate) {
         candidate.status = ObservedStatus.DUPLICATE;
         candidate.rejectReason = 'published-duplicate';
