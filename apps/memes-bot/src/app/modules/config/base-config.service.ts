@@ -223,6 +223,11 @@ export class BaseConfigService {
     return this.getNumber('TROLL_REACTION_COOLDOWN', 60);
   }
 
+  /** Вероятность сообщения в чат при публикации мема в канал (0..1). */
+  get trollMemeAnnounceChance(): number {
+    return this.getNumber('TROLL_MEME_ANNOUNCE_CHANCE', 0.1);
+  }
+
   /** Порог вероятности, при котором бот описывает статью УК РФ (0..1). */
   get trollCriminalThreshold(): number {
     return this.getNumber('TROLL_CRIMINAL_THRESHOLD', 0.5);

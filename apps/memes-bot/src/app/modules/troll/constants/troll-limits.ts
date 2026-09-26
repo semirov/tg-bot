@@ -66,6 +66,15 @@ export const TROLL_FUTURE_ANGRY_AFTER = 2;
  */
 export const TROLL_FUTURE_AVOID_REPEAT = 6;
 
+/** Пауза между вызовами /meme в одном чате, сек. */
+export const TROLL_MEME_COOLDOWN_SEC = 60 * 60;
+
+/** Сколько последних мемов брать в пул для /meme. */
+export const TROLL_MEME_POOL_SIZE = 50;
+
+/** Сколько попыток копирования делаем, прежде чем сдаться. */
+export const TROLL_MEME_MAX_ATTEMPTS = 5;
+
 /** Пауза между вызовами /sumarize в одном чате (общий кулдаун на весь чат), сек. */
 export const TROLL_SUMMARY_COOLDOWN_SEC = 60 * 60;
 

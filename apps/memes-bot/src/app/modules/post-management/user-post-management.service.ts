@@ -18,6 +18,7 @@ import { UserService } from '../bot/services/user.service';
 import { ClientBaseService } from '../client/services/client-base.service';
 import { BaseConfigService } from '../config/base-config.service';
 import { MattermostService } from '../mattermost/mattermost.service';
+import { TrollService } from '../troll/services/troll.service';
 import { PostModerationMenusEnum } from './constants/post-moderation-menus.enum';
 import { PublicationModesEnum } from './constants/publication-modes.enum';
 import { resolveAdminReply } from './utils/admin-reply';
@@ -45,7 +46,8 @@ export class UserPostManagementService implements OnModuleInit {
     private cringeManagementService: CringeManagementService,
     private deduplicationService: DeduplicationService,
     private clientBaseService: ClientBaseService,
-    private mattermostService: MattermostService
+    private mattermostService: MattermostService,
+    private trollService: TrollService
   ) {
     this.duplicatePolicy = new DuplicatePolicy(postSchedulerService, deduplicationService);
   }
@@ -1197,6 +1199,12 @@ export class UserPostManagementService implements OnModuleInit {
 
     await this.deduplicationService.createPublishedPostHash(
       publishContext.hash,
+      publishedMessage.message_id
+    );
+
+    // Иногда репостим новый мем в активные чаты (не блокирует публикацию).
+    void this.trollService.maybeRepostMeme(
+      this.baseConfigService.memeChanelId,
       publishedMessage.message_id
     );
   }

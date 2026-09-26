@@ -49,6 +49,12 @@ export class TrollSettingsEntity {
   reactionCooldownSec: number;
 
   @Column('boolean', { default: true })
+  memeAnnounceEnabled: boolean;
+
+  @Column('real', { default: 0.1 })
+  memeAnnounceChance: number;
+
+  @Column('boolean', { default: true })
   jerkEnabled: boolean;
 
   @Column('boolean', { default: true })

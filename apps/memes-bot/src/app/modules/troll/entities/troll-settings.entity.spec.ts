@@ -25,6 +25,7 @@ describe('TrollSettingsEntity', () => {
       'sarcasmEnabled',
       'mirrorEnabled',
       'reactionEnabled',
+      'memeAnnounceEnabled',
       'jerkEnabled',
       'addressReactionEnabled',
       'selfCheckEnabled',
@@ -48,6 +49,7 @@ describe('TrollSettingsEntity', () => {
     expect(column('sarcasmChance')?.options).toMatchObject({ type: 'real', default: 0.05 });
     expect(column('mirrorChance')?.options).toMatchObject({ type: 'real', default: 0.05 });
     expect(column('reactionChance')?.options).toMatchObject({ type: 'real', default: 0.05 });
+    expect(column('memeAnnounceChance')?.options).toMatchObject({ type: 'real', default: 0.1 });
     expect(column('selfCheckThreshold')?.options).toMatchObject({ type: 'real', default: 0.6 });
   });
 

@@ -5,6 +5,7 @@ import { AppConfigModule } from '../config/app-config.module';
 import { MattermostModule } from '../mattermost/mattermost.module';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ObservatoryPostEntity } from './entities/observatory-post.entity';
+import { TrollModule } from '../troll/troll.module';
 import { ParserModule } from '../parser/parser.module';
 
 @Module({
@@ -12,6 +13,7 @@ import { ParserModule } from '../parser/parser.module';
     BotModule,
     AppConfigModule,
     MattermostModule,
+    TrollModule,
     ParserModule,
     TypeOrmModule.forFeature([
       ObservatoryPostEntity,

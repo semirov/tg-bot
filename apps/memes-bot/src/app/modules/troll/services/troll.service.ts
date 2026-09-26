@@ -36,6 +36,9 @@ import {
   TROLL_MAX_CRIMINAL_REASON_CHARS,
   TROLL_MAX_CRIMINAL_TITLE_CHARS,
   TROLL_MAX_REPLY_CHARS,
+  TROLL_MEME_COOLDOWN_SEC,
+  TROLL_MEME_MAX_ATTEMPTS,
+  TROLL_MEME_POOL_SIZE,
   TROLL_MEMBER_BIO_MAX_CHARS,
   TROLL_MIRROR_MIN_WORD_LEN,
   TROLL_SELF_CHECK_CONTEXT_CHARS,
@@ -63,6 +66,7 @@ import {
   FUTURE_GOOD_PROMPT,
   IMAGE_ANALYSIS_PROMPT,
   JERK_PROMPT,
+  MEME_DENY_PROMPT,
   MIRROR_PROMPT,
   SARCASM_PROMPT,
   SELF_CHECK_PROMPT,
@@ -89,6 +93,7 @@ import { TrollChatEntity } from '../entities/troll-chat.entity';
 import { TrollDefectEntity } from '../entities/troll-defect.entity';
 import { TrollMessageEntity } from '../entities/troll-message.entity';
 import { TrollPredictionEntity } from '../entities/troll-prediction.entity';
+import { ChannelMemeEntity } from '../../channel-monitor/entities/channel-meme.entity';
 import {
   CriminalAssessment,
   CriminalStat,
@@ -244,6 +249,11 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
     return this.cooldowns.lastJerkAnswerAt;
   }
 
+  /** Время последнего /meme (мс; ключ chatId:userId) — совместимое представление реестра. */
+  private get lastMemeAt(): Map<string, number> {
+    return this.cooldowns.lastMemeAt;
+  }
+
   constructor(
     @Inject(BOT) private readonly bot: Bot<BotContext>,
     private readonly config: BaseConfigService,
@@ -257,6 +267,8 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
     private readonly predictions: Repository<TrollPredictionEntity>,
     @InjectRepository(TrollDefectEntity)
     private readonly defects: Repository<TrollDefectEntity>,
+    @InjectRepository(ChannelMemeEntity)
+    private readonly memes: Repository<ChannelMemeEntity>,
     private readonly memberTags: TrollMemberTagsService,
     private readonly memberBio: TrollMemberBioService
   ) {}
@@ -277,6 +289,15 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
         await this.onFutureCommand(ctx);
       } catch (error) {
         this.logger.error('Failed to handle /future', error);
+      }
+    });
+
+    // Команда /meme — репост случайного живого мема из канала (раз в час).
+    this.bot.command('meme', async (ctx) => {
+      try {
+        await this.onMemeCommand(ctx);
+      } catch (error) {
+        this.logger.error('Failed to handle /meme', error);
       }
     });
 
@@ -330,6 +351,53 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
       clearInterval(batch.typingTimer);
     }
     this.jerkBatches.clear();
+  }
+
+  /**
+   * Вызывается после публикации мема в основной канал.
+   * С заданной вероятностью бот **репостит** пост в активные чаты.
+   * Работает круглосуточно.
+   */
+  public async maybeRepostMeme(channelId: number, messageId: number): Promise<void> {
+    try {
+      const s = this.settings.current;
+      if (!s.enabled || !s.memeAnnounceEnabled) {
+        this.logger.debug('Репост мема: пропуск — репосты выключены');
+        return;
+      }
+
+      if (Math.random() >= s.memeAnnounceChance) {
+        this.logger.debug(
+          `Репост мема: пропуск — не повезло (шанс ${this.pct(s.memeAnnounceChance)})`
+        );
+        return;
+      }
+
+      const chats = await this.chats.find({ where: { isActive: true } });
+      if (!chats.length) {
+        this.logger.debug('Репост мема: нет активных чатов');
+        return;
+      }
+
+      this.logger.log(`Репост мема: рассылаю в ${chats.length} чат(ов)`);
+
+      let sent = 0;
+      for (const chat of chats) {
+        const chatId = Number(chat.chatId);
+        try {
+          await this.repostMeme(chatId, String(channelId), messageId);
+          sent += 1;
+        } catch (error) {
+          this.logger.warn(
+            `${this.tag(chatId)}: репост мема не удался — ${this.describeError(error)}`
+          );
+        }
+      }
+
+      this.logger.log(`Репост мема: отправлено в ${sent}/${chats.length} чат(ов)`);
+    } catch (error) {
+      this.logger.error('Failed to repost meme', error);
+    }
   }
 
   /** Список всех известных чатов (для админки). */
@@ -1059,6 +1127,110 @@ export class TrollService implements OnModuleInit, OnModuleDestroy {
       lines.push(`Уже говорил этому чату (не повторяй ни тему, ни приём, ни зачин): ${avoid.join(' | ')}`);
     }
     return wrapUserContent(lines.join('\n'));
+  }
+
+  /** /meme — репостит случайный живой мем из канала. Не чаще раза в час. */
+  private async onMemeCommand(ctx: BotContext): Promise<void> {
+    const chat = ctx.chat;
+    if (!chat || (chat.type !== 'group' && chat.type !== 'supergroup')) {
+      return;
+    }
+    if (!ctx.from || ctx.from.is_bot) {
+      return;
+    }
+
+    const s = this.settings.current;
+    if (!s.enabled) {
+      return;
+    }
+    if (!(await this.isChatActive(chat.id))) {
+      return;
+    }
+
+    // Кулдаун отдельно на каждого участника чата.
+    const memeKey = `${chat.id}:${ctx.from.id}`;
+    const lastAt = this.lastMemeAt.get(memeKey);
+    if (lastAt !== undefined && Date.now() - lastAt < TROLL_MEME_COOLDOWN_SEC * 1000) {
+      const minutesLeft = Math.max(
+        1,
+        Math.ceil((TROLL_MEME_COOLDOWN_SEC * 1000 - (Date.now() - lastAt)) / 60000)
+      );
+      this.logger.log(
+        `${this.tag(chat.id, ctx.from.id)}: /meme — на кулдауне (${minutesLeft} мин), отказываю`
+      );
+      await this.denyRudely(ctx, `ты недавно уже просил мем, возвращайся через ${minutesLeft} мин`);
+      return;
+    }
+    this.lastMemeAt.set(memeKey, Date.now());
+
+    const memes = await this.memes.find({
+      where: { channelType: 'main' },
+      order: { id: 'DESC' },
+      take: TROLL_MEME_POOL_SIZE,
+    });
+    if (!memes.length) {
+      this.logger.log(`${this.tag(chat.id, ctx.from.id)}: /meme — мемов в базе нет`);
+      await this.denyRudely(ctx, 'в базе нет мемов, прислать нечего');
+      return;
+    }
+
+    const pool = [...memes];
+    for (let attempt = 0; attempt < TROLL_MEME_MAX_ATTEMPTS && pool.length; attempt += 1) {
+      const index = Math.floor(Math.random() * pool.length);
+      const meme = pool.splice(index, 1)[0];
+
+      try {
+        await this.repostMeme(chat.id, meme.channelId, meme.messageId);
+        this.logger.log(
+          `${this.tag(chat.id)}: /meme — репостнул мем ${meme.messageId} из ${meme.channelId}`
+        );
+        return;
+      } catch (error) {
+        const message = this.describeError(error);
+        this.logger.warn(`${this.tag(chat.id)}: /meme — мем ${meme.messageId} недоступен: ${message}`);
+        // Если мем удалён из канала — чистим запись, чтобы больше не попадался.
+        if (/not found|to copy|to forward/i.test(message)) {
+          try {
+            await this.memes.delete({ id: meme.id });
+          } catch (deleteError) {
+            this.logger.warn(
+              `${this.tag(chat.id)}: /meme — не смог удалить мёртвый мем ${meme.id}: ${this.describeError(
+                deleteError
+              )}`
+            );
+          }
+        }
+      }
+    }
+
+    this.logger.warn(`${this.tag(chat.id, ctx.from.id)}: /meme — живых мемов не нашлось`);
+    await this.denyRudely(ctx, 'все мемы оказались удалены, пришли новый');
+  }
+
+  /**
+   * Репостит мем из канала. Сначала пробуем forward (настоящий репост с
+   * указанием канала), если канал запрещает пересылку — отправляем копию.
+   */
+  private async repostMeme(chatId: number, channelId: string, messageId: number): Promise<void> {
+    try {
+      await this.bot.api.forwardMessage(chatId, Number(channelId), Number(messageId));
+    } catch (error) {
+      this.logger.warn(
+        `${this.tag(chatId)}: /meme — forward не удался (${this.describeError(error)}), пробую копию`
+      );
+      await this.bot.api.copyMessage(chatId, Number(channelId), Number(messageId));
+    }
+  }
+
+  /** Обидный отказ с объяснением причины (используется в /meme и /sumarize). */
+  private async denyRudely(ctx: BotContext, reason: string): Promise<void> {
+    const raw = await this.deepSeek.completeText(
+      MEME_DENY_PROMPT,
+      wrapUserContent(`причина: ${reason}`),
+      { maxTokens: 50, temperature: 1.05, label: 'отказ' }
+    );
+    const text = toChatStyle(sanitizeModelText(raw ?? '', TROLL_MAX_REPLY_CHARS));
+    await this.safeSendToChat(ctx.chat.id, text || 'нет, не сейчас', ctx.message?.message_id);
   }
 
   /**

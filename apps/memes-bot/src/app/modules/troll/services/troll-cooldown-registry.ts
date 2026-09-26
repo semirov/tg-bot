@@ -25,6 +25,8 @@ export class TrollCooldownRegistry {
   public readonly lastStatAt = new Map<string, number>();
   /** Время последнего ответа на кличку/мат в чате (мс) — чтобы бот не сыпал репликами. */
   public readonly lastJerkAnswerAt = new Map<number, number>();
+  /** Время последнего /meme (мс) — кулдаун на каждого участника (ключ chatId:userId). */
+  public readonly lastMemeAt = new Map<string, number>();
 
   /**
    * @param clock порт текущего времени (по умолчанию — системные часы)

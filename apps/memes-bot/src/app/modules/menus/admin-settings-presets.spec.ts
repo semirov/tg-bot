@@ -15,6 +15,7 @@ describe('AdminSettingsPresets', () => {
     expect(AdminSettingsPresets.JERK_COOLDOWN_SEC).toEqual([0, 30, 60, 120, 180, 300, 600]);
     expect(AdminSettingsPresets.DIALOG_PAUSE_MIN).toEqual([5, 10, 15, 30, 60, 120, 360]);
     expect(AdminSettingsPresets.SELF_CHECK_THRESHOLD).toEqual([0.4, 0.5, 0.6, 0.7, 0.8]);
+    expect(AdminSettingsPresets.MEME_ANNOUNCE_CHANCE).toEqual([0.05, 0.1, 0.2, 0.3, 0.5]);
     expect(AdminSettingsPresets.DAILY_REQUEST_LIMIT).toEqual([
       100, 200, 500, 1000, 2000, 4000, 5000, 10000,
     ]);

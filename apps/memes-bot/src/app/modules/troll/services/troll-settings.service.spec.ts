@@ -12,6 +12,7 @@ function makeConfig(overrides: Record<string, unknown> = {}): any {
     trollMirrorCooldown: 300,
     trollReactionChance: 0.05,
     trollReactionCooldown: 60,
+    trollMemeAnnounceChance: 0.1,
     trollJerkBatchWindow: 15,
     trollJerkCooldown: 180,
     trollDialogPauseMin: 15,
@@ -87,6 +88,8 @@ describe('TrollSettingsService', () => {
         reactionEnabled: false,
         reactionChance: 1.5,
         reactionCooldownSec: '12',
+        memeAnnounceEnabled: undefined,
+        memeAnnounceChance: 0,
         jerkEnabled: false,
         addressReactionEnabled: undefined,
         jerkBatchWindowSec: 0,
@@ -116,6 +119,8 @@ describe('TrollSettingsService', () => {
         reactionEnabled: false,
         reactionChance: 1,
         reactionCooldownSec: 12,
+        memeAnnounceEnabled: true,
+        memeAnnounceChance: 0,
         jerkEnabled: false,
         addressReactionEnabled: true,
         jerkBatchWindowSec: 0,
@@ -155,6 +160,7 @@ describe('TrollSettingsService', () => {
         id: TROLL_SETTINGS_ID,
         criminalEnabled: false,
         mirrorEnabled: false,
+        memeAnnounceEnabled: false,
         addressReactionEnabled: false,
       });
       const { service } = makeService(makeConfig(), repo);
@@ -163,6 +169,7 @@ describe('TrollSettingsService', () => {
 
       expect(result.criminalEnabled).toBe(false);
       expect(result.mirrorEnabled).toBe(false);
+      expect(result.memeAnnounceEnabled).toBe(false);
       expect(result.addressReactionEnabled).toBe(false);
     });
 

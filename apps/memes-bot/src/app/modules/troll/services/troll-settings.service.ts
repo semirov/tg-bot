@@ -87,6 +87,8 @@ export class TrollSettingsService implements OnModuleInit {
       reactionEnabled: true,
       reactionChance: this.config.trollReactionChance,
       reactionCooldownSec: this.config.trollReactionCooldown,
+      memeAnnounceEnabled: true,
+      memeAnnounceChance: this.config.trollMemeAnnounceChance,
       jerkEnabled: true,
       addressReactionEnabled: true,
       jerkBatchWindowSec: this.config.trollJerkBatchWindow,
@@ -131,6 +133,11 @@ export class TrollSettingsService implements OnModuleInit {
       reactionCooldownSec: this.normalizeNonNegativeInt(
         row.reactionCooldownSec,
         defaults.reactionCooldownSec
+      ),
+      memeAnnounceEnabled: row.memeAnnounceEnabled ?? defaults.memeAnnounceEnabled,
+      memeAnnounceChance: this.normalizeProbability(
+        row.memeAnnounceChance,
+        defaults.memeAnnounceChance
       ),
       jerkEnabled: row.jerkEnabled ?? defaults.jerkEnabled,
       addressReactionEnabled: row.addressReactionEnabled ?? defaults.addressReactionEnabled,

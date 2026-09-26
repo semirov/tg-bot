@@ -113,6 +113,7 @@ describe('BaseConfigService', () => {
       ['trollMirrorCooldown', 'TROLL_MIRROR_COOLDOWN', 300],
       ['trollReactionChance', 'TROLL_REACTION_CHANCE', 0.05],
       ['trollReactionCooldown', 'TROLL_REACTION_COOLDOWN', 60],
+      ['trollMemeAnnounceChance', 'TROLL_MEME_ANNOUNCE_CHANCE', 0.1],
       ['trollCriminalThreshold', 'TROLL_CRIMINAL_THRESHOLD', 0.5],
       ['trollCriminalHighThreshold', 'TROLL_CRIMINAL_HIGH_THRESHOLD', 0.8],
       ['trollAnalyzeCooldown', 'TROLL_ANALYZE_COOLDOWN', 15],
