@@ -1,3 +1,10 @@
+## [0.40.3](https://github.com/semirov/tg-bot/compare/v0.40.2...v0.40.3) (2026-09-26)
+
+
+### Bug Fixes
+
+* **parser:** вернуть порог published-duplicate 0.85 в main ([7fb557b](https://github.com/semirov/tg-bot/commit/7fb557bc6cb087dca97f198edc48ecee863dfc0c))
+
 ## [0.40.2](https://github.com/semirov/tg-bot/compare/v0.40.1...v0.40.2) (2026-09-26)
 
 
