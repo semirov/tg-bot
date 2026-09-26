@@ -181,6 +181,12 @@ describe('troll-bio', () => {
       expect(result.facts[0].importance).toBe(5);
     });
 
+    it('importance=0 у кандидата при слиянии падает на 1, существующий не понижается', () => {
+      const existing = [fact({ count: 1, importance: 3 })];
+      const result = mergeFacts(existing, [{ text: 'Живёт в Санкт-Петербурге', importance: 0 }], NOW);
+      expect(result.facts[0].importance).toBe(3);
+    });
+
     it('не разгоняет вес выше потолка', () => {
       const existing = [fact({ count: 1, baseWeight: TROLL_MEMBER_BIO_WEIGHT_MAX })];
       const result = mergeFacts(existing, [{ text: 'Живёт в Санкт-Петербурге', importance: 3 }], NOW);
@@ -345,6 +351,13 @@ describe('troll-bio', () => {
       );
       expect(result).toHaveLength(1);
       expect(result[0].text).toBe('ок');
+    });
+
+    it('seenAt = 0 у существующего события падает на nowMs', () => {
+      const now = 2_000_000_000_000;
+      const result = mergeEvents([{ text: 'событие', seenAt: 0 }], [], now);
+      expect(result).toHaveLength(1);
+      expect(result[0].seenAt).toBe(now);
     });
   });
 

@@ -136,6 +136,24 @@ describe('TrollMemberBioService', () => {
       expect(saved.opinion).toBe('зануда, но смешной');
     });
 
+    it('refreshBio сливает события с уже сохранёнными', async () => {
+      const stored = bioRow({
+        lastMessageId: 5,
+        events: [{ text: 'старое событие', seenAt: Date.now() - 1000 }],
+      });
+      const { service, bios } = setup({
+        stored,
+        extracted: {
+          facts: [{ text: 'Живёт в Санкт-Петербурге', importance: 4, self: true, evidence: 'живу в спб' }],
+          events: ['новое событие'],
+          opinion: null,
+        },
+      });
+      await service.refreshBio(CHAT, USER, 'Вася');
+      const saved = bios.save.mock.calls[0][0];
+      expect(saved.events.map((e: any) => e.text)).toEqual(['старое событие', 'новое событие']);
+    });
+
     it('сливает с существующим досье и считает ядро', async () => {
       const stored = bioRow({
         lastMessageId: 5,
@@ -590,6 +608,47 @@ describe('TrollMemberBioService — бэкфилл по истории', () => {
     const { service, chats } = setup({ chats: [{ chatId: CHAT, isActive: true }] });
     const refresh = jest.spyOn(service, 'refreshBio').mockResolvedValue(undefined);
     (service as any).history.find.mockResolvedValue(rows(USER, 25));
+
+    await service.backfillBiosJob();
+
+    expect(refresh).toHaveBeenCalledWith(CHAT, USER, 'Вася');
+  });
+
+  it('backfill: null userName → «участник», нечисловой userId пропускается', async () => {
+    const { service, chats } = setup({ chats: [{ chatId: CHAT, isActive: true }] });
+    const refresh = jest.spyOn(service, 'refreshBio').mockResolvedValue(undefined);
+    (service as any).history.find.mockResolvedValue([
+      { id: 1, chatId: CHAT, userId: USER, userName: null, role: 'user', content: 'x', messageId: 1, replyToMessageId: null, createdAt: new Date() },
+      { id: 2, chatId: CHAT, userId: 'abc', userName: 'Вася', role: 'user', content: 'x', messageId: 2, replyToMessageId: null, createdAt: new Date() },
+    ]);
+
+    await service.backfillBiosJob();
+
+    expect(refresh).toHaveBeenCalledWith(CHAT, USER, 'участник');
+  });
+
+  it('backfill: пропускает уже обработанные реплики (id <= lastMessageId)', async () => {
+    const { service, chats } = setup({
+      chats: [{ chatId: CHAT, isActive: true }],
+      all: [{ userId: USER, lastMessageId: 5, facts: [] }],
+    });
+    const refresh = jest.spyOn(service, 'refreshBio').mockResolvedValue(undefined);
+    (service as any).history.find.mockResolvedValue([
+      { id: 3, chatId: CHAT, userId: USER, userName: 'Вася', role: 'user', content: 'x', messageId: 3, replyToMessageId: null, createdAt: new Date() },
+    ]);
+
+    await service.backfillBiosJob();
+
+    expect(refresh).not.toHaveBeenCalled();
+  });
+
+  it('backfill: null lastMessageId → курсор 0', async () => {
+    const { service, chats } = setup({
+      chats: [{ chatId: CHAT, isActive: true }],
+      all: [{ userId: USER, lastMessageId: null, facts: [] }],
+    });
+    const refresh = jest.spyOn(service, 'refreshBio').mockResolvedValue(undefined);
+    (service as any).history.find.mockResolvedValue(rows(USER, 3));
 
     await service.backfillBiosJob();
 
