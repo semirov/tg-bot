@@ -1,3 +1,10 @@
+## [0.40.1](https://github.com/semirov/tg-bot/compare/v0.40.0...v0.40.1) (2026-09-26)
+
+
+### Bug Fixes
+
+* **troll:** уточнить промпт ревизора — рецепты/вопросы не брак ([1321f6e](https://github.com/semirov/tg-bot/commit/1321f6e51364befc7f81ffa97aadcd3f83f4a6c4))
+
 # [0.40.0](https://github.com/semirov/tg-bot/compare/v0.39.0...v0.40.0) (2026-09-26)
 
 
