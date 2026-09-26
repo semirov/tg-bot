@@ -20,7 +20,6 @@ import { SettingsService } from '../../bot/services/settings.service';
 import { CringeManagementService } from '../../bot/services/cringe-management.service';
 import { DeduplicationService } from '../../bot/services/deduplication.service';
 import { MattermostService } from '../../mattermost/mattermost.service';
-import { TrollService } from '../../troll/services/troll.service';
 import { metrics } from '../../../shared/metrics';
 import { ParserSettingsService } from '../../parser/services/parser-settings.service';
 import { buildTelegramFileUrl, extractTelegramFileId } from '../../../shared/publication/media-url';
@@ -45,7 +44,6 @@ export class ObservatoryService implements OnModuleInit {
     private cringeManagementService: CringeManagementService,
     private deduplicationService: DeduplicationService,
     private mattermostService: MattermostService,
-    private trollService: TrollService,
     private parserSettings: ParserSettingsService
   ) {}
 
@@ -329,12 +327,6 @@ export class ObservatoryService implements OnModuleInit {
 
     await this.deduplicationService.createPublishedPostHash(
       publishContext.hash,
-      publishedMessage.message_id
-    );
-
-    // Иногда репостим новый мем в активные чаты (не блокирует публикацию).
-    void this.trollService.maybeRepostMeme(
-      this.baseConfigService.memeChanelId,
       publishedMessage.message_id
     );
   }

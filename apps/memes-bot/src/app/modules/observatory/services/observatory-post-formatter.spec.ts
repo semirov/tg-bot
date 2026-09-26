@@ -65,4 +65,27 @@ describe('ObservatoryPostFormatter', () => {
     });
   });
 
+  describe('sourceCaption', () => {
+    it('возвращает пустую строку без источника и без ссылки', () => {
+      expect(formatter.sourceCaption(null)).toBe('');
+      expect(formatter.sourceCaption(undefined)).toBe('');
+      expect(formatter.sourceCaption({ url: '', title: 'канал' } as any)).toBe('');
+    });
+
+    it('строит ссылку с заголовком и экранирует HTML', () => {
+      expect(
+        formatter.sourceCaption({ url: 'https://t.me/c/1/2', title: 'A & <B>' } as any)
+      ).toBe('🔎 Источник: <a href="https://t.me/c/1/2">A &amp; &lt;B&gt;</a>');
+    });
+
+    it('без заголовка берёт username, а без него — заглушку', () => {
+      expect(
+        formatter.sourceCaption({ url: 'https://t.me/c/1/2', username: 'chan' } as any)
+      ).toContain('>chan<');
+      expect(formatter.sourceCaption({ url: 'https://t.me/c/1/2' } as any)).toContain(
+        '>исходный канал<'
+      );
+    });
+  });
+
 });

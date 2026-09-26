@@ -608,29 +608,6 @@ export class AdminMenuService implements OnModuleInit {
       )
       .row()
       .text(
-        () => `Анонсы мемов: ${current().memeAnnounceEnabled ? '🟢 вкл' : '⚪️ выкл'}`,
-        this.ownerGuard(async (ctx) => {
-          await this.trollSettings.update({
-            memeAnnounceEnabled: AdminSettingsPresets.toggle(current().memeAnnounceEnabled),
-          });
-          ctx.menu.update();
-        })
-      )
-      .row()
-      .text(
-        () => `Шанс анонса мема: ${AdminSettingsPresets.percent(current().memeAnnounceChance)}`,
-        this.ownerGuard(async (ctx) => {
-          await this.trollSettings.update({
-            memeAnnounceChance: this.cycle(
-              current().memeAnnounceChance,
-              AdminSettingsPresets.MEME_ANNOUNCE_CHANCE
-            ),
-          });
-          ctx.menu.update();
-        })
-      )
-      .row()
-      .text(
         () => `Лимит запросов/сутки: ${current().dailyRequestLimit}`,
         this.ownerGuard(async (ctx) => {
           await this.trollSettings.update({

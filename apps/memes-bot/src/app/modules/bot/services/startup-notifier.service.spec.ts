@@ -51,4 +51,22 @@ describe('StartupNotifierService', () => {
     await expect(service.onApplicationBootstrap()).resolves.toBeUndefined();
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('telegram is down'));
   });
+
+  it('разворачивает не-Error ошибку отправки через String', async () => {
+    const sendMessage = jest.fn().mockRejectedValue('boom');
+    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    const service = makeService(sendMessage);
+
+    await expect(service.onApplicationBootstrap()).resolves.toBeUndefined();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('boom'));
+  });
+
+  it('без аргумента подставляет текущее время в текст', () => {
+    const service = makeService(jest.fn());
+
+    const text = service.buildStartupMessage();
+
+    expect(text).toContain('Время:');
+    expect(text).toMatch(/Время: \d{4}-\d{2}-\d{2}T/);
+  });
 });

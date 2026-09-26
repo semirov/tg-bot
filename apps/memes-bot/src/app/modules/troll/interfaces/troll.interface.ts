@@ -116,10 +116,6 @@ export interface TrollRuntimeSettings {
   reactionChance: number;
   /** Минимальная пауза между реакциями в одном чате, сек. */
   reactionCooldownSec: number;
-  /** Анонсы нового мема в чаты. */
-  memeAnnounceEnabled: boolean;
-  /** Вероятность анонса мема. */
-  memeAnnounceChance: number;
   /** Ответы на обращения к боту (упоминание/ответ). */
   jerkEnabled: boolean;
   /** Реагировать на клички и мат в адрес бота как на обращение. */

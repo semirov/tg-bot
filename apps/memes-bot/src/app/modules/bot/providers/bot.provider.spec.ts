@@ -76,7 +76,6 @@ describe('BOT_PROVIDER', () => {
       { command: '/menu', description: 'Показать основное меню бота' },
       { command: 'stat', description: 'Сколько лет тюрьмы наговорил чат за сутки' },
       { command: 'future', description: 'Предсказание на день (раз в 12 часов)' },
-      { command: 'meme', description: 'Репост мема из канала (раз в час)' },
       { command: 'sumarize', description: 'О чём говорили в чате (раз в час)' },
     ]);
   });

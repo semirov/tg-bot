@@ -1,7 +1,6 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { BotModule } from '../bot/bot.module';
-import { ChannelMemeEntity } from '../channel-monitor/entities/channel-meme.entity';
 import { AppConfigModule } from '../config/app-config.module';
 import { TrollChatEntity } from './entities/troll-chat.entity';
 import { TrollDefectEntity } from './entities/troll-defect.entity';
@@ -28,7 +27,6 @@ import { TrollService } from './services/troll.service';
       TrollDefectEntity,
       TrollMemberTagEntity,
       TrollMemberBioEntity,
-      ChannelMemeEntity,
     ]),
   ],
   providers: [

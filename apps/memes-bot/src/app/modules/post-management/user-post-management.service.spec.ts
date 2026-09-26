@@ -121,7 +121,6 @@ function createHarness() {
   };
   const clientBaseService: any = { bestMemesDaily$: { subscribe: jest.fn() } };
   const mattermostService: any = { sendPostWithFile: jest.fn().mockResolvedValue(undefined) };
-  const trollService: any = { maybeRepostMeme: jest.fn().mockResolvedValue(undefined) };
   const baseConfigService: any = {
     userRequestMemeChannel: REQUEST_CHANNEL,
     memeChanelId: MEME_CHANNEL,
@@ -155,8 +154,7 @@ function createHarness() {
     cringeManagementService,
     deduplicationService,
     clientBaseService,
-    mattermostService,
-    trollService
+    mattermostService
   );
   return {
     service,
@@ -172,7 +170,6 @@ function createHarness() {
     deduplicationService,
     clientBaseService,
     mattermostService,
-    trollService,
   };
 }
 
@@ -1604,7 +1601,6 @@ describe('UserPostManagementService', () => {
         { parse_mode: 'HTML' }
       );
       expect(h.deduplicationService.createPublishedPostHash).toHaveBeenCalledWith('hash', 3);
-      expect(h.trollService.maybeRepostMeme).toHaveBeenCalledWith(MEME_CHANNEL, 3);
     });
 
     it('publishNightCringeScheduled вставляет запись и делегирует в расписание', async () => {

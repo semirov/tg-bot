@@ -47,9 +47,6 @@ export class AdminSettingsPresets {
   /** Пресеты порога самопроверки ответа. */
   public static readonly SELF_CHECK_THRESHOLD: number[] = [0.4, 0.5, 0.6, 0.7, 0.8];
 
-  /** Пресеты шанса анонса мема. */
-  public static readonly MEME_ANNOUNCE_CHANCE: number[] = [0.05, 0.1, 0.2, 0.3, 0.5];
-
   /** Пресеты лимита запросов в сутки. */
   public static readonly DAILY_REQUEST_LIMIT: number[] = [100, 200, 500, 1000, 2000, 4000, 5000, 10000];
 

@@ -32,7 +32,6 @@ describe('TrollCooldownRegistry', () => {
     expect(registry.lastReactionAt).toBeInstanceOf(Map);
     expect(registry.lastStatAt).toBeInstanceOf(Map);
     expect(registry.lastJerkAnswerAt).toBeInstanceOf(Map);
-    expect(registry.lastMemeAt).toBeInstanceOf(Map);
   });
 
   it('не считает кулдаун при нулевой или отрицательной длительности', () => {

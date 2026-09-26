@@ -46,8 +46,6 @@ function settings(over: Partial<TrollRuntimeSettings> = {}): TrollRuntimeSetting
     reactionEnabled: false,
     reactionChance: 0,
     reactionCooldownSec: 0,
-    memeAnnounceEnabled: true,
-    memeAnnounceChance: 1,
     jerkEnabled: false,
     addressReactionEnabled: true,
     jerkBatchWindowSec: 15,
@@ -108,7 +106,6 @@ function createService() {
   const history = makeRepo();
   const predictions = makeRepo();
   const defects = makeRepo();
-  const memes = makeRepo();
   const memberTags = { onUserMessage: jest.fn().mockResolvedValue(undefined) };
   const memberBio = {
     noteUserMessage: jest.fn().mockResolvedValue(undefined),
@@ -124,7 +121,6 @@ function createService() {
     history,
     predictions,
     defects,
-    memes,
     memberTags as any,
     memberBio as any
   );
@@ -138,7 +134,6 @@ function createService() {
     history,
     predictions,
     defects,
-    memes,
     memberTags,
     memberBio,
   };
@@ -203,7 +198,6 @@ describe('TrollService — жизненный цикл и регистрация
 
     expect(bot.command).toHaveBeenCalledWith('stat', expect.any(Function));
     expect(bot.command).toHaveBeenCalledWith('future', expect.any(Function));
-    expect(bot.command).toHaveBeenCalledWith('meme', expect.any(Function));
     expect(bot.command).toHaveBeenCalledWith(['sumarize', 'summarize'], expect.any(Function));
     expect(bot.on).toHaveBeenCalledWith('my_chat_member', expect.any(Function));
     expect(bot.on).toHaveBeenCalledWith('message', expect.any(Function));
@@ -213,7 +207,7 @@ describe('TrollService — жизненный цикл и регистрация
 
   it('нюхает ошибки команд и логирует их', async () => {
     const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
-    for (const name of ['stat', 'future', 'meme', 'sumarize']) {
+    for (const name of ['stat', 'future', 'sumarize']) {
       const { service, bot } = createService();
       service.onModuleInit();
       const handler = registeredHandlers(bot).commands.get(name)!;
@@ -290,7 +284,7 @@ describe('TrollService — жизненный цикл и регистрация
   });
 });
 
-describe('TrollService — чаты и репост мема', () => {
+describe('TrollService — чаты', () => {
   it('getAllChats возвращает отсортированный список', async () => {
     const { service, chats } = createService();
     chats.find.mockResolvedValue([{ chatId: 1 }]);
@@ -302,74 +296,6 @@ describe('TrollService — чаты и репост мема', () => {
     const { service, chats } = createService();
     await service.setChatActive('100', true);
     expect(chats.update).toHaveBeenCalledWith({ chatId: 100 }, { isActive: true });
-  });
-
-  it('пропускает репост, если он выключен настройками', async () => {
-    const { service, chats, settingsSvc } = createService();
-    settingsSvc.current = settings({ memeAnnounceEnabled: false });
-    await service.maybeRepostMeme(-1, 5);
-    expect(chats.find).not.toHaveBeenCalled();
-  });
-
-  it('пропускает репост, если общий выключатель сработал', async () => {
-    const { service, chats, settingsSvc } = createService();
-    settingsSvc.current = settings({ enabled: false });
-    await service.maybeRepostMeme(-1, 5);
-    expect(chats.find).not.toHaveBeenCalled();
-  });
-
-  it('пропускает репост, если шанс не выпал', async () => {
-    const { service, chats, settingsSvc } = createService();
-    settingsSvc.current = settings({ memeAnnounceChance: 0 });
-    jest.spyOn(Math, 'random').mockReturnValue(0.5);
-    await service.maybeRepostMeme(-1, 5);
-    expect(chats.find).not.toHaveBeenCalled();
-  });
-
-  it('пропускает репост, если нет активных чатов', async () => {
-    const { service, chats } = createService();
-    chats.find.mockResolvedValue([]);
-    jest.spyOn(Math, 'random').mockReturnValue(0);
-    await service.maybeRepostMeme(-1, 5);
-    expect(chats.find).toHaveBeenCalledWith({ where: { isActive: true } });
-  });
-
-  it('репостит мем в активные чаты', async () => {
-    const { service, chats, bot } = createService();
-    chats.find.mockResolvedValue([{ chatId: 100 }, { chatId: 200 }]);
-    jest.spyOn(Math, 'random').mockReturnValue(0);
-    await service.maybeRepostMeme(-1, 5);
-    expect(bot.api.forwardMessage).toHaveBeenCalledTimes(2);
-    expect(bot.api.forwardMessage).toHaveBeenCalledWith(100, -1, 5);
-  });
-
-  it('переживает недоступный чат при рассылке', async () => {
-    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
-    const { service, chats, bot } = createService();
-    chats.find.mockResolvedValue([{ chatId: 100 }]);
-    bot.api.forwardMessage.mockRejectedValue(new Error('нет прав'));
-    bot.api.copyMessage.mockRejectedValue(new Error('нет прав'));
-    jest.spyOn(Math, 'random').mockReturnValue(0);
-    await service.maybeRepostMeme(-1, 5);
-    expect(warn).toHaveBeenCalled();
-  });
-
-  it('ловит ошибку обращения к БД при распылке', async () => {
-    const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
-    const { service, chats } = createService();
-    chats.find.mockRejectedValue(new Error('db down'));
-    jest.spyOn(Math, 'random').mockReturnValue(0);
-    await service.maybeRepostMeme(-1, 5);
-    expect(error).toHaveBeenCalled();
-  });
-
-  it('repostMeme повторяет копией, если forward запрещён', async () => {
-    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
-    const { service, bot } = createService();
-    bot.api.forwardMessage.mockRejectedValue(new Error('copy forbidden'));
-    await (service as any).repostMeme(100, '-100', 5);
-    expect(bot.api.copyMessage).toHaveBeenCalledWith(100, -100, 5);
-    expect(warn).toHaveBeenCalled();
   });
 });
 
@@ -1040,92 +966,6 @@ describe('TrollService — /future', () => {
     expect(withAvoid).toContain('старое');
     const withoutAvoid = (service as any).buildPredictionRequest(undefined, [], 'приём');
     expect(withoutAvoid).not.toContain('Уже говорил');
-  });
-});
-
-describe('TrollService — /meme', () => {
-  it('пропускает неподходящие условия', async () => {
-    const { service, settingsSvc, chats } = createService();
-    await (service as any).onMemeCommand(makeCtx({ chat: { id: 1, type: 'private' } }));
-    await (service as any).onMemeCommand(makeCtx({ from: { id: 1, is_bot: true } }));
-    settingsSvc.current = settings({ enabled: false });
-    await (service as any).onMemeCommand(makeCtx());
-    settingsSvc.current = settings();
-    chats.findOne.mockResolvedValue({ isActive: false });
-    await (service as any).onMemeCommand(makeCtx());
-  });
-
-  it('отказывает грубо на кулдауне', async () => {
-    const { service, chats, deepSeek, bot } = createService();
-    chats.findOne.mockResolvedValue({ isActive: true });
-    (service as any).lastMemeAt.set(`${CHAT}:${USER}`, Date.now());
-    deepSeek.completeText.mockResolvedValue(null);
-    await (service as any).onMemeCommand(makeCtx());
-    expect(bot.api.sendMessage).toHaveBeenCalledWith(CHAT, 'нет, не сейчас', expect.any(Object));
-  });
-
-  it('отказывает грубо, если мемов нет', async () => {
-    const { service, chats, memes, deepSeek, bot } = createService();
-    chats.findOne.mockResolvedValue({ isActive: true });
-    memes.find.mockResolvedValue([]);
-    deepSeek.completeText.mockResolvedValue(null);
-    await (service as any).onMemeCommand(makeCtx());
-    expect(bot.api.sendMessage).toHaveBeenCalled();
-  });
-
-  it('репостит случайный мем', async () => {
-    const { service, chats, memes, bot } = createService();
-    chats.findOne.mockResolvedValue({ isActive: true });
-    memes.find.mockResolvedValue([{ id: 1, channelId: '-100', messageId: 5 }]);
-    jest.spyOn(Math, 'random').mockReturnValue(0);
-    await (service as any).onMemeCommand(makeCtx());
-    expect(bot.api.forwardMessage).toHaveBeenCalledWith(CHAT, -100, 5);
-  });
-
-  it('удаляет мёртвый мем и в итоге отказывает', async () => {
-    const { service, chats, memes, bot } = createService();
-    chats.findOne.mockResolvedValue({ isActive: true });
-    memes.find.mockResolvedValue([{ id: 1, channelId: '-100', messageId: 5 }]);
-    bot.api.forwardMessage.mockRejectedValue(new Error('message to forward not found'));
-    bot.api.copyMessage.mockRejectedValue(new Error('message to copy not found'));
-    jest.spyOn(Math, 'random').mockReturnValue(0);
-    await (service as any).onMemeCommand(makeCtx());
-    expect(memes.delete).toHaveBeenCalledWith({ id: 1 });
-  });
-
-  it('переживает ошибку удаления мёртвого мема', async () => {
-    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
-    const { service, chats, memes, bot } = createService();
-    chats.findOne.mockResolvedValue({ isActive: true });
-    memes.find.mockResolvedValue([{ id: 1, channelId: '-100', messageId: 5 }]);
-    bot.api.forwardMessage.mockRejectedValue(new Error('message to forward not found'));
-    bot.api.copyMessage.mockRejectedValue(new Error('message to copy not found'));
-    memes.delete.mockRejectedValue(new Error('db'));
-    jest.spyOn(Math, 'random').mockReturnValue(0);
-    await (service as any).onMemeCommand(makeCtx());
-    expect(warn).toHaveBeenCalled();
-  });
-
-  it('пробует следующий мем при прочих ошибках', async () => {
-    const { service, chats, memes, bot } = createService();
-    chats.findOne.mockResolvedValue({ isActive: true });
-    memes.find.mockResolvedValue([
-      { id: 1, channelId: '-100', messageId: 5 },
-      { id: 2, channelId: '-100', messageId: 6 },
-    ]);
-    bot.api.forwardMessage.mockRejectedValue(new Error('flood wait'));
-    bot.api.copyMessage.mockRejectedValue(new Error('flood wait'));
-    jest.spyOn(Math, 'random').mockReturnValue(0);
-    await (service as any).onMemeCommand(makeCtx());
-    expect(memes.delete).not.toHaveBeenCalled();
-  });
-
-  it('denyRudely подставляет запасную фразу без ответа модели', async () => {
-    const { service, deepSeek, bot } = createService();
-    deepSeek.completeText.mockResolvedValue(null);
-    const ctx = makeCtx();
-    await (service as any).denyRudely(ctx, 'причина');
-    expect(bot.api.sendMessage).toHaveBeenCalledWith(CHAT, 'нет, не сейчас', expect.any(Object));
   });
 });
 
@@ -2751,13 +2591,6 @@ describe('TrollService — ветвления команд', () => {
     const ctx = makeCtx({ message: undefined });
     await (service as any).onFutureCommand(ctx);
     expect(predictions.insert).toHaveBeenCalled();
-  });
-
-  it('denyRudely отправляет текст модели, в том числе без message', async () => {
-    const { service, deepSeek, bot } = createService();
-    deepSeek.completeText.mockResolvedValue('иди отсюда');
-    await (service as any).denyRudely(makeCtx({ message: undefined }), 'причина');
-    expect(bot.api.sendMessage).toHaveBeenCalledWith(CHAT, 'иди отсюда', expect.any(Object));
   });
 });
 

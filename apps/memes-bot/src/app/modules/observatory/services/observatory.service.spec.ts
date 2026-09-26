@@ -67,7 +67,6 @@ function setup() {
     createPublishedPostHash: jest.fn().mockResolvedValue(undefined),
   };
   const mattermostService = { sendPostWithFile: jest.fn().mockResolvedValue(undefined) };
-  const trollService = { maybeRepostMeme: jest.fn().mockResolvedValue(undefined) };
   const parserSettings = { current: { legacyEnabled: true } };
 
   const service = new ObservatoryService(
@@ -80,7 +79,6 @@ function setup() {
     cringeManagementService as any,
     deduplicationService as any,
     mattermostService as any,
-    trollService as any,
     parserSettings as any
   );
 
@@ -95,7 +93,6 @@ function setup() {
     cringeManagementService,
     deduplicationService,
     mattermostService,
-    trollService,
   };
 }
 
@@ -509,7 +506,6 @@ describe('ObservatoryService', () => {
         settingsService,
         deduplicationService,
         observatoryPostRepository,
-        trollService,
       } = setup();
       bot.api.copyMessage.mockResolvedValue({ message_id: 55 });
       settingsService.channelHtmlLinkIfPrivate.mockResolvedValue('<a>канал</a>');
@@ -545,7 +541,6 @@ describe('ObservatoryService', () => {
         }
       );
       expect(deduplicationService.createPublishedPostHash).toHaveBeenCalledWith('hash', 55);
-      expect(trollService.maybeRepostMeme).toHaveBeenCalledWith(baseConfigService.memeChanelId, 55);
     });
 
     it('для ночного кринжа берёт ссылку кринж-канала и обновляет его репозиторий', async () => {

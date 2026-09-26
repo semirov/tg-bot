@@ -143,8 +143,6 @@ function settingsBase(): any {
     jerkBatchWindowSec: 15,
     jerkCooldownSec: 60,
     dialogPauseMin: 15,
-    memeAnnounceEnabled: true,
-    memeAnnounceChance: 0.1,
     dailyRequestLimit: 500,
     maxInputChars: 1000,
     selfCheckEnabled: true,
@@ -210,16 +208,14 @@ const TROLL_ROWS: { row: number; field: string; type: 'toggle' | 'cycle'; preset
   { row: 16, field: 'jerkBatchWindowSec', type: 'cycle', presets: [0, 10, 15, 30, 60, 120] },
   { row: 17, field: 'jerkCooldownSec', type: 'cycle', presets: [0, 30, 60, 120, 180, 300, 600] },
   { row: 18, field: 'dialogPauseMin', type: 'cycle', presets: [5, 10, 15, 30, 60, 120, 360] },
-  { row: 19, field: 'memeAnnounceEnabled', type: 'toggle' },
-  { row: 20, field: 'memeAnnounceChance', type: 'cycle', presets: [0.05, 0.1, 0.2, 0.3, 0.5] },
-  { row: 21, field: 'dailyRequestLimit', type: 'cycle', presets: [100, 200, 500, 1000, 2000, 4000, 5000, 10000] },
-  { row: 22, field: 'maxInputChars', type: 'cycle', presets: [500, 800, 1000, 1500, 2000, 3000] },
-  { row: 23, field: 'selfCheckEnabled', type: 'toggle' },
-  { row: 24, field: 'selfCheckThreshold', type: 'cycle', presets: [0.4, 0.5, 0.6, 0.7, 0.8] },
-  { row: 25, field: 'memberTagsEnabled', type: 'toggle' },
-  { row: 26, field: 'memberBioEnabled', type: 'toggle' },
-  { row: 27, field: 'useProModel', type: 'toggle' },
-  { row: 28, field: 'visionEnabled', type: 'toggle' },
+  { row: 19, field: 'dailyRequestLimit', type: 'cycle', presets: [100, 200, 500, 1000, 2000, 4000, 5000, 10000] },
+  { row: 20, field: 'maxInputChars', type: 'cycle', presets: [500, 800, 1000, 1500, 2000, 3000] },
+  { row: 21, field: 'selfCheckEnabled', type: 'toggle' },
+  { row: 22, field: 'selfCheckThreshold', type: 'cycle', presets: [0.4, 0.5, 0.6, 0.7, 0.8] },
+  { row: 23, field: 'memberTagsEnabled', type: 'toggle' },
+  { row: 24, field: 'memberBioEnabled', type: 'toggle' },
+  { row: 25, field: 'useProModel', type: 'toggle' },
+  { row: 26, field: 'visionEnabled', type: 'toggle' },
 ];
 
 describe('AdminMenuService', () => {
@@ -1082,8 +1078,8 @@ describe('AdminMenuService', () => {
       expect(await buttonText(kb[2][0], ctx)).toBe('Порог статьи: 50%');
       expect(await buttonText(kb[4][0], ctx)).toBe('Пауза анализа УК: 10 с');
       expect(await buttonText(kb[7][0], ctx)).toBe('Пауза сарказма: 5 мин');
-      expect(await buttonText(kb[29][0], ctx)).toContain('DeepSeek');
-      expect(await buttonText(kb[29][0], ctx)).not.toContain('(пик)');
+      expect(await buttonText(kb[27][0], ctx)).toContain('DeepSeek');
+      expect(await buttonText(kb[27][0], ctx)).not.toContain('(пик)');
 
       deepSeek.usage.peak = true;
       deepSeek.usage.costUsd = 0.00005;
@@ -1096,7 +1092,6 @@ describe('AdminMenuService', () => {
         reactionEnabled: false,
         jerkEnabled: false,
         addressReactionEnabled: false,
-        memeAnnounceEnabled: false,
         selfCheckEnabled: false,
         // значения вне пресетов и граничные длительности
         criminalThreshold: 0.55,
@@ -1104,7 +1099,6 @@ describe('AdminMenuService', () => {
         sarcasmChance: 0.07,
         mirrorChance: 0.12,
         reactionChance: 0.02,
-        memeAnnounceChance: 0.15,
         selfCheckThreshold: 0.65,
         analyzeCooldownSec: 0,
         sarcasmCooldownSec: 3600,
@@ -1123,10 +1117,10 @@ describe('AdminMenuService', () => {
       expect(await buttonText(kb[4][0], ctx)).toBe('Пауза анализа УК: без паузы');
       expect(await buttonText(kb[7][0], ctx)).toBe('Пауза сарказма: 1 ч');
       expect(await buttonText(kb[10][0], ctx)).toBe('Пауза кривляния: 30 с');
-      expect(await buttonText(kb[27][0], ctx)).toBe('Модель ответов: deepseek-flash');
-      expect(await buttonText(kb[28][0], ctx)).toContain('Разбор картинок: ⚪️ выкл');
-      expect(await buttonText(kb[29][0], ctx)).toContain('(пик)');
-      expect(await buttonText(kb[29][0], ctx)).toContain('< $0.0001');
+      expect(await buttonText(kb[25][0], ctx)).toBe('Модель ответов: deepseek-flash');
+      expect(await buttonText(kb[26][0], ctx)).toContain('Разбор картинок: ⚪️ выкл');
+      expect(await buttonText(kb[27][0], ctx)).toContain('(пик)');
+      expect(await buttonText(kb[27][0], ctx)).toContain('< $0.0001');
     });
 
     it('все переключатели и циклы обновляют настройки', async () => {
@@ -1160,18 +1154,18 @@ describe('AdminMenuService', () => {
         }
       }
 
-      await kb[29][0].middleware[0](ctx, jest.fn());
+      await kb[27][0].middleware[0](ctx, jest.fn());
       expect(ctx.answerCallbackQuery).toHaveBeenCalledWith('Обновлено');
 
-      await kb[31][0].middleware[0](ctx, jest.fn());
+      await kb[29][0].middleware[0](ctx, jest.fn());
       expect(ctx.menu.nav).toHaveBeenCalledWith(AdminMenusEnum.TROLL_CHATS_MENU);
 
       trollSettings.reset.mockClear();
-      await kb[32][0].middleware[0](ctx, jest.fn());
+      await kb[30][0].middleware[0](ctx, jest.fn());
       expect(trollSettings.reset).toHaveBeenCalled();
       expect(ctx.answerCallbackQuery).toHaveBeenCalledWith('Настройки сброшены');
 
-      await kb[33][0].middleware[0](ctx, jest.fn());
+      await kb[31][0].middleware[0](ctx, jest.fn());
       expect(ctx.menu.back).toHaveBeenCalled();
     });
 

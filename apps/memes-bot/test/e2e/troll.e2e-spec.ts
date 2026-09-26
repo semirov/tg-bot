@@ -12,10 +12,8 @@ import { TrollChatEntity } from '../../src/app/modules/troll/entities/troll-chat
 import { TrollDefectEntity } from '../../src/app/modules/troll/entities/troll-defect.entity';
 import { TrollMessageEntity } from '../../src/app/modules/troll/entities/troll-message.entity';
 import { TrollPredictionEntity } from '../../src/app/modules/troll/entities/troll-prediction.entity';
-import { ChannelMemeEntity } from '../../src/app/modules/channel-monitor/entities/channel-meme.entity';
 
 const OWNER_ID = Number(process.env.BOT_OWNER_ID);
-const MAIN_CHANNEL = -1001111111111;
 
 function createDeepSeekStub() {
   return {
@@ -109,7 +107,6 @@ describe('E2E: тролль-бот', () => {
       reactionEnabled: false,
       reactionChance: 1,
       reactionCooldownSec: 0,
-      memeAnnounceEnabled: false,
       jerkEnabled: false,
       addressReactionEnabled: false,
       selfCheckEnabled: false,
@@ -175,32 +172,6 @@ describe('E2E: тролль-бот', () => {
         expect(stored?.requests).toBe(2);
       });
       expect(deepseek.completeText).toHaveBeenCalledTimes(1);
-    });
-
-    it('/meme пересылает мем из базы в чат', async () => {
-      const chatId = -1007000000003;
-      const userId = 7003;
-      await seedActiveChat(chatId);
-      await configure();
-      await h.dataSource.getRepository(ChannelMemeEntity).save({
-        channelId: String(MAIN_CHANNEL),
-        channelType: 'main',
-        messageId: 777,
-        s3Key: 'memes/777.jpg',
-      });
-      h.clearCalls();
-
-      await h.sendUpdate(groupMessageUpdate({ chatId, userId, text: '/meme', messageId: 33 }));
-
-      await waitFor(() =>
-        expect(
-          findCall(
-            h.calls,
-            'forwardMessage',
-            (p) => p.chat_id === chatId && p.from_chat_id === MAIN_CHANNEL && p.message_id === 777
-          )
-        ).toBeDefined()
-      );
     });
 
     it('/sumarize пересказывает переписку и двигает метку окна', async () => {
