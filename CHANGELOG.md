@@ -1,3 +1,12 @@
+# [0.40.0](https://github.com/semirov/tg-bot/compare/v0.39.0...v0.40.0) (2026-09-26)
+
+
+### Features
+
+* **troll:** «живость» (8 фич) + распознавание стикеров ([841f912](https://github.com/semirov/tg-bot/commit/841f912ca34f743c2c67336d36d534183e1f2211))
+* **troll:** обида на грубость и тормоз на код/математику ([a27d631](https://github.com/semirov/tg-bot/commit/a27d6314134e9dc8323096bb9788d50ab44a0a0c))
+* **troll:** осмысленные реакции, извлечение имён и разнообразие зачинов тегов ([b46e2ed](https://github.com/semirov/tg-bot/commit/b46e2ed92395c1d6ff238f72990da106d613d082))
+
 # [0.39.0](https://github.com/semirov/tg-bot/compare/v0.38.0...v0.39.0) (2026-09-25)
 
 
