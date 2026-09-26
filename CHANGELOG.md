@@ -1,3 +1,10 @@
+## [0.40.2](https://github.com/semirov/tg-bot/compare/v0.40.1...v0.40.2) (2026-09-26)
+
+
+### Bug Fixes
+
+* **troll:** стикер/картинка без описания — честно «не вижу», а не выдумывать ([9fb3993](https://github.com/semirov/tg-bot/commit/9fb3993e717531187385bdf498d3b299fee3d9c4))
+
 ## [0.40.1](https://github.com/semirov/tg-bot/compare/v0.40.0...v0.40.1) (2026-09-26)
 
 
