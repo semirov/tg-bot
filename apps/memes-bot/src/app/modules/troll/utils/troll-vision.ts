@@ -10,6 +10,9 @@
 import { TROLL_VISION_MAX_CHARS } from '../constants/troll-limits';
 import { parseLlmJson } from './llm-json';
 
+/** Маркер обрезки: показывает модели и человеку, что описание усечено. */
+const TRUNCATION_MARKER = '…';
+
 /** Ожидаемые поля ответа vision-модели (значения могут быть любого типа). */
 export interface ImageAnalysis {
   category?: unknown;
@@ -54,6 +57,48 @@ function push(parts: string[], label: string, value: string): void {
 }
 
 /**
+ * Обрезает строку до потолка, не разрывая последнее слово по середине:
+ * режем по последнему пробелу в доступном бюджете и добавляем маркер.
+ */
+function truncateOnWordBoundary(text: string, maxChars: number): string {
+  if (text.length <= maxChars) {
+    return text;
+  }
+  if (maxChars <= 0) {
+    return '';
+  }
+  const budget = maxChars - TRUNCATION_MARKER.length;
+  const clipped = text.slice(0, budget);
+  const lastSpace = clipped.lastIndexOf(' ');
+  const head = lastSpace > 0 ? clipped.slice(0, lastSpace).trimEnd() : clipped;
+  return `${head}${TRUNCATION_MARKER}`;
+}
+
+/**
+ * Обрезает набор полей по потолку, отбрасывая целиком те, что не влезли:
+ * так в историю не попадает оборванное на середине поле.
+ */
+function truncateFields(parts: string[], maxChars: number): string {
+  const full = parts.join('; ');
+  if (full.length <= maxChars) {
+    return full;
+  }
+  const budget = Math.max(0, maxChars - TRUNCATION_MARKER.length);
+  let acc = '';
+  for (const part of parts) {
+    const candidate = acc ? `${acc}; ${part}` : part;
+    if (candidate.length > budget) {
+      break;
+    }
+    acc = candidate;
+  }
+  if (acc) {
+    return `${acc}${TRUNCATION_MARKER}`;
+  }
+  return truncateOnWordBoundary(full, maxChars);
+}
+
+/**
  * Сворачивает JSON-описание изображения в одну строку.
  *
  * Если ответ не JSON — возвращается он же, сжатый в одну строку. Пустой
@@ -70,7 +115,10 @@ export function renderImageDescription(
   const parsed = parseLlmJson<ImageAnalysis>(raw);
   if (!parsed) {
     const collapsed = raw.replace(/\s+/g, ' ').trim();
-    return collapsed ? collapsed.slice(0, maxChars) : null;
+    if (!collapsed) {
+      return null;
+    }
+    return truncateOnWordBoundary(collapsed, maxChars) || null;
   }
 
   const parts: string[] = [];
@@ -93,8 +141,8 @@ export function renderImageDescription(
   push(parts, 'смысл', asString(parsed.possible_meaning));
   push(parts, 'неясно', asList(parsed.uncertain));
 
-  const result = parts.join('; ').trim();
-  return result ? result.slice(0, maxChars) : null;
+  const result = truncateFields(parts, maxChars).trim();
+  return result || null;
 }
 
 /**
