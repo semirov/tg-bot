@@ -63,7 +63,7 @@ function setup() {
   };
   const deduplicationService = {
     getPostImageHash: jest.fn(),
-    checkDuplicate: jest.fn(),
+    checkDuplicateSameLength: jest.fn(),
     createPublishedPostHash: jest.fn().mockResolvedValue(undefined),
   };
   const mattermostService = { sendPostWithFile: jest.fn().mockResolvedValue(undefined) };
@@ -195,7 +195,7 @@ describe('ObservatoryService', () => {
       const { service, bot, deduplicationService } = setup();
       service.onModuleInit();
       deduplicationService.getPostImageHash.mockResolvedValue('hash');
-      deduplicationService.checkDuplicate.mockResolvedValue([]);
+      deduplicationService.checkDuplicateSameLength.mockResolvedValue([]);
       const handler = parserHandler(bot);
       const ctx = makeCtx();
       const next = jest.fn();
@@ -219,7 +219,7 @@ describe('ObservatoryService', () => {
       } = setup();
       service.onModuleInit();
       deduplicationService.getPostImageHash.mockResolvedValue('hash');
-      deduplicationService.checkDuplicate.mockResolvedValue([{ distance: 0.1 }]);
+      deduplicationService.checkDuplicateSameLength.mockResolvedValue([{ distance: 0.1 }]);
       const handler = parserHandler(bot);
       const ctx = makeCtx();
 
@@ -262,7 +262,7 @@ describe('ObservatoryService', () => {
       } = setup();
       service.onModuleInit();
       deduplicationService.getPostImageHash.mockResolvedValue('hash');
-      deduplicationService.checkDuplicate.mockResolvedValue([]);
+      deduplicationService.checkDuplicateSameLength.mockResolvedValue([]);
       const handler = parserHandler(bot);
       const ctx = makeCtx({
         message: {
@@ -301,11 +301,12 @@ describe('ObservatoryService', () => {
       );
     });
 
-    it('выкидывает пост при похожести дубля >= 0.5', async () => {
+    it('выкидывает пост при похожести дубля >= 0.85 и логирует', async () => {
       const { service, bot, deduplicationService, observatoryPostRepository } = setup();
+      const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
       service.onModuleInit();
       deduplicationService.getPostImageHash.mockResolvedValue('hash');
-      deduplicationService.checkDuplicate.mockResolvedValue([{ distance: 0.5 }]);
+      deduplicationService.checkDuplicateSameLength.mockResolvedValue([{ distance: 0.9 }]);
       const handler = parserHandler(bot);
       const ctx = makeCtx();
 
@@ -314,13 +315,32 @@ describe('ObservatoryService', () => {
 
       expect(ctx.api.copyMessage).not.toHaveBeenCalled();
       expect(observatoryPostRepository.save).not.toHaveBeenCalled();
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('дубликат опубликованного'));
+    });
+
+    it('пост при похожести 0.6 не считается дубликатом (порог 0.85)', async () => {
+      const { service, bot, deduplicationService, observatoryPostRepository } = setup();
+      service.onModuleInit();
+      deduplicationService.getPostImageHash.mockResolvedValue('hash');
+      deduplicationService.checkDuplicateSameLength.mockResolvedValue([{ distance: 0.6 }]);
+      const handler = parserHandler(bot);
+      const ctx = makeCtx();
+
+      await handler(ctx);
+      await flush();
+
+      expect(ctx.api.copyMessage).toHaveBeenCalled();
+      expect(observatoryPostRepository.save).toHaveBeenCalled();
     });
 
     it('пропускает пост без похожих дублей', async () => {
       const { service, bot, deduplicationService } = setup();
       service.onModuleInit();
       deduplicationService.getPostImageHash.mockResolvedValue('hash');
-      deduplicationService.checkDuplicate.mockResolvedValue([{ distance: 0.2 }, { distance: 0.1 }]);
+      deduplicationService.checkDuplicateSameLength.mockResolvedValue([
+        { distance: 0.2 },
+        { distance: 0.1 },
+      ]);
       const handler = parserHandler(bot);
       const ctx = makeCtx();
 

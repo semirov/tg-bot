@@ -49,63 +49,72 @@ describe('DeduplicationService', () => {
     jest.restoreAllMocks();
   });
 
-  describe('checkDuplicate', () => {
+  describe('checkDuplicateSameLength', () => {
     it('возвращает пустой массив для пустого хеша и не ходит в БД', async () => {
       const { service, publishedPostHashesEntity } = setup();
-      await expect(service.checkDuplicate('')).resolves.toEqual([]);
+      await expect(service.checkDuplicateSameLength('')).resolves.toEqual([]);
+      await expect(service.checkDuplicateSameLength(undefined as any)).resolves.toEqual([]);
       expect(publishedPostHashesEntity.query).not.toHaveBeenCalled();
     });
 
-    it('маппит строки БД в memePostId/distance и передаёт хеш параметром', async () => {
+    it('фильтрует по длине хеша и выбирает ближайшее совпадение', async () => {
       const query = jest.fn().mockResolvedValue([
-        { hash: 'abc', memeChannelMessageId: 11, distance: 0.91 },
-        { hash: 'def', memeChannelMessageId: 22, distance: 0.5 },
+        { hash: 'aaaaaaaa', memeChannelMessageId: 11 },
+        { hash: 'bbbbbbbb', memeChannelMessageId: 22 },
       ]);
       const { service } = setup({ query });
+      jest.spyOn(service, 'calculateHashDistance').mockReturnValueOnce(0.4).mockReturnValueOnce(0.9);
 
-      await expect(service.checkDuplicate('abc')).resolves.toEqual([
-        { memePostId: 11, distance: 0.91 },
-        { memePostId: 22, distance: 0.5 },
+      await expect(service.checkDuplicateSameLength('cccccccc')).resolves.toEqual([
+        { memePostId: 22, distance: 0.9 },
       ]);
-      expect(query).toHaveBeenCalledTimes(1);
       const [sql, params] = query.mock.calls[0];
-      expect(sql).toContain('SIMILARITY(hash, $1)');
-      expect(params).toEqual(['abc']);
+      expect(sql).toContain('length(hash) = $2');
+      expect(params).toEqual(['365', 8]);
     });
 
-    it('при отсутствии pg_trgm (similarity) пишет warn и возвращает []', async () => {
-      const error = new Error('function similarity(text, unknown) does not exist');
-      const query = jest.fn().mockRejectedValue(error);
-      const { service } = setup({ query });
-
-      await expect(service.checkDuplicate('abc')).resolves.toEqual([]);
-      expect(Logger.prototype.warn).toHaveBeenCalledWith(
-        expect.stringContaining('SIMILARITY function not available')
-      );
+    it('без строк в БД возвращает []', async () => {
+      const { service } = setup({ query: jest.fn().mockResolvedValue([]) });
+      await expect(service.checkDuplicateSameLength('abc')).resolves.toEqual([]);
     });
 
-    it('распознаёт SIMILARITY в верхнем регистре', async () => {
-      const query = jest.fn().mockRejectedValue(new Error('SIMILARITY not found'));
+    it('все совпадения нулевые (разная длина) → []', async () => {
+      const query = jest.fn().mockResolvedValue([{ hash: 'zzzz', memeChannelMessageId: 5 }]);
       const { service } = setup({ query });
+      jest.spyOn(service, 'calculateHashDistance').mockReturnValue(0);
 
-      await expect(service.checkDuplicate('abc')).resolves.toEqual([]);
-      expect(Logger.prototype.warn).toHaveBeenCalled();
+      await expect(service.checkDuplicateSameLength('abcd')).resolves.toEqual([]);
     });
 
-    it('пробрасывает прочие ошибки БД без глушения', async () => {
-      const error = new Error('connection refused');
-      const query = jest.fn().mockRejectedValue(error);
-      const { service } = setup({ query });
+    it('изоляция по длине: 16-символьный хеш не матчит 64-символьный из БД', async () => {
+      const { service } = setup({
+        query: jest.fn().mockResolvedValue([{ hash: 'a'.repeat(64), memeChannelMessageId: 9 }]),
+      });
 
-      await expect(service.checkDuplicate('abc')).rejects.toBe(error);
-      expect(Logger.prototype.warn).not.toHaveBeenCalled();
+      await expect(service.checkDuplicateSameLength('b'.repeat(16))).resolves.toEqual([]);
     });
 
-    it('пробрасывает ошибку без message (optional chaining)', async () => {
-      const query = jest.fn().mockRejectedValue({ code: 'ECONN' });
-      const { service } = setup({ query });
+    it('реальный Hamming: 8 различающихся бит из 20 → distance 0.6 (< порога)', async () => {
+      const { service } = setup({
+        query: jest.fn().mockResolvedValue([{ hash: 'ff000', memeChannelMessageId: 7 }]),
+      });
 
-      await expect(service.checkDuplicate('abc')).rejects.toEqual({ code: 'ECONN' });
+      const result = await service.checkDuplicateSameLength('00000');
+
+      expect(result).toHaveLength(1);
+      expect(result[0].memePostId).toBe(7);
+      expect(result[0].distance).toBeCloseTo(0.6, 5);
+    });
+
+    it('реальный Hamming: 1 различающийся бит из 20 → distance 0.95 (>= порога)', async () => {
+      const { service } = setup({
+        query: jest.fn().mockResolvedValue([{ hash: '00001', memeChannelMessageId: 7 }]),
+      });
+
+      const result = await service.checkDuplicateSameLength('00000');
+
+      expect(result).toHaveLength(1);
+      expect(result[0].distance).toBeCloseTo(0.95, 5);
     });
   });
 

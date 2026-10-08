@@ -35,6 +35,7 @@ const setup = (overrides: { enabled?: boolean; activeClient?: unknown } = {}) =>
   const evaluator = { evaluateDue: jest.fn().mockResolvedValue(0) };
   const selector = {
     deliverForced: jest.fn().mockResolvedValue(0),
+    deliverDue: jest.fn().mockResolvedValue(0),
     ageBacklog: jest.fn().mockResolvedValue(0),
     dumpMore: jest.fn().mockResolvedValue(3),
   };
@@ -415,8 +416,27 @@ describe('ParserService', () => {
     expect(collector.sweepAll).toHaveBeenCalledTimes(1);
     expect(evaluator.evaluateDue).toHaveBeenCalledTimes(1);
     expect(selector.deliverForced).toHaveBeenCalledTimes(1);
+    expect(selector.deliverDue).toHaveBeenCalledTimes(1);
     expect(selector.ageBacklog).toHaveBeenCalledTimes(1);
     expect(discovery.runWebCheck).toHaveBeenCalledTimes(1);
+  });
+
+  it('onSelect: форс → авто-выдача → старение (порядок)', async () => {
+    const { service, selector } = setup();
+
+    await service.onSelect();
+
+    const forced = selector.deliverForced.mock.invocationCallOrder[0];
+    const due = selector.deliverDue.mock.invocationCallOrder[0];
+    const aged = selector.ageBacklog.mock.invocationCallOrder[0];
+    expect(forced).toBeLessThan(due);
+    expect(due).toBeLessThan(aged);
+  });
+
+  it('onSelect при disabled не зовёт авто-выдачу', async () => {
+    const { service, selector } = setup({ enabled: false });
+    await service.onSelect();
+    expect(selector.deliverDue).not.toHaveBeenCalled();
   });
 
   it('кроны выключены при disabled', async () => {

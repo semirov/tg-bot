@@ -1,4 +1,5 @@
 import * as bigInt from 'big-integer';
+import { Logger } from '@nestjs/common';
 import { Api } from 'telegram';
 import { ObservedStatus, QUEUE_MERGE_SIMILARITY, VIDEO_MERGE_SIMILARITY } from '../constants/parser.constants';
 import { ParserDeliveryService } from './parser-delivery.service';
@@ -105,7 +106,6 @@ const makeParserClient = (client: Record<string, unknown>): any => ({
 });
 
 const makeDedup = (): any => ({
-  checkDuplicate: jest.fn().mockResolvedValue([]),
   checkDuplicateSameLength: jest.fn().mockResolvedValue([]),
   createPublishedPostHash: jest.fn().mockResolvedValue(undefined),
   calculateHashDistance: jest.fn((a: string, b: string) => {
@@ -225,7 +225,8 @@ describe('ParserDeliveryService', () => {
     expect(row.imageHash).toBeNull();
   });
 
-  it('дубль опубликованного → DUPLICATE без отправки', async () => {
+  it('дубль опубликованного → DUPLICATE без отправки и warn с similarity', async () => {
+    const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
     const { service, bot, dedup } = setup();
     dedup.checkDuplicateSameLength.mockResolvedValue([{ memePostId: 1, distance: 0.9 }]);
 
@@ -233,6 +234,10 @@ describe('ParserDeliveryService', () => {
 
     expect(result).toMatchObject({ ok: false, status: ObservedStatus.DUPLICATE });
     expect(bot.api.sendPhoto).not.toHaveBeenCalled();
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('кандидат 10 — дубликат опубликованного (similarity 0.900)')
+    );
+    warnSpy.mockRestore();
   });
 
   it('случайная пара (схожесть < порога published-duplicate) → НЕ дубликат', async () => {

@@ -1,12 +1,14 @@
 import { Logger } from '@nestjs/common';
+import { PUBLISHED_DUPLICATE_SIMILARITY } from '../../../shared/constants/duplicate-similarity';
 
 /**
  * Порог схожести, начиная с которого посты считаются дубликатами.
  *
- * Вынесен единой точкой правды: ранее литерал `0.5` был продублирован в
- * `UserPostManagementService` и `ObservatoryService`.
+ * Общий с парсером/обсерваторией: перцептивный Hamming, 0.85. Ранее здесь
+ * был литерал `0.5` — он же ошибочно применялся к pg_trgm-схожести и молча
+ * терял разные посты (случайная пара хешей даёт ~0.5).
  */
-export const DUPLICATE_SIMILARITY_THRESHOLD = 0.5;
+export const DUPLICATE_SIMILARITY_THRESHOLD = PUBLISHED_DUPLICATE_SIMILARITY;
 
 /**
  * Результат сравнения хешей с «расстоянием» схожести.
@@ -66,7 +68,7 @@ export interface ScheduledDuplicate {
  * Проверяет, есть ли среди элементов хотя бы один дубликат по порогу схожести.
  *
  * Чистая функция — общая для `UserPostManagementService` и `ObservatoryService`,
- * чтобы порог `0.5` не дублировался по коду.
+ * чтобы порог схожести не дублировался по коду.
  *
  * @typeParam T тип элемента с полем `distance`
  * @param items кандидаты на сравнение

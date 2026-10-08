@@ -22,10 +22,19 @@ describe('ParserSettingsService', () => {
     await service.onModuleInit();
     expect(service.current.dailyLimit).toBe(0);
     expect(service.current.sourceDailyCap).toBe(0);
-    expect(service.current.minViews).toBe(100);
-    expect(service.current.errMin).toBe(0.25);
+    expect(service.current.minViews).toBe(40);
+    expect(service.current.minReactions).toBe(0);
+    expect(service.current.nvMin).toBe(0.5);
+    expect(service.current.nrMin).toBe(0.5);
+    expect(service.current.hotScore).toBe(1);
+    expect(service.current.cringeMinViews).toBe(20);
+    expect(service.current.cringeShareMin).toBe(0.03);
+    expect(service.current.errMin).toBe(0.1);
+    expect(service.current.evalPreHours).toBe(1);
+    expect(service.current.evalFinalHours).toBe(6);
     expect(service.current.candidateTtlHours).toBe(96);
     expect(service.current.idlePruneDays).toBe(3);
+    expect(service.current.qualityVersion).toBe(2);
     expect(service.current.enabled).toBe(true);
     expect(service.current.boostUntil).toBeNull();
     expect(service.current.legacyEnabled).toBe(true);
@@ -116,7 +125,94 @@ describe('ParserSettingsService', () => {
 
     await service.reset();
     expect(service.current.dailyLimit).toBe(0);
-    expect(service.current.minViews).toBe(100);
+    expect(service.current.minViews).toBe(40);
+  });
+
+  it('строка без qualityVersion (legacy) — расслабляется один раз до v2', async () => {
+    const repo = makeRepo();
+    repo.findOne.mockResolvedValue(
+      row({
+        qualityVersion: 0,
+        minViews: 500,
+        minReactions: 5,
+        nvMin: 1.5,
+        nrMin: 2,
+        hotScore: 4,
+        cringeMinViews: 100,
+        cringeShareMin: 0.2,
+        errMin: 0.3,
+        evalPreHours: 4,
+        evalFinalHours: 24,
+      })
+    );
+    const service = new ParserSettingsService(repo, makeConfig());
+    await service.onModuleInit();
+
+    expect(service.current.qualityVersion).toBe(2);
+    expect(service.current.minViews).toBe(40);
+    expect(service.current.minReactions).toBe(0);
+    expect(service.current.nvMin).toBe(0.5);
+    expect(service.current.nrMin).toBe(0.5);
+    expect(service.current.hotScore).toBe(1);
+    expect(service.current.cringeMinViews).toBe(20);
+    expect(service.current.cringeShareMin).toBe(0.03);
+    expect(service.current.errMin).toBe(0.1);
+    expect(service.current.evalPreHours).toBe(1);
+    expect(service.current.evalFinalHours).toBe(6);
+    expect(repo.save).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 1, qualityVersion: 2, errMin: 0.1 })
+    );
+  });
+
+  it('adoption не ужесточает значения строже пресета', async () => {
+    const repo = makeRepo();
+    repo.findOne.mockResolvedValue(
+      row({ qualityVersion: 1, minViews: 10, errMin: 0.05, evalFinalHours: 3 })
+    );
+    const service = new ParserSettingsService(repo, makeConfig());
+    await service.onModuleInit();
+
+    expect(service.current.minViews).toBe(10);
+    expect(service.current.errMin).toBe(0.05);
+    expect(service.current.evalFinalHours).toBe(3);
+    expect(service.current.qualityVersion).toBe(2);
+  });
+
+  it('строка с qualityVersion = 2 не мигрируется повторно', async () => {
+    const repo = makeRepo();
+    repo.findOne.mockResolvedValue(row({ qualityVersion: 2, minViews: 500 }));
+    const service = new ParserSettingsService(repo, makeConfig());
+    await service.onModuleInit();
+
+    expect(service.current.minViews).toBe(500);
+    expect(repo.save).not.toHaveBeenCalled();
+  });
+
+  it('after adoption owner edits persist (версия 2 дальше)', async () => {
+    const repo = makeRepo();
+    repo.findOne.mockResolvedValue(row({ qualityVersion: 0, minViews: 500 }));
+    const service = new ParserSettingsService(repo, makeConfig());
+    await service.onModuleInit();
+    repo.save.mockClear();
+
+    await service.update({ minViews: 500 });
+
+    expect(service.current.minViews).toBe(500);
+    expect(service.current.qualityVersion).toBe(2);
+    expect(repo.save).toHaveBeenCalledWith(
+      expect.objectContaining({ minViews: 500, qualityVersion: 2 })
+    );
+  });
+
+  it('ошибка сохранения adoption не роняет и оставляет кэш расслабленным', async () => {
+    const repo = makeRepo();
+    repo.findOne.mockResolvedValue(row({ qualityVersion: 0, minViews: 500 }));
+    repo.save.mockRejectedValue(new Error('db down'));
+    const service = new ParserSettingsService(repo, makeConfig());
+
+    await expect(service.onModuleInit()).resolves.toBeUndefined();
+    expect(service.current.minViews).toBe(40);
+    expect(service.current.qualityVersion).toBe(2);
   });
 
   it('ошибка сохранения update не роняет, кэш обновляется', async () => {

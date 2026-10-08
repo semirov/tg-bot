@@ -1,8 +1,10 @@
 import {
+  AUTO_DELIVER_PER_RUN,
   BACKLOG_TTL_DAYS,
   DUMP_COOLDOWN_MINUTES,
   DUMP_PER_SOURCE_CAP,
   DUMP_SIZE,
+  EVAL_PAUSE_BACKLOG,
   ObservedStatus,
   POOL_TTL_DAYS,
 } from '../constants/parser.constants';
@@ -46,6 +48,7 @@ const makeObservedRepo = (): any => ({
   save: jest.fn().mockImplementation(async (value) => value),
 });
 
+
 const makeRegistry = (): any => ({
   repository: {
     find: jest.fn().mockResolvedValue([source()]),
@@ -61,7 +64,7 @@ const makeDelivery = (): any => ({
 });
 
 const makeSettings = (overrides: Record<string, unknown> = {}): any => ({
-  current: { errMin: 0.15, ...overrides },
+  current: { errMin: 0.15, dailyLimit: 0, sourceDailyCap: 0, ...overrides },
   enabled: true,
   boostActive: jest.fn(() => false),
 });
@@ -313,6 +316,184 @@ describe('ParserSelectorService', () => {
 
       expect(delivery.deliver).toHaveBeenCalledTimes(1);
       expect(delivery.deliver).toHaveBeenCalledWith(expect.objectContaining({ id: 3 }));
+    });
+  });
+
+  describe('deliverDue', () => {
+    it('без кандидатов → 0 и доставка не вызывается', async () => {
+      const { service, delivery } = setup();
+      expect(await service.deliverDue()).toBe(0);
+      expect(delivery.deliver).not.toHaveBeenCalled();
+    });
+
+    it('занят общим мьютексом → 0', async () => {
+      const { service, observedRepo } = setup();
+      (service as never as { busy: boolean }).busy = true;
+      observedRepo.find.mockResolvedValue([scoredRow()]);
+      expect(await service.deliverDue()).toBe(0);
+      expect(observedRepo.find).not.toHaveBeenCalled();
+    });
+
+    it('доставляет свежие первыми без кнопки «Ещё 20»', async () => {
+      const { service, observedRepo, delivery } = setup();
+      const older = scoredRow({ id: 1, createdAt: daysAgo(2), score: 9, mediaUniqueId: 'older' });
+      const newer = scoredRow({ id: 2, createdAt: NOW, score: 1, mediaUniqueId: 'newer' });
+      observedRepo.find.mockResolvedValue([newer, older]);
+      delivery.deliver.mockImplementation(async (row: any) => {
+        row.requestChannelMessageId = 500 + row.id;
+        return { ok: true, status: ObservedStatus.DELIVERED };
+      });
+
+      expect(await service.deliverDue()).toBe(2);
+      expect(delivery.deliver.mock.calls[0][0].id).toBe(2);
+      expect(delivery.attachMoreButton).not.toHaveBeenCalled();
+    });
+
+    it('не применяет cooldown ручного добора', async () => {
+      const { service, observedRepo, delivery } = setup();
+      observedRepo.find.mockResolvedValue([scoredRow()]);
+      delivery.deliver.mockResolvedValue({ ok: true, status: ObservedStatus.DELIVERED });
+
+      expect(await service.deliverDue()).toBe(1);
+      expect(await service.deliverDue()).toBe(1);
+      expect(delivery.deliver).toHaveBeenCalledTimes(2);
+    });
+
+    it('исключённый источник никогда не доставляется', async () => {
+      const { service, observedRepo, registry, delivery } = setup();
+      observedRepo.find.mockResolvedValue([scoredRow()]);
+      registry.repository.find.mockResolvedValue([source({ excluded: true })]);
+
+      expect(await service.deliverDue()).toBe(0);
+      expect(delivery.deliver).not.toHaveBeenCalled();
+    });
+
+    it('бэклог на пороге паузы (EVAL_PAUSE_BACKLOG) → авто-выдача пропущена', async () => {
+      const { service, observedRepo, delivery } = setup();
+      observedRepo.count.mockResolvedValue(EVAL_PAUSE_BACKLOG);
+      observedRepo.find.mockResolvedValue([scoredRow()]);
+
+      expect(await service.deliverDue()).toBe(0);
+      expect(observedRepo.find).not.toHaveBeenCalled();
+      expect(delivery.deliver).not.toHaveBeenCalled();
+    });
+
+    it('низкий ERR источника (ниже errMin) пропускается', async () => {
+      const { service, observedRepo, registry, delivery } = setup({
+        settings: { errMin: 0.15 },
+      });
+      observedRepo.find.mockResolvedValue([scoredRow()]);
+      registry.repository.find.mockResolvedValue([source({ err: 0.1 })]);
+
+      expect(await service.deliverDue()).toBe(0);
+      expect(delivery.deliver).not.toHaveBeenCalled();
+    });
+
+    it('дневной лимит: уже исчерпан → 0', async () => {
+      const { service, observedRepo, delivery, settings } = setup({
+        settings: { dailyLimit: 3 },
+      });
+      observedRepo.count.mockResolvedValue(3);
+      observedRepo.find.mockResolvedValue([scoredRow()]);
+
+      expect(await service.deliverDue()).toBe(0);
+      expect(delivery.deliver).not.toHaveBeenCalled();
+      expect(observedRepo.count).toHaveBeenCalledWith(
+        expect.objectContaining({ where: expect.objectContaining({ deliveredAt: expect.anything() }) })
+      );
+    });
+
+    it('дневной лимит: доставляет только остаток', async () => {
+      const { service, observedRepo, delivery } = setup({ settings: { dailyLimit: 3 } });
+      observedRepo.count.mockResolvedValue(2);
+      observedRepo.find.mockResolvedValue([
+        scoredRow({ id: 1, mediaUniqueId: 'a' }),
+        scoredRow({ id: 2, mediaUniqueId: 'b' }),
+        scoredRow({ id: 3, mediaUniqueId: 'c' }),
+      ]);
+      delivery.deliver.mockResolvedValue({ ok: true, status: ObservedStatus.DELIVERED });
+
+      expect(await service.deliverDue()).toBe(1);
+      expect(delivery.deliver).toHaveBeenCalledTimes(1);
+    });
+
+    it('кап на источник: канал с исчерпанной квотой пропускается', async () => {
+      const { service, observedRepo, registry, delivery } = setup({
+        settings: { sourceDailyCap: 1 },
+      });
+      observedRepo.find.mockResolvedValue([
+        scoredRow({ id: 1, sourceChatId: '-100aaa', mediaUniqueId: 'a' }),
+        scoredRow({ id: 2, sourceChatId: '-100bbb', mediaUniqueId: 'b' }),
+      ]);
+      registry.repository.find.mockResolvedValue([
+        source({ chatId: '-100aaa' }),
+        source({ chatId: '-100bbb' }),
+      ]);
+      // count: первый вызов — backlog (0), затем '-100aaa' (уже 1), затем '-100bbb' (0).
+      observedRepo.count
+        .mockResolvedValue(0)
+        .mockResolvedValueOnce(0)
+        .mockResolvedValueOnce(1)
+        .mockResolvedValueOnce(0);
+      delivery.deliver.mockResolvedValue({ ok: true, status: ObservedStatus.DELIVERED });
+
+      expect(await service.deliverDue()).toBe(1);
+      expect(delivery.deliver).toHaveBeenCalledWith(expect.objectContaining({ id: 2 }));
+    });
+
+    it('кап на источник: в одном прогоне больше квоты не отдаёт', async () => {
+      const { service, observedRepo, registry, delivery } = setup({
+        settings: { sourceDailyCap: 1 },
+      });
+      observedRepo.find.mockResolvedValue([
+        scoredRow({ id: 1, sourceChatId: '-100aaa', mediaUniqueId: 'a', createdAt: NOW }),
+        scoredRow({
+          id: 2,
+          sourceChatId: '-100aaa',
+          mediaUniqueId: 'b',
+          createdAt: daysAgo(1),
+        }),
+      ]);
+      registry.repository.find.mockResolvedValue([source({ chatId: '-100aaa' })]);
+      observedRepo.count.mockResolvedValue(0);
+      delivery.deliver.mockResolvedValue({ ok: true, status: ObservedStatus.DELIVERED });
+
+      expect(await service.deliverDue()).toBe(1);
+      expect(delivery.deliver).toHaveBeenCalledTimes(1);
+      expect(delivery.deliver).toHaveBeenCalledWith(expect.objectContaining({ id: 1 }));
+    });
+
+    it('уважает переданный count-лимит', async () => {
+      const { service, observedRepo, delivery } = setup();
+      observedRepo.find.mockResolvedValue(
+        Array.from({ length: 5 }, (_, i) =>
+          scoredRow({ id: i + 1, mediaUniqueId: `m-${i}` })
+        )
+      );
+      delivery.deliver.mockResolvedValue({ ok: true, status: ObservedStatus.DELIVERED });
+
+      expect(await service.deliverDue(2)).toBe(2);
+    });
+
+    it('нулевой count → 0 и выборка не читается', async () => {
+      const { service, observedRepo } = setup();
+      observedRepo.count.mockResolvedValue(0);
+      expect(await service.deliverDue(0)).toBe(0);
+      expect(observedRepo.find).not.toHaveBeenCalled();
+    });
+
+    it(`дефолт — AUTO_DELIVER_PER_RUN (${AUTO_DELIVER_PER_RUN})`, async () => {
+      const { service, observedRepo, registry, delivery } = setup();
+      const chatIds = Array.from({ length: 8 }, (_, i) => `-100${i}`);
+      observedRepo.find.mockResolvedValue(
+        Array.from({ length: AUTO_DELIVER_PER_RUN + 5 }, (_, i) =>
+          scoredRow({ id: i + 1, sourceChatId: chatIds[i % 8], mediaUniqueId: `m-${i}` })
+        )
+      );
+      registry.repository.find.mockResolvedValue(chatIds.map((chatId) => source({ chatId })));
+      delivery.deliver.mockResolvedValue({ ok: true, status: ObservedStatus.DELIVERED });
+
+      expect(await service.deliverDue()).toBe(AUTO_DELIVER_PER_RUN);
     });
   });
 

@@ -82,15 +82,19 @@ export class ParserDeliveryService {
     const publishedHash = imageHash ?? perceptualHash;
     if (publishedHash) {
       const duplicates = await this.deduplication.checkDuplicateSameLength(publishedHash);
-      const isDuplicate = (duplicates ?? []).some(
-        (item) => item.distance >= PUBLISHED_DUPLICATE_SIMILARITY
+      const best = (duplicates ?? []).reduce(
+        (max, item) => Math.max(max, item.distance ?? 0),
+        0
       );
-      if (isDuplicate) {
+      if (best >= PUBLISHED_DUPLICATE_SIMILARITY) {
         candidate.status = ObservedStatus.DUPLICATE;
         candidate.rejectReason = 'published-duplicate';
         await this.observedRepository.save(candidate);
         metrics.parser.deliveryFailures.inc({ reason: 'published-duplicate' });
-        this.logger.debug(`Parser delivery: дубликат опубликованного (${candidate.id})`);
+        this.logger.warn(
+          `Parser delivery: кандидат ${candidate.id} — дубликат опубликованного ` +
+            `(similarity ${best.toFixed(3)})`
+        );
         return { ok: false, status: ObservedStatus.DUPLICATE };
       }
     }

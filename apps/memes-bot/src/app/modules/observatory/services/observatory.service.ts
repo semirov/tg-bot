@@ -27,6 +27,7 @@ import { buildTelegramFileUrl, extractTelegramFileId } from '../../../shared/pub
 import { buildPostUrl, TelegramPostSource } from '../../../shared/publication/telegram-link';
 import { sendPostToMattermost } from '../../../shared/publication/mattermost-post';
 import { hasSimilarDistance } from '../../post-management/services/duplicate-policy';
+import { PUBLISHED_DUPLICATE_SIMILARITY } from '../../../shared/constants/duplicate-similarity';
 import { ObservatoryPostFormatter } from './observatory-post-formatter';
 import { ObservatoryPublishPolicy } from './observatory-publish-policy';
 
@@ -111,10 +112,15 @@ export class ObservatoryService implements OnModuleInit {
     }
 
     const imageHash = await this.deduplicationService.getPostImageHash(message?.photo);
-    const duplicates = await this.deduplicationService.checkDuplicate(imageHash);
-    // если есть дубликат с похожестью больше 0.5 - выкидываем пост
-    if (hasSimilarDistance(duplicates)) {
+    // Перцептивный Hamming по хешам одной длины (не pg_trgm): порог 0.85 вместо
+    // прежних 0.5, иначе случайная схожесть ~0.5 молча теряла разные посты.
+    const duplicates = await this.deduplicationService.checkDuplicateSameLength(imageHash);
+    if (hasSimilarDistance(duplicates, PUBLISHED_DUPLICATE_SIMILARITY)) {
       metrics.observatory.deduplicated.inc();
+      this.logger.warn(
+        `Observatory: дубликат опубликованного, пост ${message.message_id} пропущен ` +
+          `(similarity ${duplicates[0]?.distance?.toFixed(3) ?? 'n/a'})`
+      );
       return;
     }
 

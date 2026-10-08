@@ -26,18 +26,18 @@ export class ParserSettingsEntity {
   cringeShare: number;
 
   /** Абсолютный пол по просмотрам. */
-  @Column('int', { default: 100 })
+  @Column('int', { default: 40 })
   minViews: number;
 
   /** Абсолютный пол по реакциям. */
-  @Column('int', { default: 1 })
+  @Column('int', { default: 0 })
   minReactions: number;
 
   /** Пост должен быть лучше медианы канала в nvMin раз (или nrMin/nr). */
-  @Column('real', { default: 0.8 })
+  @Column('real', { default: 0.5 })
   nvMin: number;
 
-  @Column('real', { default: 1 })
+  @Column('real', { default: 0.5 })
   nrMin: number;
 
   /** Минимальная доля положительных реакций. */
@@ -45,19 +45,19 @@ export class ParserSettingsEntity {
   posShareMin: number;
 
   /** Скор раннего выхода (t+2ч): nv+nr >= hotScore. */
-  @Column('real', { default: 2 })
+  @Column('real', { default: 1 })
   hotScore: number;
 
   /** Минимальная доля 🤡/💩 для кринж-категории. */
-  @Column('real', { default: 0.05 })
+  @Column('real', { default: 0.03 })
   cringeShareMin: number;
 
   /** Абсолютный пол просмотров для кринжа. */
-  @Column('int', { default: 50 })
+  @Column('int', { default: 20 })
   cringeMinViews: number;
 
   /** Минимальный ERR канала (медиана просмотров / подписчики). */
-  @Column('real', { default: 0.25 })
+  @Column('real', { default: 0.1 })
   errMin: number;
 
   /** Максимум активных источников (бюджет каналов). */
@@ -69,12 +69,20 @@ export class ParserSettingsEntity {
   idlePruneDays: number;
 
   /** Ранний отбор, часов после сбора. */
-  @Column('int', { default: 2 })
+  @Column('int', { default: 1 })
   evalPreHours: number;
 
   /** Финальный отбор, часов после сбора. */
-  @Column('int', { default: 12 })
+  @Column('int', { default: 6 })
   evalFinalHours: number;
+
+  /**
+   * Версия набора порогов качества. `0` = legacy-строка, к которой при
+   * старте применяется разовое «расслабление» до `2`. Держим дефолт `< 2`,
+   * чтобы `synchronize` проставил его существующей строке и adoption сработал.
+   */
+  @Column('int', { default: 0 })
+  qualityVersion: number;
 
   /** TTL кандидата, часов (истёк — expired). */
   @Column('int', { default: 96 })

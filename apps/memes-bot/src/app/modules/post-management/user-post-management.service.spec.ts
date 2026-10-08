@@ -115,7 +115,7 @@ function createHarness() {
   };
   const deduplicationService: any = {
     getPostImageHash: jest.fn().mockResolvedValue(null),
-    checkDuplicate: jest.fn().mockResolvedValue([]),
+    checkDuplicateSameLength: jest.fn().mockResolvedValue([]),
     calculateHashDistance: jest.fn().mockReturnValue(0),
     createPublishedPostHash: jest.fn().mockResolvedValue(undefined),
   };
@@ -600,7 +600,7 @@ describe('UserPostManagementService', () => {
     it('photo-дубликат помечается и пересылается для сравнения', async () => {
       const h = createHarness();
       h.deduplicationService.getPostImageHash.mockResolvedValue('hash');
-      h.deduplicationService.checkDuplicate.mockResolvedValue([
+      h.deduplicationService.checkDuplicateSameLength.mockResolvedValue([
         { distance: 0.9, memePostId: 111 },
         { distance: 0.3, memePostId: 222 },
       ]);
@@ -625,7 +625,7 @@ describe('UserPostManagementService', () => {
     it('photo-дубликат перебирает совпадения и выбирает лучшее по возрастанию', async () => {
       const h = createHarness();
       h.deduplicationService.getPostImageHash.mockResolvedValue('hash');
-      h.deduplicationService.checkDuplicate.mockResolvedValue([
+      h.deduplicationService.checkDuplicateSameLength.mockResolvedValue([
         { distance: 0.5, memePostId: 111 },
         { distance: 0.9, memePostId: 222 },
       ]);
@@ -642,10 +642,29 @@ describe('UserPostManagementService', () => {
       );
     });
 
+    it('photo при похожести 0.6 — не дубликат (порог 0.85)', async () => {
+      const h = createHarness();
+      h.deduplicationService.getPostImageHash.mockResolvedValue('hash');
+      h.deduplicationService.checkDuplicateSameLength.mockResolvedValue([
+        { distance: 0.6, memePostId: 111 },
+      ]);
+      const ctx = makeCtx();
+      ctx.message.photo = PHOTO;
+
+      await h.service.handleUserMemeRequest(ctx);
+
+      const userText = h.bot.api.sendMessage.mock.calls[0][1];
+      expect(userText).not.toContain('Возможный дубликат');
+      expect(h.bot.api.forwardMessage).not.toHaveBeenCalled();
+      expect(h.userRequestRepo.insert).toHaveBeenCalledWith(
+        expect.objectContaining({ possibleDuplicate: false })
+      );
+    });
+
     it('ошибка пересылки дубликата ловится', async () => {
       const h = createHarness();
       h.deduplicationService.getPostImageHash.mockResolvedValue('hash');
-      h.deduplicationService.checkDuplicate.mockResolvedValue([
+      h.deduplicationService.checkDuplicateSameLength.mockResolvedValue([
         { distance: 0.9, memePostId: 111 },
       ]);
       h.bot.api.forwardMessage.mockRejectedValueOnce(new Error('forward fail'));
@@ -661,8 +680,8 @@ describe('UserPostManagementService', () => {
     it('запланированный дубликат помечается и отправляется с превью', async () => {
       const h = createHarness();
       h.deduplicationService.getPostImageHash.mockResolvedValue('hash');
-      h.deduplicationService.checkDuplicate.mockResolvedValue([]);
-      h.deduplicationService.calculateHashDistance.mockReturnValue(0.7);
+      h.deduplicationService.checkDuplicateSameLength.mockResolvedValue([]);
+      h.deduplicationService.calculateHashDistance.mockReturnValue(0.9);
       h.postSchedulerService.getAllScheduledPosts.mockResolvedValue([
         { id: 3, hash: 'other', publishDate: new Date('2026-05-01T10:00:00Z') },
       ]);
@@ -675,7 +694,7 @@ describe('UserPostManagementService', () => {
       await h.service.handleUserMemeRequest(ctx);
 
       const userText = h.bot.api.sendMessage.mock.calls[0][1];
-      expect(userText).toContain('Похожий пост (70%) запланирован');
+      expect(userText).toContain('Похожий пост (90%) запланирован');
       expect(h.bot.api.forwardMessage).toHaveBeenCalledWith(
         REQUEST_CHANNEL,
         REQUEST_CHANNEL,
@@ -690,8 +709,8 @@ describe('UserPostManagementService', () => {
     it('ошибка получения запланированного превью ловится', async () => {
       const h = createHarness();
       h.deduplicationService.getPostImageHash.mockResolvedValue('hash');
-      h.deduplicationService.checkDuplicate.mockResolvedValue([]);
-      h.deduplicationService.calculateHashDistance.mockReturnValue(0.7);
+      h.deduplicationService.checkDuplicateSameLength.mockResolvedValue([]);
+      h.deduplicationService.calculateHashDistance.mockReturnValue(0.9);
       h.postSchedulerService.getAllScheduledPosts.mockResolvedValue([
         { id: 3, hash: 'other', publishDate: new Date('2026-05-01T10:00:00Z') },
       ]);
@@ -707,8 +726,8 @@ describe('UserPostManagementService', () => {
     it('ошибка отправки информации о запланированном дубликате логируется', async () => {
       const h = createHarness();
       h.deduplicationService.getPostImageHash.mockResolvedValue('hash');
-      h.deduplicationService.checkDuplicate.mockResolvedValue([]);
-      h.deduplicationService.calculateHashDistance.mockReturnValue(0.7);
+      h.deduplicationService.checkDuplicateSameLength.mockResolvedValue([]);
+      h.deduplicationService.calculateHashDistance.mockReturnValue(0.9);
       h.postSchedulerService.getAllScheduledPosts.mockResolvedValue([
         { id: 3, hash: 'other', publishDate: new Date('2026-05-01T10:00:00Z') },
       ]);
@@ -811,7 +830,7 @@ describe('UserPostManagementService', () => {
       const ctx = makeCtx();
       ctx.callbackQuery.message.photo = PHOTO;
       h.deduplicationService.getPostImageHash.mockResolvedValue('hash');
-      h.deduplicationService.checkDuplicate.mockResolvedValue([{ distance: 0.6 }]);
+      h.deduplicationService.checkDuplicateSameLength.mockResolvedValue([{ distance: 0.9 }]);
 
       await build(h)(ctx);
 
@@ -833,8 +852,8 @@ describe('UserPostManagementService', () => {
       const ctx = makeCtx();
       ctx.callbackQuery.message.photo = PHOTO;
       h.deduplicationService.getPostImageHash.mockResolvedValue('hash');
-      h.deduplicationService.checkDuplicate.mockResolvedValue([]);
-      h.deduplicationService.calculateHashDistance.mockReturnValue(0.8);
+      h.deduplicationService.checkDuplicateSameLength.mockResolvedValue([]);
+      h.deduplicationService.calculateHashDistance.mockReturnValue(0.9);
       h.postSchedulerService.getAllScheduledPosts.mockResolvedValue([
         { id: 3, hash: 'other', publishDate: new Date() },
       ]);
@@ -940,9 +959,9 @@ describe('UserPostManagementService', () => {
         scheduledDuplicateId: null,
       });
       h.deduplicationService.getPostImageHash.mockResolvedValue('hash');
-      h.deduplicationService.checkDuplicate.mockResolvedValue([
+      h.deduplicationService.checkDuplicateSameLength.mockResolvedValue([
         { distance: 0.4, memePostId: 9 },
-        { distance: 0.8, memePostId: 10 },
+        { distance: 0.9, memePostId: 10 },
       ]);
       const ctx = makeCtx();
 
@@ -956,6 +975,26 @@ describe('UserPostManagementService', () => {
       expect(h.userRequestRepo.update).toHaveBeenCalled();
     });
 
+    it('лучшее совпадение 0.6 — не дубликат, оригинал не пересылается', async () => {
+      const h = createHarness();
+      h.userRequestRepo.findOne.mockResolvedValue({
+        id: 1,
+        user: { id: 42 },
+        originalMessageId: 5,
+        scheduledDuplicateId: null,
+      });
+      h.deduplicationService.getPostImageHash.mockResolvedValue('hash');
+      h.deduplicationService.checkDuplicateSameLength.mockResolvedValue([
+        { distance: 0.6, memePostId: 10 },
+      ]);
+      const ctx = makeCtx();
+
+      await build(h).confirm(ctx);
+
+      expect(h.bot.api.forwardMessage).not.toHaveBeenCalled();
+      expect(h.userRequestRepo.update).toHaveBeenCalled();
+    });
+
     it('перебор дубликатов оставляет первый при убывании расстояний', async () => {
       const h = createHarness();
       h.userRequestRepo.findOne.mockResolvedValue({
@@ -965,7 +1004,7 @@ describe('UserPostManagementService', () => {
         scheduledDuplicateId: null,
       });
       h.deduplicationService.getPostImageHash.mockResolvedValue('hash');
-      h.deduplicationService.checkDuplicate.mockResolvedValue([
+      h.deduplicationService.checkDuplicateSameLength.mockResolvedValue([
         { distance: 0.9, memePostId: 10 },
         { distance: 0.4, memePostId: 9 },
       ]);
@@ -1002,7 +1041,7 @@ describe('UserPostManagementService', () => {
         scheduledDuplicateId: null,
       });
       h.deduplicationService.getPostImageHash.mockResolvedValue('hash');
-      h.deduplicationService.checkDuplicate.mockResolvedValue([{ distance: 0.8, memePostId: 10 }]);
+      h.deduplicationService.checkDuplicateSameLength.mockResolvedValue([{ distance: 0.9, memePostId: 10 }]);
       h.bot.api.forwardMessage.mockRejectedValueOnce(new Error('fail'));
       const ctx = makeCtx();
 

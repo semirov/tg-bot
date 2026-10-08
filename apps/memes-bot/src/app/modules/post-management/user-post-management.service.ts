@@ -27,9 +27,11 @@ import { sendPostToMattermost } from '../../shared/publication/mattermost-post';
 import { runPublicationMode } from '../../shared/publication/publication-mode';
 import {
   DuplicatePolicy,
+  hasSimilarDistance,
   pickClosest,
   ScheduledDuplicate,
 } from './services/duplicate-policy';
+import { PUBLISHED_DUPLICATE_SIMILARITY } from '../../shared/constants/duplicate-similarity';
 import { UserPostFormatter } from './services/user-post-formatter';
 
 @Injectable()
@@ -302,8 +304,9 @@ export class UserPostManagementService implements OnModuleInit {
               ctx.callbackQuery.message.photo
             );
             if (hash) {
-              const duplicates = await this.deduplicationService.checkDuplicate(hash);
-              if (this.duplicatePolicy.hasSimilar(duplicates)) {
+              const duplicates =
+                await this.deduplicationService.checkDuplicateSameLength(hash);
+              if (hasSimilarDistance(duplicates, PUBLISHED_DUPLICATE_SIMILARITY)) {
                 hasDuplicate = true;
               } else {
                 const scheduledDup = await this.checkScheduledDuplicates(hash);
@@ -507,10 +510,10 @@ export class UserPostManagementService implements OnModuleInit {
     if (ctx.message?.photo) {
       const hash = await this.deduplicationService.getPostImageHash(ctx.message.photo);
       if (hash) {
-        // Проверяем опубликованные посты
-        const duplicates = await this.deduplicationService.checkDuplicate(hash);
+        // Проверяем опубликованные посты (перцептивный Hamming, порог 0.85).
+        const duplicates = await this.deduplicationService.checkDuplicateSameLength(hash);
 
-        if (this.duplicatePolicy.hasSimilar(duplicates)) {
+        if (hasSimilarDistance(duplicates, PUBLISHED_DUPLICATE_SIMILARITY)) {
           // Находим лучшее совпадение
           bestMatch = pickClosest(duplicates);
 
@@ -722,8 +725,9 @@ export class UserPostManagementService implements OnModuleInit {
               ctx.callbackQuery.message.photo
             );
             if (hash) {
-              const duplicates = await this.deduplicationService.checkDuplicate(hash);
-              if (duplicates.length > 0) {
+              const duplicates =
+                await this.deduplicationService.checkDuplicateSameLength(hash);
+              if (hasSimilarDistance(duplicates, PUBLISHED_DUPLICATE_SIMILARITY)) {
                 const bestMatch = pickClosest(duplicates);
 
                 // Отправляем оригинальный пост

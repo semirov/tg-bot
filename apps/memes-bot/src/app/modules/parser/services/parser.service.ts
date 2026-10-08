@@ -63,7 +63,7 @@ export class ParserService implements OnModuleInit {
       if (delivered === 0) {
         const notice = await this.bot.api.sendMessage(
           this.config.userRequestMemeChannel,
-          '🍲 Пока нечего показать: свежих оценённых постов нет (пул наполняется ~2ч после сбора).',
+          '🍲 Пока нечего показать: свежих оценённых постов нет.',
           { disable_notification: true }
         );
         setTimeout(() => {
@@ -158,8 +158,9 @@ export class ParserService implements OnModuleInit {
   }
 
   /**
-   * Каждые 20 минут: доставляем только форс-посты (обычные — по требованию
-   * кнопкой/`/more`) и состариваем бэклог.
+   * Каждые 20 минут: форс-посты уходят сразу, затем авто-выдача оценённых
+   * постов в предложку (квоты внутри селектора), затем старение бэклога.
+   * Ручной «Ещё 20»/`/more` остаётся добором поверх.
    */
   @Cron('*/20 * * * *', { timeZone: 'Europe/Moscow' })
   public async onSelect(): Promise<void> {
@@ -168,6 +169,7 @@ export class ParserService implements OnModuleInit {
     try {
       await this.runJob('select', async () => {
         await this.selector.deliverForced();
+        await this.selector.deliverDue();
         await this.selector.ageBacklog();
       });
     } finally {

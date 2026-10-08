@@ -31,7 +31,30 @@ export interface ParserRuntimeSettings {
   boostUntil: string | null;
   /** Старый парсер (обсерватория) включён. */
   legacyEnabled: boolean;
+  /** Версия набора порогов качества (см. `QUALITY_VERSION`). */
+  qualityVersion: number;
 }
+
+/** Актуальная версия пресета качества; применяется к строке настроек при старте. */
+const QUALITY_VERSION = 2;
+
+/**
+ * Целевой расслабленный пресет v2. Adoption применяет его как потолок
+ * (`Math.min`): сохранённые более строгие значения опускаются до пресета,
+ * уже более мягкие остаются как есть.
+ */
+const RELAXED_QUALITY_V2 = {
+  minViews: 40,
+  minReactions: 0,
+  nvMin: 0.5,
+  nrMin: 0.5,
+  hotScore: 1,
+  cringeMinViews: 20,
+  cringeShareMin: 0.03,
+  errMin: 0.1,
+  evalPreHours: 1,
+  evalFinalHours: 6,
+} as const;
 
 const clamp = (value: number, min: number, max: number, fallback: number): number => {
   const parsed = Number(value);
@@ -57,6 +80,43 @@ export class ParserSettingsService implements OnModuleInit {
 
   async onModuleInit(): Promise<void> {
     await this.refresh();
+    await this.adoptRelaxedDefaults();
+  }
+
+  /**
+   * Разовая идемпотентная миграция строки настроек: при `qualityVersion < 2`
+   * расслабляем пороги до пресета v2 (`Math.min` — потолок: сохранённые более
+   * строгие значения опускаются до пресета, более мягкие не поднимаются),
+   * сохраняем и поднимаем версию. После этого правки владельца сохраняются
+   * как есть (версия уже 2).
+   */
+  private async adoptRelaxedDefaults(): Promise<void> {
+    if (this.cached.qualityVersion >= QUALITY_VERSION) return;
+
+    const next: ParserRuntimeSettings = {
+      ...this.cached,
+      qualityVersion: QUALITY_VERSION,
+    };
+    next.minViews = Math.min(next.minViews, RELAXED_QUALITY_V2.minViews);
+    next.minReactions = Math.min(next.minReactions, RELAXED_QUALITY_V2.minReactions);
+    next.nvMin = Math.min(next.nvMin, RELAXED_QUALITY_V2.nvMin);
+    next.nrMin = Math.min(next.nrMin, RELAXED_QUALITY_V2.nrMin);
+    next.hotScore = Math.min(next.hotScore, RELAXED_QUALITY_V2.hotScore);
+    next.cringeMinViews = Math.min(next.cringeMinViews, RELAXED_QUALITY_V2.cringeMinViews);
+    next.cringeShareMin = Math.min(next.cringeShareMin, RELAXED_QUALITY_V2.cringeShareMin);
+    next.errMin = Math.min(next.errMin, RELAXED_QUALITY_V2.errMin);
+    next.evalPreHours = Math.min(next.evalPreHours, RELAXED_QUALITY_V2.evalPreHours);
+    next.evalFinalHours = Math.min(next.evalFinalHours, RELAXED_QUALITY_V2.evalFinalHours);
+
+    this.cached = next;
+    try {
+      await this.repository.save({ id: PARSER_SETTINGS_ID, ...next, updatedAt: new Date() });
+      this.logger.log(
+        `Parser settings: relaxed quality preset v${QUALITY_VERSION} adopted`
+      );
+    } catch (error) {
+      this.logger.error(`Не удалось применить relaxed-настройки парсера: ${error}`);
+    }
   }
 
   get current(): ParserRuntimeSettings {
@@ -107,24 +167,25 @@ export class ParserSettingsService implements OnModuleInit {
       dailyLimit: 0,
       sourceDailyCap: 0,
       cringeShare: clamp(0.25, 0, 1, 0.25),
-      minViews: 100,
-      minReactions: 1,
-      nvMin: 0.8,
-      nrMin: 1,
+      minViews: 40,
+      minReactions: 0,
+      nvMin: 0.5,
+      nrMin: 0.5,
       posShareMin: clamp(0, 0, 1, 0),
-      hotScore: 2,
-      cringeShareMin: clamp(0.05, 0, 1, 0.05),
-      cringeMinViews: 50,
-      errMin: 0.25,
+      hotScore: 1,
+      cringeShareMin: clamp(0.03, 0, 1, 0.03),
+      cringeMinViews: 20,
+      errMin: 0.1,
       maxSources: 40,
-      evalPreHours: 2,
-      evalFinalHours: 12,
+      evalPreHours: 1,
+      evalFinalHours: 6,
       candidateTtlHours: 96,
       idlePruneDays: 3,
       aiEnabled: false,
       aiRelevanceMin: clamp(0.6, 0, 1, 0.6),
       boostUntil: null,
       legacyEnabled: true,
+      qualityVersion: QUALITY_VERSION,
     };
   }
 
@@ -153,6 +214,8 @@ export class ParserSettingsService implements OnModuleInit {
       aiRelevanceMin: clamp(row.aiRelevanceMin, 0, 1, defaults.aiRelevanceMin),
       boostUntil: row.boostUntil ? new Date(row.boostUntil).toISOString() : null,
       legacyEnabled: row.legacyEnabled ?? defaults.legacyEnabled,
+      // Fallback 0: отсутствующее/нулевое значение — legacy-строка, нужен adoption.
+      qualityVersion: nonNegativeInt(row.qualityVersion, 0),
     };
   }
 }

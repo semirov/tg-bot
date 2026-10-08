@@ -24,40 +24,6 @@ export class DeduplicationService {
     @Inject(BOT) private bot: Bot<BotContext>
   ) {}
 
-  public async checkDuplicate(
-    hash: string
-  ): Promise<{ memePostId: number; distance: number; days: number }[]> {
-    if (!hash) {
-      return [];
-    }
-
-    try {
-      const result = await this.publishedPostHashesEntity.query(
-        `
-          SELECT hash, "memeChannelMessageId", SIMILARITY(hash, $1) distance
-          from published_post_hashes_entity
-          where hash is not null
-            and "createdAt" >= now() - INTERVAL '365 DAYS'
-          ORDER BY distance DESC LIMIT 1
-        `,
-        [hash]
-      );
-      return result.map((res) => ({
-        memePostId: res.memeChannelMessageId,
-        distance: res.distance,
-      }));
-    } catch (error) {
-      // Функция SIMILARITY может быть недоступна, если расширение pg_trgm не установлено
-      if (error.message?.includes('similarity') || error.message?.includes('SIMILARITY')) {
-        this.logger.warn(
-          'PostgreSQL SIMILARITY function not available (pg_trgm extension missing). Deduplication check skipped.'
-        );
-        return [];
-      }
-      throw error;
-    }
-  }
-
   /**
    * Сравнение хешей только одинаковой длины (Hamming по символам), без pg_trgm.
    * Нужно, чтобы 4-символьные фото-хеши не «совпадали» с 16-символьными видео.

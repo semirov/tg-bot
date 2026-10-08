@@ -31,15 +31,15 @@ function makePolicy(options: {
 }
 
 describe('DUPLICATE_SIMILARITY_THRESHOLD', () => {
-  it('равен 0.5', () => {
-    expect(DUPLICATE_SIMILARITY_THRESHOLD).toBe(0.5);
+  it('равен 0.85 (общий перцептивный порог)', () => {
+    expect(DUPLICATE_SIMILARITY_THRESHOLD).toBe(0.85);
   });
 });
 
 describe('hasSimilarDistance', () => {
-  it('использует порог по умолчанию 0.5', () => {
-    expect(hasSimilarDistance([{ distance: 0.5 }])).toBe(true);
-    expect(hasSimilarDistance([{ distance: 0.49 }])).toBe(false);
+  it('использует порог по умолчанию 0.85', () => {
+    expect(hasSimilarDistance([{ distance: 0.85 }])).toBe(true);
+    expect(hasSimilarDistance([{ distance: 0.6 }])).toBe(false);
   });
 
   it('уважает явно заданный порог', () => {
@@ -112,8 +112,8 @@ describe('DuplicatePolicy', () => {
   describe('hasSimilar', () => {
     it('делегирует проверку порога', () => {
       const { policy } = makePolicy();
-      expect(policy.hasSimilar([{ distance: 0.5 }])).toBe(true);
-      expect(policy.hasSimilar([{ distance: 0.4 }])).toBe(false);
+      expect(policy.hasSimilar([{ distance: 0.85 }])).toBe(true);
+      expect(policy.hasSimilar([{ distance: 0.6 }])).toBe(false);
     });
   });
 
@@ -171,10 +171,10 @@ describe('DuplicatePolicy', () => {
       );
     });
 
-    it('отбрасывает совпадения ниже порога', async () => {
+    it('отбрасывает совпадения ниже порога (0.6 — не дубликат)', async () => {
       const { policy } = makePolicy({
         posts: [{ id: 1, hash: 'a', publishDate: new Date('2026-01-01T00:00:00Z') }],
-        distances: [0.49],
+        distances: [0.6],
       });
 
       await expect(policy.checkScheduledDuplicates('h')).resolves.toBeNull();
