@@ -1,3 +1,15 @@
+# [0.41.0](https://github.com/semirov/tg-bot/compare/v0.40.3...v0.41.0) (2026-10-09)
+
+
+### Bug Fixes
+
+* **vision:** обрезка описания медиа по границе поля/слова + маркер (TRL-409) ([89ada8c](https://github.com/semirov/tg-bot/commit/89ada8cf31db2de27026ae16add29495c801d945))
+
+
+### Features
+
+* **parser:** auto-fill proposal queue, relax thresholds/ERR, unify dedup threshold ([88582f5](https://github.com/semirov/tg-bot/commit/88582f5d2e0d54a9cca1ff25b9f2d45fee559e46))
+
 ## [0.40.3](https://github.com/semirov/tg-bot/compare/v0.40.2...v0.40.3) (2026-09-26)
 
 
