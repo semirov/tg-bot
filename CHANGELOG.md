@@ -1,3 +1,10 @@
+## [0.41.1](https://github.com/semirov/tg-bot/compare/v0.41.0...v0.41.1) (2026-10-09)
+
+
+### Bug Fixes
+
+* **release:** release refactor commits as patch so they reach prod ([938375c](https://github.com/semirov/tg-bot/commit/938375c4d93490f9187d8848d1ac2291b60ec25b))
+
 # [0.41.0](https://github.com/semirov/tg-bot/compare/v0.40.3...v0.41.0) (2026-10-09)
 
 
