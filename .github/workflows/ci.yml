@@ -27,13 +27,17 @@ env:
   NODE_OPTIONS: --no-deprecation
   # BuildKit нужен для cache mount в Dockerfile (app) и build-base.
   DOCKER_BUILDKIT: '1'
+  # Раннер — нативный arm64 на мак-мини (amd64-воркер под QEMU падает).
+  # Прод-образ и тест-образ обязаны быть linux/amd64: Docker строит/запускает
+  # их через QEMU, что проверено (120 сюитов/2284 теста, прод-билд ~70с).
+  DOCKER_DEFAULT_PLATFORM: linux/amd64
 
 jobs:
   deps:
     name: Dependency base images
     # Базовые образы пересобираются только при изменении package-lock.json.
     if: github.event_name == 'push'
-    runs-on: [self-hosted, linux, x64, memes-bot]
+    runs-on: [self-hosted, linux, arm64, memes-bot]
     steps:
       - uses: actions/checkout@v5
         with:
@@ -54,7 +58,7 @@ jobs:
 
   test:
     name: Lint, tests, coverage, build
-    runs-on: [self-hosted, linux, x64, memes-bot]
+    runs-on: [self-hosted, linux, arm64, memes-bot]
     steps:
       - uses: actions/checkout@v5
       - name: Docker registry auth
@@ -80,7 +84,7 @@ jobs:
   e2e:
     name: E2E
     needs: test
-    runs-on: [self-hosted, linux, x64, memes-bot]
+    runs-on: [self-hosted, linux, arm64, memes-bot]
     steps:
       - uses: actions/checkout@v5
       - name: Docker registry auth
@@ -99,7 +103,7 @@ jobs:
     name: Semantic release
     needs: [test, e2e]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: [self-hosted, linux, x64, memes-bot]
+    runs-on: [self-hosted, linux, arm64, memes-bot]
     outputs:
       released: ${{ steps.semrel.outputs.released }}
       version: ${{ steps.semrel.outputs.version }}
@@ -125,7 +129,7 @@ jobs:
     # Обычный путь: после релиза. Аварийный: ручной запуск workflow.
     if: |
       always() && (needs.release.outputs.released == 'true' || github.event_name == 'workflow_dispatch')
-    runs-on: [self-hosted, linux, x64, memes-bot]
+    runs-on: [self-hosted, linux, arm64, memes-bot]
     steps:
       - uses: actions/checkout@v5
         with:
