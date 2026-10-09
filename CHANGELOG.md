@@ -1,3 +1,10 @@
+## [0.41.2](https://github.com/semirov/tg-bot/compare/v0.41.1...v0.41.2) (2026-10-09)
+
+
+### Bug Fixes
+
+* **conversations:** render menus explicitly so user cards survive the captcha flow (TGB-107) ([d023182](https://github.com/semirov/tg-bot/commit/d023182a8317faa3384aed61b6156188248a5280))
+
 ## [0.41.1](https://github.com/semirov/tg-bot/compare/v0.41.0...v0.41.1) (2026-10-09)
 
 
