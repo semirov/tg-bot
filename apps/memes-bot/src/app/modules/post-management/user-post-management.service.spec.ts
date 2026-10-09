@@ -173,6 +173,17 @@ function createHarness() {
   };
 }
 
+/**
+ * Harness с построенными меню модерации/дубликатов (как после onModuleInit).
+ * Нужен тестам, которые отправляют карточку с `reply_markup` — меню должны
+ * существовать, чтобы их можно было отрендерить в inline-клавиатуру.
+ */
+function createHarnessWithMenus() {
+  const h = createHarness();
+  (h.service as any).buildModeratedPostMenu();
+  return h;
+}
+
 /** Перехватывает колбэки, переданные в Menu.text, чтобы дёргать их вручную. */
 function captureHandlers(build: () => void): any[][] {
   const spy = jest.spyOn(Menu.prototype as any, 'text');
@@ -517,7 +528,7 @@ describe('UserPostManagementService', () => {
 
   describe('handleUserMemeRequest', () => {
     it('при достижении суточного лимита сохраняет заявку и показывает меню снятия', async () => {
-      const h = createHarness();
+      const h = createHarnessWithMenus();
       h.userRequestService.countUserMemeRequestsLast24h.mockResolvedValue(5);
       const ctx = makeCtx();
       ctx.message.photo = PHOTO;
@@ -537,8 +548,57 @@ describe('UserPostManagementService', () => {
       expect(ctx.api.editMessageReplyMarkup).toHaveBeenCalled();
     });
 
+    it('(TGB-107) карточка уходит с отрендеренной клавиатурой, а не с Menu-инстансом', async () => {
+      const h = createHarnessWithMenus();
+      const ctx = makeCtx();
+      ctx.message.photo = PHOTO;
+
+      await h.service.handleUserMemeRequest(ctx);
+
+      const payload = ctx.api.copyMessage.mock.calls[0][3];
+      // Payload должен быть plain inline-клавиатурой: контекст внутри
+      // @grammyjs/conversations не имеет menu-трансформера, поэтому сырой Menu
+      // здесь упал бы с `Cannot send menu 'MODERATION'`.
+      expect(payload.reply_markup).not.toBeInstanceOf(Menu);
+      expect(payload.reply_markup).toEqual({ inline_keyboard: expect.any(Array) });
+      expect(payload.reply_markup.inline_keyboard[0][0].callback_data).toContain(
+        PostModerationMenusEnum.MODERATION
+      );
+    });
+
+    it('(TGB-107) photo-дубликат уходит с отрендеренным меню дубликатов', async () => {
+      const h = createHarnessWithMenus();
+      h.deduplicationService.getPostImageHash.mockResolvedValue('hash');
+      h.deduplicationService.checkDuplicateSameLength.mockResolvedValue([
+        { distance: 0.9, memePostId: 111 },
+      ]);
+      const ctx = makeCtx();
+      ctx.message.photo = PHOTO;
+
+      await h.service.handleUserMemeRequest(ctx);
+
+      const payload = ctx.api.copyMessage.mock.calls[0][3];
+      expect(payload.reply_markup).not.toBeInstanceOf(Menu);
+      expect(payload.reply_markup.inline_keyboard[0][0].callback_data).toContain(
+        'duplicate-check-menu'
+      );
+    });
+
+    it('(TGB-107) меню снятия лимита уходит отрендеренным, а не как Menu', async () => {
+      const h = createHarnessWithMenus();
+      h.userRequestService.countUserMemeRequestsLast24h.mockResolvedValue(5);
+      const ctx = makeCtx();
+      ctx.message.photo = PHOTO;
+
+      await h.service.handleUserMemeRequest(ctx);
+
+      const [, , payload] = ctx.api.editMessageReplyMarkup.mock.calls[0];
+      expect(payload.reply_markup).not.toBeInstanceOf(Menu);
+      expect(payload.reply_markup.inline_keyboard[0][0].callback_data).toContain('limit-menu');
+    });
+
     it('лимит отключён — логирует и продолжает обработку', async () => {
-      const h = createHarness();
+      const h = createHarnessWithMenus();
       h.userRepo.findOne.mockResolvedValue({
         id: 42,
         username: 'ivan',
@@ -558,7 +618,7 @@ describe('UserPostManagementService', () => {
     });
 
     it('видео без фото пропускает проверку дубликатов', async () => {
-      const h = createHarness();
+      const h = createHarnessWithMenus();
       const ctx = makeCtx();
 
       await h.service.handleUserMemeRequest(ctx);
@@ -570,7 +630,7 @@ describe('UserPostManagementService', () => {
     });
 
     it('видео без username, но с флагами бота и премиума', async () => {
-      const h = createHarness();
+      const h = createHarnessWithMenus();
       h.userRepo.findOne.mockResolvedValue({
         id: 42,
         username: undefined,
@@ -602,7 +662,7 @@ describe('UserPostManagementService', () => {
       [{ isPublished: false, isApproved: false }, 'был отклонен'],
       [{ isPublished: false, isApproved: null }, 'находится на модерации'],
     ])('дубликат по fileUniqueId (%j) отклоняется автоматически', async (flags, expected) => {
-      const h = createHarness();
+      const h = createHarnessWithMenus();
       h.userRequestRepo.findOne.mockResolvedValueOnce({ id: 9, ...flags });
       const ctx = makeCtx();
       ctx.message.photo = PHOTO;
@@ -620,7 +680,7 @@ describe('UserPostManagementService', () => {
     });
 
     it('photo-дубликат помечается и пересылается для сравнения', async () => {
-      const h = createHarness();
+      const h = createHarnessWithMenus();
       h.deduplicationService.getPostImageHash.mockResolvedValue('hash');
       h.deduplicationService.checkDuplicateSameLength.mockResolvedValue([
         { distance: 0.9, memePostId: 111 },
@@ -645,7 +705,7 @@ describe('UserPostManagementService', () => {
     });
 
     it('photo-дубликат перебирает совпадения и выбирает лучшее по возрастанию', async () => {
-      const h = createHarness();
+      const h = createHarnessWithMenus();
       h.deduplicationService.getPostImageHash.mockResolvedValue('hash');
       h.deduplicationService.checkDuplicateSameLength.mockResolvedValue([
         { distance: 0.5, memePostId: 111 },
@@ -665,7 +725,7 @@ describe('UserPostManagementService', () => {
     });
 
     it('photo при похожести 0.6 — не дубликат (порог 0.85)', async () => {
-      const h = createHarness();
+      const h = createHarnessWithMenus();
       h.deduplicationService.getPostImageHash.mockResolvedValue('hash');
       h.deduplicationService.checkDuplicateSameLength.mockResolvedValue([
         { distance: 0.6, memePostId: 111 },
@@ -684,7 +744,7 @@ describe('UserPostManagementService', () => {
     });
 
     it('ошибка пересылки дубликата ловится', async () => {
-      const h = createHarness();
+      const h = createHarnessWithMenus();
       h.deduplicationService.getPostImageHash.mockResolvedValue('hash');
       h.deduplicationService.checkDuplicateSameLength.mockResolvedValue([
         { distance: 0.9, memePostId: 111 },
@@ -700,7 +760,7 @@ describe('UserPostManagementService', () => {
     });
 
     it('запланированный дубликат помечается и отправляется с превью', async () => {
-      const h = createHarness();
+      const h = createHarnessWithMenus();
       h.deduplicationService.getPostImageHash.mockResolvedValue('hash');
       h.deduplicationService.checkDuplicateSameLength.mockResolvedValue([]);
       h.deduplicationService.calculateHashDistance.mockReturnValue(0.9);
@@ -729,7 +789,7 @@ describe('UserPostManagementService', () => {
     });
 
     it('ошибка получения запланированного превью ловится', async () => {
-      const h = createHarness();
+      const h = createHarnessWithMenus();
       h.deduplicationService.getPostImageHash.mockResolvedValue('hash');
       h.deduplicationService.checkDuplicateSameLength.mockResolvedValue([]);
       h.deduplicationService.calculateHashDistance.mockReturnValue(0.9);
@@ -746,7 +806,7 @@ describe('UserPostManagementService', () => {
     });
 
     it('ошибка отправки информации о запланированном дубликате логируется', async () => {
-      const h = createHarness();
+      const h = createHarnessWithMenus();
       h.deduplicationService.getPostImageHash.mockResolvedValue('hash');
       h.deduplicationService.checkDuplicateSameLength.mockResolvedValue([]);
       h.deduplicationService.calculateHashDistance.mockReturnValue(0.9);
@@ -767,7 +827,7 @@ describe('UserPostManagementService', () => {
     });
 
     it('ошибка в try-блоке приводит к catch, но обработка продолжается', async () => {
-      const h = createHarness();
+      const h = createHarnessWithMenus();
       const ctx = makeCtx();
       ctx.react.mockRejectedValueOnce(new Error('no react'));
 
@@ -785,7 +845,7 @@ describe('UserPostManagementService', () => {
     }
 
     it('сообщает, если заявка не найдена', async () => {
-      const h = createHarness();
+      const h = createHarnessWithMenus();
       h.userRequestRepo.findOne.mockResolvedValue(null);
       const ctx = makeCtx();
 
@@ -795,7 +855,7 @@ describe('UserPostManagementService', () => {
     });
 
     it('проверяет права модератора', async () => {
-      const h = createHarness();
+      const h = createHarnessWithMenus();
       h.userRequestRepo.findOne.mockResolvedValue({ id: 1, user: { id: 42 } });
       h.userService.checkPermission.mockReturnValue(false);
       const ctx = makeCtx();
@@ -806,7 +866,7 @@ describe('UserPostManagementService', () => {
     });
 
     it('сообщает, если пользователь заявки не найден', async () => {
-      const h = createHarness();
+      const h = createHarnessWithMenus();
       h.userRequestRepo.findOne.mockResolvedValue({ id: 1, user: null });
       const ctx = makeCtx();
 
@@ -816,7 +876,7 @@ describe('UserPostManagementService', () => {
     });
 
     it('снимает лимит без фото и показывает обычное меню', async () => {
-      const h = createHarness();
+      const h = createHarnessWithMenus();
       h.userRequestRepo.findOne.mockResolvedValue({
         id: 1,
         user: { id: 42 },
@@ -838,13 +898,17 @@ describe('UserPostManagementService', () => {
         { reply_to_message_id: 5 }
       );
       expect(ctx.editMessageReplyMarkup).toHaveBeenCalledWith({
-        reply_markup: (h.service as any).moderatedPostMenu,
+        reply_markup: { inline_keyboard: expect.any(Array) },
       });
+      const rendered = ctx.editMessageReplyMarkup.mock.calls[0][0].reply_markup;
+      expect(rendered.inline_keyboard[0][0].callback_data).toContain(
+        PostModerationMenusEnum.MODERATION
+      );
       expect(ctx.answerCallbackQuery).toHaveBeenCalledWith('Лимит снят на 24 часа');
     });
 
     it('при найденном опубликованном дубликате показывает меню дубликатов', async () => {
-      const h = createHarness();
+      const h = createHarnessWithMenus();
       h.userRequestRepo.findOne.mockResolvedValue({
         id: 1,
         user: { id: 42, originalMessageId: 5 },
@@ -861,12 +925,14 @@ describe('UserPostManagementService', () => {
         { possibleDuplicate: true }
       );
       expect(ctx.editMessageReplyMarkup).toHaveBeenCalledWith({
-        reply_markup: (h.service as any).duplicateMenu,
+        reply_markup: { inline_keyboard: expect.any(Array) },
       });
+      const rendered = ctx.editMessageReplyMarkup.mock.calls[0][0].reply_markup;
+      expect(rendered.inline_keyboard[0][0].callback_data).toContain('duplicate-check-menu');
     });
 
     it('находит дубликат среди запланированных постов', async () => {
-      const h = createHarness();
+      const h = createHarnessWithMenus();
       h.userRequestRepo.findOne.mockResolvedValue({
         id: 1,
         user: { id: 42, originalMessageId: 5 },
@@ -889,7 +955,7 @@ describe('UserPostManagementService', () => {
     });
 
     it('ловит ошибку и сообщает о ней', async () => {
-      const h = createHarness();
+      const h = createHarnessWithMenus();
       h.userRequestRepo.findOne.mockRejectedValueOnce(new Error('db'));
       const ctx = makeCtx();
 
@@ -907,7 +973,7 @@ describe('UserPostManagementService', () => {
     }
 
     it('подтверждённый дубликат запланированного поста уведомляет пользователя', async () => {
-      const h = createHarness();
+      const h = createHarnessWithMenus();
       h.userRequestRepo.findOne.mockResolvedValue({
         id: 1,
         user: { id: 42 },
@@ -935,7 +1001,7 @@ describe('UserPostManagementService', () => {
     });
 
     it('невалидная дата запланированного поста даёт стандартное сообщение', async () => {
-      const h = createHarness();
+      const h = createHarnessWithMenus();
       h.userRequestRepo.findOne.mockResolvedValue({
         id: 1,
         user: { id: 42 },
@@ -954,7 +1020,7 @@ describe('UserPostManagementService', () => {
     });
 
     it('отсутствующий запланированный пост тоже даёт стандартное сообщение', async () => {
-      const h = createHarness();
+      const h = createHarnessWithMenus();
       h.userRequestRepo.findOne.mockResolvedValue({
         id: 1,
         user: { id: 42 },
@@ -973,7 +1039,7 @@ describe('UserPostManagementService', () => {
     });
 
     it('обычный дубликат: ищет оригинал и пересылает его пользователю', async () => {
-      const h = createHarness();
+      const h = createHarnessWithMenus();
       h.userRequestRepo.findOne.mockResolvedValue({
         id: 1,
         user: { id: 42 },
@@ -998,7 +1064,7 @@ describe('UserPostManagementService', () => {
     });
 
     it('лучшее совпадение 0.6 — не дубликат, оригинал не пересылается', async () => {
-      const h = createHarness();
+      const h = createHarnessWithMenus();
       h.userRequestRepo.findOne.mockResolvedValue({
         id: 1,
         user: { id: 42 },
@@ -1018,7 +1084,7 @@ describe('UserPostManagementService', () => {
     });
 
     it('перебор дубликатов оставляет первый при убывании расстояний', async () => {
-      const h = createHarness();
+      const h = createHarnessWithMenus();
       h.userRequestRepo.findOne.mockResolvedValue({
         id: 1,
         user: { id: 42 },
@@ -1038,7 +1104,7 @@ describe('UserPostManagementService', () => {
     });
 
     it('без хеша и без дубликатов просто обновляет статус', async () => {
-      const h = createHarness();
+      const h = createHarnessWithMenus();
       h.userRequestRepo.findOne.mockResolvedValue({
         id: 1,
         user: { id: 42 },
@@ -1055,7 +1121,7 @@ describe('UserPostManagementService', () => {
     });
 
     it('ошибка пересылки оригинала логируется', async () => {
-      const h = createHarness();
+      const h = createHarnessWithMenus();
       h.userRequestRepo.findOne.mockResolvedValue({
         id: 1,
         user: { id: 42 },
@@ -1073,7 +1139,7 @@ describe('UserPostManagementService', () => {
     });
 
     it('без прав модератора подтверждение игнорируется', async () => {
-      const h = createHarness();
+      const h = createHarnessWithMenus();
       h.userService.checkPermission.mockReturnValue(false);
       const ctx = makeCtx();
 
@@ -1084,7 +1150,7 @@ describe('UserPostManagementService', () => {
     });
 
     it('«Не дубликат» сбрасывает флаги и меняет меню', async () => {
-      const h = createHarness();
+      const h = createHarnessWithMenus();
       h.userRequestRepo.findOne.mockResolvedValue({ id: 1, user: { id: 42 } });
       const ctx = makeCtx();
 
@@ -1099,12 +1165,12 @@ describe('UserPostManagementService', () => {
         }
       );
       expect(ctx.editMessageReplyMarkup).toHaveBeenCalledWith({
-        reply_markup: (h.service as any).moderatedPostMenu,
+        reply_markup: { inline_keyboard: expect.any(Array) },
       });
     });
 
     it('если меню не обновилось — пересоздаёт сообщение', async () => {
-      const h = createHarness();
+      const h = createHarnessWithMenus();
       h.userRequestRepo.findOne.mockResolvedValue({ id: 1, user: { id: 42 } });
       const ctx = makeCtx();
       ctx.editMessageReplyMarkup.mockRejectedValueOnce(new Error('too old'));
@@ -1113,12 +1179,12 @@ describe('UserPostManagementService', () => {
 
       expect(ctx.api.deleteMessage).toHaveBeenCalledWith(REQUEST_CHANNEL, 100);
       expect(ctx.api.copyMessage).toHaveBeenCalledWith(REQUEST_CHANNEL, REQUEST_CHANNEL, 100, {
-        reply_markup: (h.service as any).moderatedPostMenu,
+        reply_markup: { inline_keyboard: expect.any(Array) },
       });
     });
 
     it('если и пересоздание упало — логирует вторую ошибку', async () => {
-      const h = createHarness();
+      const h = createHarnessWithMenus();
       h.userRequestRepo.findOne.mockResolvedValue({ id: 1, user: { id: 42 } });
       const ctx = makeCtx();
       ctx.editMessageReplyMarkup.mockRejectedValueOnce(new Error('too old'));
@@ -1130,7 +1196,7 @@ describe('UserPostManagementService', () => {
     });
 
     it('«Не дубликат» без прав модератора ничего не делает', async () => {
-      const h = createHarness();
+      const h = createHarnessWithMenus();
       h.userService.checkPermission.mockReturnValue(false);
       const ctx = makeCtx();
 

@@ -161,7 +161,7 @@ describe('ObservatoryService', () => {
       ).toBe(true);
     });
 
-    it('ставит меню до обработчика парсера (иначе copyMessage с меню падает)', () => {
+    it('регистрирует меню через bot.use до обработчика парсера', () => {
       const { service, bot } = setup();
       service.onModuleInit();
 
@@ -811,6 +811,9 @@ describe('ObservatoryService', () => {
 
     it('снятие: подтверждение, отмена и возврат в меню', async () => {
       const { service, bot, userService, postSchedulerService } = setup();
+      // The shared `beforeEach` stubs `Menu.prototype.text` to capture handlers;
+      // here real buttons are needed so the post menu can be rendered (TGB-107).
+      jest.restoreAllMocks();
       service.onModuleInit();
       userService.checkPermission.mockReturnValue(true);
       const ctx = { ...makeCtx(), answerCallbackQuery: jest.fn() } as any;
@@ -821,6 +824,13 @@ describe('ObservatoryService', () => {
       await find('obsched:unschok').call(null, { ...ctx, match: ['obsched:unschok:11', '11'] });
       expect(postSchedulerService.removeByRequestMessageId).toHaveBeenCalledWith(11);
       expect(bot.api.editMessageReplyMarkup).toHaveBeenCalled();
+      // TGB-107: `bot.api` has no menu transformer, so the post menu must be
+      // rendered to a plain inline keyboard instead of being passed as a Menu.
+      const restored = bot.api.editMessageReplyMarkup.mock.calls[0][2].reply_markup;
+      expect(restored).not.toBeInstanceOf(Menu);
+      expect(restored.inline_keyboard[1][0].callback_data).toContain(
+        ObservatoryPostMenusEnum.POST_MENU
+      );
 
       postSchedulerService.findByRequestMessageId.mockResolvedValue({
         publishDate: new Date(),

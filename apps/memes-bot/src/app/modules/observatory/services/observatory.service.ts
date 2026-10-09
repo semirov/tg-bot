@@ -23,6 +23,7 @@ import { MattermostService } from '../../mattermost/mattermost.service';
 import { metrics } from '../../../shared/metrics';
 import { ParserSettingsService } from '../../parser/services/parser-settings.service';
 import { buildTelegramFileUrl, extractTelegramFileId } from '../../../shared/publication/media-url';
+import { renderMenu } from '../../../shared/grammy/render-menu';
 import { buildPostUrl, TelegramPostSource } from '../../../shared/publication/telegram-link';
 import { sendPostToMattermost } from '../../../shared/publication/mattermost-post';
 import { hasSimilarDistance } from '../../post-management/services/duplicate-policy';
@@ -65,11 +66,9 @@ export class ObservatoryService implements OnModuleInit {
 
   public onModuleInit(): void {
     this.waitDeleteObserverPost();
-    // Меню ставится через `bot.use` до обработчика парсера: обработчик отдаёт
-    // пост в предложку с `reply_markup: observatoryPostMenu`, а grammY умеет
-    // подменять меню на инлайн-клавиатуру только если middleware меню уже
-    // прошёл раньше в цепочке апдейта. Иначе `copyMessage` падает с
-    // «Did you forget to use bot.use() for it?».
+    // `bot.use` регистрирует меню (навигация по клику). Исходящие карточки
+    // рендерят меню явно через `renderMenu`, поэтому порядок регистрации
+    // относительно обработчика парсера больше не критичен.
     this.buildObservatoryPostMenu();
     this.registerScheduleCallbacks();
     this.onParserPost();
@@ -134,7 +133,7 @@ export class ObservatoryService implements OnModuleInit {
         disable_notification: true,
         caption,
         ...(caption ? { parse_mode: 'HTML' as const } : {}),
-        reply_markup: this.observatoryPostMenu,
+        reply_markup: await renderMenu(this.observatoryPostMenu, ctx),
       }
     );
 
@@ -503,7 +502,7 @@ export class ObservatoryService implements OnModuleInit {
           .catch(() => undefined);
       }
       await this.bot.api.editMessageReplyMarkup(channel, id, {
-        reply_markup: this.observatoryPostMenu,
+        reply_markup: await renderMenu(this.observatoryPostMenu, ctx),
       });
       await ctx.answerCallbackQuery(removed ? 'Снято с публикации' : 'Уже снято');
     });

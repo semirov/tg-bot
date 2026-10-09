@@ -22,6 +22,7 @@ import { PostModerationMenusEnum } from './constants/post-moderation-menus.enum'
 import { PublicationModesEnum } from './constants/publication-modes.enum';
 import { resolveAdminReply } from './utils/admin-reply';
 import { buildTelegramFileUrl, extractTelegramFileId } from '../../shared/publication/media-url';
+import { renderMenu } from '../../shared/grammy/render-menu';
 import { sendPostToMattermost } from '../../shared/publication/mattermost-post';
 import { runPublicationMode } from '../../shared/publication/publication-mode';
 import {
@@ -323,7 +324,7 @@ export class UserPostManagementService implements OnModuleInit {
 
           // Показываем соответствующее меню
           const menuToUse = hasDuplicate ? this.duplicateMenu : this.moderatedPostMenu;
-          await ctx.editMessageReplyMarkup({ reply_markup: menuToUse });
+          await ctx.editMessageReplyMarkup({ reply_markup: await renderMenu(menuToUse, ctx) });
 
           // Отправляем пользователю уведомление с его постом
           await this.bot.api.forwardMessage(
@@ -419,10 +420,11 @@ export class UserPostManagementService implements OnModuleInit {
         );
 
         // Показываем меню с кнопкой снятия лимита
+        const limitMenu = this.buildLimitMenu();
         await ctx.api.editMessageReplyMarkup(
           this.baseConfigService.userRequestMemeChannel,
           channelMessage.message_id,
-          { reply_markup: this.buildLimitMenu() }
+          { reply_markup: await renderMenu(limitMenu, ctx) }
         );
         return;
       }
@@ -638,7 +640,7 @@ export class UserPostManagementService implements OnModuleInit {
       this.baseConfigService.userRequestMemeChannel,
       ctx.message.chat.id,
       ctx.message.message_id,
-      { reply_markup: menuToUse, disable_notification: true }
+      { reply_markup: await renderMenu(menuToUse, ctx), disable_notification: true }
     );
 
     await this.bot.api.pinChatMessage(
@@ -782,7 +784,7 @@ export class UserPostManagementService implements OnModuleInit {
           // Заменяем меню на стандартное меню модерации
           try {
             await ctx.editMessageReplyMarkup({
-              reply_markup: this.moderatedPostMenu,
+              reply_markup: await renderMenu(this.moderatedPostMenu, ctx),
             });
           } catch (error) {
             Logger.error(
@@ -799,7 +801,7 @@ export class UserPostManagementService implements OnModuleInit {
                 originalMessage.chat.id,
                 originalMessage.message_id,
                 {
-                  reply_markup: this.moderatedPostMenu,
+                  reply_markup: await renderMenu(this.moderatedPostMenu, ctx),
                 }
               );
             } catch (secondError) {
@@ -1451,7 +1453,7 @@ export class UserPostManagementService implements OnModuleInit {
           .catch(() => undefined);
       }
       await this.bot.api.editMessageReplyMarkup(channel, id, {
-        reply_markup: this.moderatedPostMenu,
+        reply_markup: await renderMenu(this.moderatedPostMenu, ctx),
       });
       await ctx.answerCallbackQuery(removed ? 'Снято с публикации' : 'Уже снято');
     });
