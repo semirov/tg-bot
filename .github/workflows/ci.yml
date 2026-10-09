@@ -57,6 +57,10 @@ jobs:
     runs-on: [self-hosted, linux, x64, memes-bot]
     steps:
       - uses: actions/checkout@v5
+      - name: Docker registry auth
+        run: |
+          source tools/ci/docker-config.sh
+          echo "DOCKER_CONFIG=$DOCKER_CONFIG" >> "$GITHUB_ENV"
       - name: Ensure dependency base image
         run: bash tools/ci/build-base.sh 20
       - name: Build test image
@@ -79,6 +83,10 @@ jobs:
     runs-on: [self-hosted, linux, x64, memes-bot]
     steps:
       - uses: actions/checkout@v5
+      - name: Docker registry auth
+        run: |
+          source tools/ci/docker-config.sh
+          echo "DOCKER_CONFIG=$DOCKER_CONFIG" >> "$GITHUB_ENV"
       - name: Ensure dependency base image
         run: bash tools/ci/build-base.sh 20
       - name: Run e2e (Postgres + приложение)
