@@ -121,7 +121,6 @@ function createHarness() {
   };
   const clientBaseService: any = { bestMemesDaily$: { subscribe: jest.fn() } };
   const mattermostService: any = { sendPostWithFile: jest.fn().mockResolvedValue(undefined) };
-  const trollService: any = { maybeRepostMeme: jest.fn().mockResolvedValue(undefined) };
   const baseConfigService: any = {
     userRequestMemeChannel: REQUEST_CHANNEL,
     memeChanelId: MEME_CHANNEL,
@@ -155,8 +154,7 @@ function createHarness() {
     cringeManagementService,
     deduplicationService,
     clientBaseService,
-    mattermostService,
-    trollService
+    mattermostService
   );
   return {
     service,
@@ -172,7 +170,6 @@ function createHarness() {
     deduplicationService,
     clientBaseService,
     mattermostService,
-    trollService,
   };
 }
 
@@ -308,6 +305,31 @@ describe('UserPostManagementService', () => {
 
       await find('upsched:unsch')({ ...ctx, match: ['upsched:unsch:11', '11'] });
       expect(ctx.answerCallbackQuery).toHaveBeenCalledWith('Снять с публикации?');
+    });
+
+    it('снятие: без прав — отказ; нет расписания и нет match', async () => {
+      const h = initHarness();
+      const ctx = makeCtx();
+      const find = (needle: string) =>
+        h.bot.callbackQuery.mock.calls.find((c: any[]) => String(c[0]).includes(needle))[1];
+
+      h.userService.checkPermission.mockReturnValue(false);
+      await find('upsched:unsch:')({ ...ctx, match: ['upsched:unsch:11', '11'] });
+      expect(ctx.answerCallbackQuery).toHaveBeenCalledWith('Нет прав');
+      await find('upsched:unschcancel:')({ ...ctx, match: ['upsched:unschcancel:11', '11'] });
+      await find('upsched:unschok:')({ ...ctx, match: ['upsched:unschok:11', '11'] });
+
+      h.userService.checkPermission.mockReturnValue(true);
+      h.postSchedulerService.findByRequestMessageId.mockResolvedValue(null);
+      await find('upsched:unschcancel:')({ ...ctx, match: ['upsched:unschcancel:11', '11'] });
+
+      h.postSchedulerService.removeByRequestMessageId.mockResolvedValue(0);
+      await find('upsched:unschok:')({ ...ctx, match: ['upsched:unschok:11', '11'] });
+      expect(ctx.answerCallbackQuery).toHaveBeenCalledWith('Уже снято');
+
+      await find('upsched:unsch:')({ ...ctx, match: undefined });
+      await find('upsched:unschcancel:')({ ...ctx, match: undefined });
+      await find('upsched:unschok:')({ ...ctx, match: undefined });
     });
   });
 
@@ -1643,7 +1665,6 @@ describe('UserPostManagementService', () => {
         { parse_mode: 'HTML' }
       );
       expect(h.deduplicationService.createPublishedPostHash).toHaveBeenCalledWith('hash', 3);
-      expect(h.trollService.maybeRepostMeme).toHaveBeenCalledWith(MEME_CHANNEL, 3);
     });
 
     it('publishNightCringeScheduled вставляет запись и делегирует в расписание', async () => {

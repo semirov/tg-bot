@@ -132,7 +132,7 @@ export class BaseConfigService {
 
   /**
    * Ключ DeepSeek. Секретов в репозитории быть не должно, поэтому ключа-дефолта
-   * здесь нет: без переменной окружения LLM-функции тролля просто не работают
+   * здесь нет: без переменной окружения LLM-функции просто не работают
    * (см. DeepSeekService — он честно скажет об этом в лог).
    */
   get deepseekApiKey(): string {
@@ -169,14 +169,6 @@ export class BaseConfigService {
   }
 
   /**
-   * Старшая модель для аудита и живых проверок промптов (LLM-as-judge).
-   * Не используется в рантайме бота — только в оффлайн-прогонах промптов.
-   */
-  get deepseekJudgeModel(): string {
-    return this.configService.get<string>('DEEPSEEK_JUDGE_MODEL') || 'deepseek-v4-pro';
-  }
-
-  /**
    * Опциональные переопределения тарифа DeepSeek, $ за 1M токенов.
    * Нужны, чтобы обновить расценки без правки кода. Если заданы не все три —
    * используется таблица из constants/deepseek-pricing.ts.
@@ -193,88 +185,20 @@ export class BaseConfigService {
     return this.getOptionalNumber('DEEPSEEK_PRICE_OUTPUT');
   }
 
-  /** Вероятность язвительного подкола в ответ на обычное сообщение (0..1). */
-  get trollSarcasmChance(): number {
-    return this.getNumber('TROLL_SARCASM_CHANCE', 0.05);
-  }
-
-  /** Минимальная пауза между случайными подколами в одном чате, сек. */
-  get trollSarcasmCooldown(): number {
-    return this.getNumber('TROLL_SARCASM_COOLDOWN', 300);
-  }
-
-  /** Вероятность кривляния (переделывания слова) в ответ на сообщение (0..1). */
-  get trollMirrorChance(): number {
-    return this.getNumber('TROLL_MIRROR_CHANCE', 0.05);
-  }
-
-  /** Минимальная пауза между кривляниями в одном чате, сек. */
-  get trollMirrorCooldown(): number {
-    return this.getNumber('TROLL_MIRROR_COOLDOWN', 300);
-  }
-
-  /** Вероятность реакции-эмодзи (🤡/💩) на сообщение (0..1). */
-  get trollReactionChance(): number {
-    return this.getNumber('TROLL_REACTION_CHANCE', 0.05);
-  }
-
-  /** Минимальная пауза между реакциями в одном чате, сек. */
-  get trollReactionCooldown(): number {
-    return this.getNumber('TROLL_REACTION_COOLDOWN', 60);
-  }
-
-  /** Вероятность сообщения в чат при публикации мема в канал (0..1). */
-  get trollMemeAnnounceChance(): number {
-    return this.getNumber('TROLL_MEME_ANNOUNCE_CHANCE', 0.1);
-  }
-
-  /** Порог вероятности, при котором бот описывает статью УК РФ (0..1). */
-  get trollCriminalThreshold(): number {
-    return this.getNumber('TROLL_CRIMINAL_THRESHOLD', 0.5);
-  }
-
-  /** Порог «почти наверняка» для статьи УК РФ (0..1). */
-  get trollCriminalHighThreshold(): number {
-    return this.getNumber('TROLL_CRIMINAL_HIGH_THRESHOLD', 0.8);
-  }
-
-  /** Минимальная пауза между проверками по УК РФ в одном чате, сек. */
-  get trollAnalyzeCooldown(): number {
-    return this.getNumber('TROLL_ANALYZE_COOLDOWN', 15);
-  }
-
-  /** Окно накопления обращений к боту перед общим ответом, сек (дебаунс). */
-  get trollJerkBatchWindow(): number {
-    return this.getNumber('TROLL_JERK_BATCH_WINDOW', 15);
-  }
-
-  /** Пауза между ответами на клички/мат в одном чате, сек. */
-  get trollJerkCooldown(): number {
-    return this.getNumber('TROLL_JERK_COOLDOWN', 180);
-  }
-
   /**
-   * Пауза без сообщений, после которой беседа считается новой, мин.
-   * Нужна, чтобы бот не продолжал нить, которую все уже забыли.
+   * Главная модель текстовых ответов: `true` — `deepseek-v4-pro`,
+   * `false` — `DEEPSEEK_MODEL` (по умолчанию `deepseek-flash`).
+   * На разбор картинок не влияет: vision всегда идёт на `deepseekVisionModel`.
    */
-  get trollDialogPauseMin(): number {
-    return this.getNumber('TROLL_DIALOG_PAUSE_MIN', 15);
+  get deepseekUseProModel(): boolean {
+    const raw = this.configService.get<string>('DEEPSEEK_USE_PRO_MODEL');
+    if (raw === undefined || raw === null || `${raw}`.trim() === '') return true;
+    return `${raw}`.toLowerCase() !== 'false';
   }
 
-  /** Минимальная пауза между проверками по УК РФ в одном чате, сек. */
-  /** Глобальный лимит запросов к DeepSeek в сутки. */
-  get trollDailyRequestLimit(): number {
-    return this.getNumber('TROLL_DAILY_REQUEST_LIMIT', 4000);
-  }
-
-  /** Максимальная длина пользовательского текста для модели. */
-  get trollMaxInputChars(): number {
-    return this.getNumber('TROLL_MAX_INPUT_CHARS', 1000);
-  }
-
-  /** Порог самопроверки ответа: ниже него ответ переписывается. */
-  get trollSelfCheckThreshold(): number {
-    return this.getNumber('TROLL_SELF_CHECK_THRESHOLD', 0.6);
+  /** Глобальный лимит запросов к DeepSeek в сутки (0 = безлимит). */
+  get deepseekDailyRequestLimit(): number {
+    return this.getNumber('DEEPSEEK_DAILY_REQUEST_LIMIT', 2000);
   }
 
   private getNumber(key: string, fallback: number): number {

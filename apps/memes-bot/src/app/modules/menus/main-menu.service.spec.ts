@@ -1,6 +1,6 @@
 import { Menu, MenuRange } from '@grammyjs/menu';
 
-// axios — ESM и не парсится jest; AdminMenuService тянет DeepSeekService транзитивно.
+// axios — ESM и не парсится jest; мокаем для транзитивных зависимостей меню.
 jest.mock('axios', () => ({
   __esModule: true,
   default: { create: jest.fn(() => ({ post: jest.fn() })) },

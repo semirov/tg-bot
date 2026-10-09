@@ -18,11 +18,11 @@ jest.mock('axios', () => {
 import axios from 'axios';
 import { DeepSeekService } from './deepseek.service';
 import {
-  TROLL_HARD_MAX_TOKENS,
-  TROLL_LLM_MAX_RETRIES,
-  TROLL_LLM_TIMEOUT_MS,
-  TROLL_MAX_CONCURRENT_REQUESTS,
-} from '../constants/troll-limits';
+  LLM_HARD_MAX_TOKENS,
+  LLM_MAX_RETRIES,
+  LLM_TIMEOUT_MS,
+  LLM_MAX_CONCURRENT_REQUESTS,
+} from '../constants/llm-limits';
 
 interface ConfigOverrides {
   deepseekApiKey?: string;
@@ -30,6 +30,8 @@ interface ConfigOverrides {
   deepseekModel?: string;
   deepseekVisionModel?: string;
   deepseekReasoningEffort?: string;
+  deepseekUseProModel?: boolean;
+  deepseekDailyRequestLimit?: number;
   deepseekPriceCacheHit?: number;
   deepseekPriceCacheMiss?: number;
   deepseekPriceOutput?: number;
@@ -42,6 +44,8 @@ function makeConfig(overrides: ConfigOverrides = {}): any {
     deepseekModel: 'deepseek-flash',
     deepseekVisionModel: 'deepseek-flash',
     deepseekReasoningEffort: 'none',
+    deepseekUseProModel: false,
+    deepseekDailyRequestLimit: 2000,
     deepseekPriceCacheHit: undefined,
     deepseekPriceCacheMiss: undefined,
     deepseekPriceOutput: undefined,
@@ -49,12 +53,8 @@ function makeConfig(overrides: ConfigOverrides = {}): any {
   };
 }
 
-function makeSettings(dailyRequestLimit = 2000): any {
-  return { current: { dailyRequestLimit } };
-}
-
-function makeService(config: any = makeConfig(), settings: any = makeSettings()): DeepSeekService {
-  return new DeepSeekService(config, settings);
+function makeService(config: any = makeConfig()): DeepSeekService {
+  return new DeepSeekService(config);
 }
 
 function axiosError(overrides: Record<string, unknown> = {}): any {
@@ -114,7 +114,7 @@ describe('DeepSeekService', () => {
         temperature: 0.5,
         maxTokens: 100,
         json: true,
-        label: 'диалог',
+        label: 'parser:channel',
         model: 'deepseek-v4-pro',
       });
 
@@ -144,18 +144,14 @@ describe('DeepSeekService', () => {
       });
     });
 
-    it('главная модель берётся из тумблера (pro/flash)', async () => {
+    it('главная модель берётся из флага pro/flash', async () => {
       mockPost.mockResolvedValue(reply('ok'));
-      const pro = makeService(makeConfig(), {
-        current: { dailyRequestLimit: 2000, useProModel: true },
-      });
+      const pro = makeService(makeConfig({ deepseekUseProModel: true }));
       await pro.complete(USER);
       expect(mockPost.mock.calls[0][1].model).toBe('deepseek-v4-pro');
 
       mockPost.mockClear();
-      const flash = makeService(makeConfig(), {
-        current: { dailyRequestLimit: 2000, useProModel: false },
-      });
+      const flash = makeService(makeConfig({ deepseekUseProModel: false }));
       await flash.complete(USER);
       expect(mockPost.mock.calls[0][1].model).toBe('deepseek-flash');
     });
@@ -164,11 +160,9 @@ describe('DeepSeekService', () => {
       mockPost.mockResolvedValue(
         reply('ok', { total_tokens: 100, prompt_tokens: 60, completion_tokens: 40 })
       );
-      const service = makeService(makeConfig(), {
-        current: { dailyRequestLimit: 2000, useProModel: false },
-      });
+      const service = makeService(makeConfig({ deepseekUseProModel: false }));
 
-      await service.complete(USER); // flash по тумблеру
+      await service.complete(USER); // flash по флагу
       await service.complete(USER, { model: 'deepseek-v4-pro' }); // pro явно
 
       const report = service.dailyReport;
@@ -201,9 +195,7 @@ describe('DeepSeekService', () => {
 
     it('describeImage идёт на vision-модель и передаёт картинку отдельной частью', async () => {
       mockPost.mockResolvedValue(reply('описание'));
-      const service = makeService(makeConfig(), {
-        current: { dailyRequestLimit: 2000, useProModel: true },
-      });
+      const service = makeService(makeConfig({ deepseekUseProModel: true }));
 
       const result = await service.describeImage('data:image/jpeg;base64,AAA', {
         prompt: 'разбери картинку',
@@ -223,9 +215,7 @@ describe('DeepSeekService', () => {
 
     it('describeImage: опции переопределяют детализацию, модель и бюджет', async () => {
       mockPost.mockResolvedValue(reply('ок'));
-      const service = makeService(makeConfig(), {
-        current: { dailyRequestLimit: 2000, useProModel: true },
-      });
+      const service = makeService(makeConfig({ deepseekUseProModel: true }));
 
       await service.describeImage('data:image/png;base64,BBB', {
         prompt: 'p',
@@ -258,9 +248,7 @@ describe('DeepSeekService', () => {
     it('dailyReport сортирует модели и добирает сравнение по токенам', async () => {
       // Нулевые токены → у обеих моделей стоимость 0, компаратор уходит в сравнение по токенам.
       mockPost.mockResolvedValue(reply('ok', { total_tokens: 0 }));
-      const service = makeService(makeConfig(), {
-        current: { dailyRequestLimit: 2000, useProModel: false },
-      });
+      const service = makeService(makeConfig({ deepseekUseProModel: false }));
 
       await service.complete(USER);
       await service.complete(USER, { model: 'deepseek-v4-pro' });
@@ -268,12 +256,25 @@ describe('DeepSeekService', () => {
       expect(service.dailyReport.models).toHaveLength(2);
     });
 
+    it('логирует предупреждение, если ответ обрезан по max_tokens', async () => {
+      mockPost.mockResolvedValue({
+        data: { choices: [{ message: { content: 'ok' }, finish_reason: 'length' }] },
+      });
+      const service = makeService();
+
+      await service.complete(USER, { maxTokens: 10 });
+
+      expect(Logger.prototype.warn).toHaveBeenCalledWith(
+        expect.stringContaining('обрезан по max_tokens')
+      );
+    });
+
     it('обрезает max_tokens жёстким потолком и снизу единицей', async () => {
       mockPost.mockResolvedValue(reply('ok'));
       const service = makeService();
 
       await service.complete(USER, { maxTokens: 5000 });
-      expect(mockPost.mock.calls[0][1].max_tokens).toBe(TROLL_HARD_MAX_TOKENS);
+      expect(mockPost.mock.calls[0][1].max_tokens).toBe(LLM_HARD_MAX_TOKENS);
 
       mockPost.mockClear();
       await service.complete(USER, { maxTokens: 0 });
@@ -300,7 +301,7 @@ describe('DeepSeekService', () => {
 
     it('при нулевом лимите пишет в лог бесконечность', async () => {
       mockPost.mockResolvedValue(reply('ok'));
-      const service = makeService(makeConfig(), makeSettings(0));
+      const service = makeService(makeConfig({ deepseekDailyRequestLimit: 0 }));
 
       await service.complete(USER);
 
@@ -319,7 +320,7 @@ describe('DeepSeekService', () => {
 
     it('не отправляет запрос при исчерпанном суточном лимите', async () => {
       mockPost.mockResolvedValue(reply('ok'));
-      const service = makeService(makeConfig(), makeSettings(1));
+      const service = makeService(makeConfig({ deepseekDailyRequestLimit: 1 }));
 
       expect(await service.complete(USER)).toBe('ok');
       expect(await service.complete(USER)).toBe('');
@@ -327,7 +328,7 @@ describe('DeepSeekService', () => {
     });
 
     it('логирует лимит не чаще раза в минуту', async () => {
-      const service = makeService(makeConfig(), makeSettings(5));
+      const service = makeService(makeConfig({ deepseekDailyRequestLimit: 5 }));
       (service as any).dailyRequests = 5;
 
       expect(await service.complete(USER)).toBe('');
@@ -343,14 +344,14 @@ describe('DeepSeekService', () => {
       );
       const service = makeService();
 
-      const inFlight = Array.from({ length: TROLL_MAX_CONCURRENT_REQUESTS }, () =>
+      const inFlight = Array.from({ length: LLM_MAX_CONCURRENT_REQUESTS }, () =>
         service.complete(USER)
       );
       const denied = await service.complete(USER);
 
       expect(denied).toBe('');
       resolvers.forEach((resolve) => resolve({ data: { choices: [{ message: { content: 'ok' } }] } }));
-      expect(await Promise.all(inFlight)).toEqual(Array(TROLL_MAX_CONCURRENT_REQUESTS).fill('ok'));
+      expect(await Promise.all(inFlight)).toEqual(Array(LLM_MAX_CONCURRENT_REQUESTS).fill('ok'));
     });
 
     it('повторяет запрос при 5xx и возвращает ответ со второй попытки', async () => {
@@ -360,7 +361,7 @@ describe('DeepSeekService', () => {
       const service = makeService();
 
       expect(await service.complete(USER)).toBe('после повтора');
-      expect(mockPost).toHaveBeenCalledTimes(TROLL_LLM_MAX_RETRIES + 1);
+      expect(mockPost).toHaveBeenCalledTimes(LLM_MAX_RETRIES + 1);
     });
 
     it('сдаётся после всех повторов', async () => {
@@ -368,7 +369,7 @@ describe('DeepSeekService', () => {
       const service = makeService();
 
       expect(await service.completeText('sys', 'user')).toBeNull();
-      expect(mockPost).toHaveBeenCalledTimes(TROLL_LLM_MAX_RETRIES + 1);
+      expect(mockPost).toHaveBeenCalledTimes(LLM_MAX_RETRIES + 1);
     });
 
     it('не повторяет запрос при 4xx', async () => {
@@ -527,6 +528,23 @@ describe('DeepSeekService', () => {
       expect(typeof service.usage.peak).toBe('boolean');
     });
 
+    it('считает попадание входных токенов в кэш', async () => {
+      mockPost.mockResolvedValue(
+        reply('ok', {
+          total_tokens: 100,
+          prompt_tokens: 100,
+          completion_tokens: 0,
+          prompt_cache_hit_tokens: 100,
+        })
+      );
+      const service = makeService();
+
+      await service.complete(USER);
+
+      expect(service.usage.tokens).toBe(100);
+      expect(service.usage.requests).toBe(1);
+    });
+
     it('без полного override берёт табличный тариф', async () => {
       mockPost.mockResolvedValue(reply('ok', { total_tokens: 1000, prompt_tokens: 1000 }));
       const overrideService = makeService(
@@ -616,7 +634,7 @@ describe('DeepSeekService', () => {
     });
 
     it('ожидает таймаут стандартной длительности', () => {
-      expect(TROLL_LLM_TIMEOUT_MS).toBeGreaterThan(0);
+      expect(LLM_TIMEOUT_MS).toBeGreaterThan(0);
       expect(typeof axios.isAxiosError).toBe('function');
     });
   });

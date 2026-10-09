@@ -27,20 +27,12 @@ import { PostManagementModule } from './modules/post-management/post-management.
 import { YearResultEntity } from './modules/year-results/entities/year-result.entity';
 import { YearResultsModule } from './modules/year-results/year-results.module';
 import { MattermostModule } from './modules/mattermost/mattermost.module';
-import { TrollChatEntity } from './modules/troll/entities/troll-chat.entity';
-import { TrollDefectEntity } from './modules/troll/entities/troll-defect.entity';
 import { ParserModule } from './modules/parser/parser.module';
 import { ObservedPostEntity } from './modules/parser/entities/observed-post.entity';
 import { ParserSettingsEntity } from './modules/parser/entities/parser-settings.entity';
 import { SourceCandidateEntity } from './modules/parser/entities/source-candidate.entity';
 import { SourceChannelEntity } from './modules/parser/entities/source-channel.entity';
-import { TrollMessageEntity } from './modules/troll/entities/troll-message.entity';
-import { TrollMemberBioEntity } from './modules/troll/entities/troll-member-bio.entity';
-import { TrollMemberTagEntity } from './modules/troll/entities/troll-member-tag.entity';
-import { TrollPredictionEntity } from './modules/troll/entities/troll-prediction.entity';
-import { TrollSettingsEntity } from './modules/troll/entities/troll-settings.entity';
 import { QueueAlertStateEntity } from './modules/cron/entities/queue-alert-state.entity';
-import { TrollModule } from './modules/troll/troll.module';
 import { SharedModule } from './shared/shared.module';
 
 @Module({
@@ -78,13 +70,6 @@ import { SharedModule } from './shared/shared.module';
           PublishedPostHashesEntity,
           YearResultEntity,
           ChannelMemeEntity,
-          TrollChatEntity,
-          TrollSettingsEntity,
-          TrollMessageEntity,
-          TrollMemberTagEntity,
-          TrollMemberBioEntity,
-          TrollPredictionEntity,
-          TrollDefectEntity,
           SourceChannelEntity,
           ObservedPostEntity,
           SourceCandidateEntity,
@@ -108,7 +93,6 @@ import { SharedModule } from './shared/shared.module';
     CronModule,
     YearResultsModule,
     MattermostModule,
-    TrollModule,
     ParserModule,
     MetricsModule,
   ],

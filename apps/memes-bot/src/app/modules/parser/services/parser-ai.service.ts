@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { DeepSeekService } from '../../troll/services/deepseek.service';
+import { DeepSeekService } from '../../llm/services/deepseek.service';
 import { ParserSettingsService } from './parser-settings.service';
 
 /** Вердикт AI по каналу-кандидату. */

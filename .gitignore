@@ -45,9 +45,6 @@ Thumbs.db
 .server
 .deps-image
 
-# Отчёты прогонов аудита: сами утилиты лежат в apps/memes-bot/tools/troll-audit
-/apps/memes-bot/tools/troll-audit/report.json
-
 # Тестовые скрипты с секретами (API ключи, пароли)
 test-*.js
 test-*.py

@@ -1,7 +1,7 @@
 // BotProvider тянет runner/storage-typeorm/typeorm — для теста достаточно токена.
 jest.mock('./modules/bot/providers/bot.provider', () => ({ BOT: 'APP_BOT_TOKEN' }));
 
-// axios — ESM и не парсится jest; метаданные NestJS тянут DeepSeekService транзитивно.
+// axios — ESM и не парсится jest; метаданные NestJS тянут LLM-клиент транзитивно.
 jest.mock('axios', () => ({
   __esModule: true,
   default: { create: jest.fn(() => ({ post: jest.fn() })) },

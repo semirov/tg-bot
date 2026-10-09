@@ -16,19 +16,14 @@ import { BaseConfigService } from '../config/base-config.service';
 import { ConversationsEnum } from '../post-management/constants/conversations.enum';
 import { PublicationModesEnum } from '../post-management/constants/publication-modes.enum';
 import { channelInternalId } from '../../shared/publication/telegram-link';
-import { formatUsd } from '../troll/constants/deepseek-pricing';
-import { DeepSeekService } from '../troll/services/deepseek.service';
 import { ParserMenuService } from '../parser/services/parser-menu.service';
 import { ParserModerationService } from '../parser/services/parser-moderation.service';
-import { TrollSettingsService } from '../troll/services/troll-settings.service';
-import { TrollService } from '../troll/services/troll.service';
 import {
   UserYearStatistics,
   YearResultsPreview,
 } from '../year-results/interfaces/year-statistics.interface';
 import { YearResultsService } from '../year-results/services/year-results.service';
 import { AdminMenusEnum } from './constants/bot-menus.enum';
-import { AdminSettingsPresets } from './admin-settings-presets';
 import { MenuPresenter } from './menu-presenter';
 import { YearResultsMenuText } from './year-results-menu-text';
 
@@ -40,8 +35,6 @@ export class AdminMenuService implements OnModuleInit {
   private readonly menuText = new YearResultsMenuText();
   /** Общие хелперы сборки меню (ownerGuard, переходы). */
   private readonly menuPresenter = new MenuPresenter();
-  /** Выбранный в админке чат для просмотра досье участников. */
-  private bioChatId: number | null = null;
 
   constructor(
     @Inject(BOT) private bot: Bot<BotContext>,
@@ -50,9 +43,6 @@ export class AdminMenuService implements OnModuleInit {
     private clientBaseService: ClientBaseService,
     private postSchedulerService: PostSchedulerService,
     private yearResultsService: YearResultsService,
-    private trollService: TrollService,
-    private trollSettings: TrollSettingsService,
-    private deepSeek: DeepSeekService,
     private parserMenuService: ParserMenuService,
     private parserModeration: ParserModerationService
   ) {}
@@ -60,11 +50,6 @@ export class AdminMenuService implements OnModuleInit {
   /** Пропускает действие только для владельца; остальным пишет отказ. */
   private ownerGuard(handler: (ctx: BotContext & MenuFlavor) => Promise<void> | void) {
     return this.menuPresenter.ownerGuard(handler);
-  }
-
-  /** Следующее значение из списка пресетов (по кругу). */
-  private cycle(value: number, presets: number[]): number {
-    return AdminSettingsPresets.cycle(value, presets);
   }
 
   onModuleInit() {
@@ -102,8 +87,6 @@ export class AdminMenuService implements OnModuleInit {
 
     const botsMenu = new Menu<BotContext>('admin-bots')
       .text('🧭 Парсер мемов', this.ownerGuard((ctx) => ctx.menu.nav(AdminMenusEnum.PARSER_SETTINGS_MENU)))
-      .row()
-      .text('🤖 Тролль-бот', this.ownerGuard((ctx) => ctx.menu.nav(AdminMenusEnum.TROLL_SETTINGS_MENU)))
       .row()
       .text(
         async () => {
@@ -294,474 +277,11 @@ export class AdminMenuService implements OnModuleInit {
       .row()
       .back('Назад');
 
-    const current = () => this.trollSettings.current;
-
-    const trollChatsMenu = new Menu<BotContext>(AdminMenusEnum.TROLL_CHATS_MENU).dynamic(
-      async () => {
-        const chats = (await this.trollService.getAllChats()).slice(0, 40);
-        const range = new MenuRange<BotContext>();
-        if (!chats.length) {
-          range.text(
-            'Чатов пока нет',
-            this.ownerGuard((ctx) => ctx.menu.nav(AdminMenusEnum.TROLL_SETTINGS_MENU))
-          );
-          return range;
-        }
-        for (const chat of chats) {
-          const title = (chat.title || String(chat.chatId)).slice(0, 30);
-          range
-            .text(
-              `${chat.isActive ? '🟢' : '⚪️'} ${title}`,
-              this.ownerGuard(async (ctx) => {
-                await this.trollService.setChatActive(chat.chatId, !chat.isActive);
-                ctx.menu.update();
-              })
-            )
-            .row();
-        }
-        range.back('Назад');
-        return range;
-      }
-    );
-
-    const trollBiosChatsMenu = new Menu<BotContext>(AdminMenusEnum.TROLL_BIOS_CHATS_MENU).dynamic(
-      async () => {
-        const chats = (await this.trollService.getAllChats()).slice(0, 40);
-        const range = new MenuRange<BotContext>();
-        if (!chats.length) {
-          range.text(
-            'Чатов пока нет',
-            this.ownerGuard((ctx) => ctx.menu.nav(AdminMenusEnum.TROLL_SETTINGS_MENU))
-          );
-          return range;
-        }
-        for (const chat of chats) {
-          const title = (chat.title || String(chat.chatId)).slice(0, 30);
-          range
-            .text(
-              title,
-              this.ownerGuard(async (ctx) => {
-                this.bioChatId = Number(chat.chatId);
-                await ctx.menu.nav(AdminMenusEnum.TROLL_BIOS_MENU);
-              })
-            )
-            .row();
-        }
-        range.back('Назад');
-        return range;
-      }
-    );
-
-    const trollBiosMenu = new Menu<BotContext>(AdminMenusEnum.TROLL_BIOS_MENU).dynamic(async () => {
-      const range = new MenuRange<BotContext>();
-      const chatId = this.bioChatId;
-      if (chatId === null) {
-        range.text(
-          'Чат не выбран',
-          this.ownerGuard((ctx) => ctx.menu.nav(AdminMenusEnum.TROLL_BIOS_CHATS_MENU))
-        );
-        return range;
-      }
-      const bios = await this.trollService.getChatBiosView(chatId);
-      if (!bios.length) {
-        range.text('Биографий пока нет', this.ownerGuard(async () => undefined));
-        range.row().back('Назад');
-        return range;
-      }
-      for (const item of bios) {
-        const label = item.userName.slice(0, 40);
-        range
-          .text(
-            label,
-            this.ownerGuard(async (ctx) => {
-              await ctx.reply(`📋 ${item.userName}\n\n${item.bio}`);
-            })
-          )
-          .row();
-      }
-      range.back('Назад');
-      return range;
-    });
-
-    const trollSettingsMenu = new Menu<BotContext>(AdminMenusEnum.TROLL_SETTINGS_MENU)
-      .text(
-        () => `Бот: ${current().enabled ? '🟢 включён' : '⚪️ выключен'}`,
-        this.ownerGuard(async (ctx) => {
-          await this.trollSettings.update({
-            enabled: AdminSettingsPresets.toggle(current().enabled),
-          });
-          ctx.menu.update();
-        })
-      )
-      .row()
-      .text(
-        () => `Проверка УК РФ: ${current().criminalEnabled ? '🟢 вкл' : '⚪️ выкл'}`,
-        this.ownerGuard(async (ctx) => {
-          await this.trollSettings.update({
-            criminalEnabled: AdminSettingsPresets.toggle(current().criminalEnabled),
-          });
-          ctx.menu.update();
-        })
-      )
-      .row()
-      .text(
-        () => `Порог статьи: ${AdminSettingsPresets.percent(current().criminalThreshold)}`,
-        this.ownerGuard(async (ctx) => {
-          await this.trollSettings.update({
-            criminalThreshold: this.cycle(
-              current().criminalThreshold,
-              AdminSettingsPresets.CRIMINAL_THRESHOLD
-            ),
-          });
-          ctx.menu.update();
-        })
-      )
-      .row()
-      .text(
-        () => `«Почти наверняка»: ${AdminSettingsPresets.percent(current().criminalHighThreshold)}`,
-        this.ownerGuard(async (ctx) => {
-          await this.trollSettings.update({
-            criminalHighThreshold: this.cycle(
-              current().criminalHighThreshold,
-              AdminSettingsPresets.CRIMINAL_HIGH_THRESHOLD
-            ),
-          });
-          ctx.menu.update();
-        })
-      )
-      .row()
-      .text(
-        () => `Пауза анализа УК: ${AdminSettingsPresets.duration(current().analyzeCooldownSec)}`,
-        this.ownerGuard(async (ctx) => {
-          await this.trollSettings.update({
-            analyzeCooldownSec: this.cycle(
-              current().analyzeCooldownSec,
-              AdminSettingsPresets.ANALYZE_COOLDOWN_SEC
-            ),
-          });
-          ctx.menu.update();
-        })
-      )
-      .row()
-      .text(
-        () => `Сарказм: ${current().sarcasmEnabled ? '🟢 вкл' : '⚪️ выкл'}`,
-        this.ownerGuard(async (ctx) => {
-          await this.trollSettings.update({
-            sarcasmEnabled: AdminSettingsPresets.toggle(current().sarcasmEnabled),
-          });
-          ctx.menu.update();
-        })
-      )
-      .row()
-      .text(
-        () => `Шанс сарказма: ${AdminSettingsPresets.percent(current().sarcasmChance)}`,
-        this.ownerGuard(async (ctx) => {
-          await this.trollSettings.update({
-            sarcasmChance: this.cycle(
-              current().sarcasmChance,
-              AdminSettingsPresets.SARCASM_CHANCE
-            ),
-          });
-          ctx.menu.update();
-        })
-      )
-      .row()
-      .text(
-        () => `Пауза сарказма: ${AdminSettingsPresets.duration(current().sarcasmCooldownSec)}`,
-        this.ownerGuard(async (ctx) => {
-          await this.trollSettings.update({
-            sarcasmCooldownSec: this.cycle(
-              current().sarcasmCooldownSec,
-              AdminSettingsPresets.SARCASM_COOLDOWN_SEC
-            ),
-          });
-          ctx.menu.update();
-        })
-      )
-      .row()
-      .text(
-        () => `Кривляния: ${current().mirrorEnabled ? '🟢 вкл' : '⚪️ выкл'}`,
-        this.ownerGuard(async (ctx) => {
-          await this.trollSettings.update({
-            mirrorEnabled: AdminSettingsPresets.toggle(current().mirrorEnabled),
-          });
-          ctx.menu.update();
-        })
-      )
-      .row()
-      .text(
-        () => `Шанс кривляния: ${AdminSettingsPresets.percent(current().mirrorChance)}`,
-        this.ownerGuard(async (ctx) => {
-          await this.trollSettings.update({
-            mirrorChance: this.cycle(current().mirrorChance, AdminSettingsPresets.MIRROR_CHANCE),
-          });
-          ctx.menu.update();
-        })
-      )
-      .row()
-      .text(
-        () => `Пауза кривляния: ${AdminSettingsPresets.duration(current().mirrorCooldownSec)}`,
-        this.ownerGuard(async (ctx) => {
-          await this.trollSettings.update({
-            mirrorCooldownSec: this.cycle(
-              current().mirrorCooldownSec,
-              AdminSettingsPresets.MIRROR_COOLDOWN_SEC
-            ),
-          });
-          ctx.menu.update();
-        })
-      )
-      .row()
-      .text(
-        () => `Реакции 🤡/💩: ${current().reactionEnabled ? '🟢 вкл' : '⚪️ выкл'}`,
-        this.ownerGuard(async (ctx) => {
-          await this.trollSettings.update({
-            reactionEnabled: AdminSettingsPresets.toggle(current().reactionEnabled),
-          });
-          ctx.menu.update();
-        })
-      )
-      .row()
-      .text(
-        () => `Шанс реакции: ${AdminSettingsPresets.percent(current().reactionChance)}`,
-        this.ownerGuard(async (ctx) => {
-          await this.trollSettings.update({
-            reactionChance: this.cycle(
-              current().reactionChance,
-              AdminSettingsPresets.REACTION_CHANCE
-            ),
-          });
-          ctx.menu.update();
-        })
-      )
-      .row()
-      .text(
-        () => `Пауза реакции: ${AdminSettingsPresets.duration(current().reactionCooldownSec)}`,
-        this.ownerGuard(async (ctx) => {
-          await this.trollSettings.update({
-            reactionCooldownSec: this.cycle(
-              current().reactionCooldownSec,
-              AdminSettingsPresets.REACTION_COOLDOWN_SEC
-            ),
-          });
-          ctx.menu.update();
-        })
-      )
-      .row()
-      .text(
-        () => `Ответы на обращения: ${current().jerkEnabled ? '🟢 вкл' : '⚪️ выкл'}`,
-        this.ownerGuard(async (ctx) => {
-          await this.trollSettings.update({
-            jerkEnabled: AdminSettingsPresets.toggle(current().jerkEnabled),
-          });
-          ctx.menu.update();
-        })
-      )
-      .row()
-      .text(
-        () => `Реакция на клички/мат: ${current().addressReactionEnabled ? '🟢 вкл' : '⚪️ выкл'}`,
-        this.ownerGuard(async (ctx) => {
-          await this.trollSettings.update({
-            addressReactionEnabled: AdminSettingsPresets.toggle(current().addressReactionEnabled),
-          });
-          ctx.menu.update();
-        })
-      )
-      .row()
-      .text(
-        () => `Пауза перед ответом: ${AdminSettingsPresets.duration(current().jerkBatchWindowSec)}`,
-        this.ownerGuard(async (ctx) => {
-          await this.trollSettings.update({
-            jerkBatchWindowSec: this.cycle(
-              current().jerkBatchWindowSec,
-              AdminSettingsPresets.JERK_WINDOW_SEC
-            ),
-          });
-          ctx.menu.update();
-        })
-      )
-      .row()
-      .text(
-        () => `Пауза между ответами: ${AdminSettingsPresets.duration(current().jerkCooldownSec)}`,
-        this.ownerGuard(async (ctx) => {
-          await this.trollSettings.update({
-            jerkCooldownSec: this.cycle(
-              current().jerkCooldownSec,
-              AdminSettingsPresets.JERK_COOLDOWN_SEC
-            ),
-          });
-          ctx.menu.update();
-        })
-      )
-      .row()
-      .text(
-        () => `Пауза новой беседы: ${AdminSettingsPresets.duration(current().dialogPauseMin * 60)}`,
-        this.ownerGuard(async (ctx) => {
-          await this.trollSettings.update({
-            dialogPauseMin: this.cycle(
-              current().dialogPauseMin,
-              AdminSettingsPresets.DIALOG_PAUSE_MIN
-            ),
-          });
-          ctx.menu.update();
-        })
-      )
-      .row()
-      .text(
-        () => `Анонсы мемов: ${current().memeAnnounceEnabled ? '🟢 вкл' : '⚪️ выкл'}`,
-        this.ownerGuard(async (ctx) => {
-          await this.trollSettings.update({
-            memeAnnounceEnabled: AdminSettingsPresets.toggle(current().memeAnnounceEnabled),
-          });
-          ctx.menu.update();
-        })
-      )
-      .row()
-      .text(
-        () => `Шанс анонса мема: ${AdminSettingsPresets.percent(current().memeAnnounceChance)}`,
-        this.ownerGuard(async (ctx) => {
-          await this.trollSettings.update({
-            memeAnnounceChance: this.cycle(
-              current().memeAnnounceChance,
-              AdminSettingsPresets.MEME_ANNOUNCE_CHANCE
-            ),
-          });
-          ctx.menu.update();
-        })
-      )
-      .row()
-      .text(
-        () => `Лимит запросов/сутки: ${current().dailyRequestLimit}`,
-        this.ownerGuard(async (ctx) => {
-          await this.trollSettings.update({
-            dailyRequestLimit: this.cycle(
-              current().dailyRequestLimit,
-              AdminSettingsPresets.DAILY_REQUEST_LIMIT
-            ),
-          });
-          ctx.menu.update();
-        })
-      )
-      .row()
-      .text(
-        () => `Макс. длина входа: ${current().maxInputChars}`,
-        this.ownerGuard(async (ctx) => {
-          await this.trollSettings.update({
-            maxInputChars: this.cycle(
-              current().maxInputChars,
-              AdminSettingsPresets.MAX_INPUT_CHARS
-            ),
-          });
-          ctx.menu.update();
-        })
-      )
-      .row()
-      .text(
-        () => `Проверка ответа: ${current().selfCheckEnabled ? '🟢 вкл' : '⚪️ выкл'}`,
-        this.ownerGuard(async (ctx) => {
-          await this.trollSettings.update({
-            selfCheckEnabled: AdminSettingsPresets.toggle(current().selfCheckEnabled),
-          });
-          ctx.menu.update();
-        })
-      )
-      .row()
-      .text(
-        () => `Порог проверки: ${AdminSettingsPresets.percent(current().selfCheckThreshold)}`,
-        this.ownerGuard(async (ctx) => {
-          await this.trollSettings.update({
-            selfCheckThreshold: this.cycle(
-              current().selfCheckThreshold,
-              AdminSettingsPresets.SELF_CHECK_THRESHOLD
-            ),
-          });
-          ctx.menu.update();
-        })
-      )
-      .row()
-      .text(
-        () => `Темы-теги участников: ${current().memberTagsEnabled ? '🟢 вкл' : '⚪️ выкл'}`,
-        this.ownerGuard(async (ctx) => {
-          await this.trollSettings.update({
-            memberTagsEnabled: AdminSettingsPresets.toggle(current().memberTagsEnabled),
-          });
-          ctx.menu.update();
-        })
-      )
-      .row()
-      .text(
-        () => `Биографии участников: ${current().memberBioEnabled ? '🟢 вкл' : '⚪️ выкл'}`,
-        this.ownerGuard(async (ctx) => {
-          await this.trollSettings.update({
-            memberBioEnabled: AdminSettingsPresets.toggle(current().memberBioEnabled),
-          });
-          ctx.menu.update();
-        })
-      )
-      .row()
-      .text(
-        () => `Модель ответов: ${current().useProModel ? 'deepseek-v4-pro' : 'deepseek-flash'}`,
-        this.ownerGuard(async (ctx) => {
-          await this.trollSettings.update({
-            useProModel: AdminSettingsPresets.toggle(current().useProModel),
-          });
-          ctx.menu.update();
-        })
-      )
-      .row()
-      .text(
-        () => `Разбор картинок: ${current().visionEnabled ? '🟢 вкл' : '⚪️ выкл'} (vision: flash)`,
-        this.ownerGuard(async (ctx) => {
-          await this.trollSettings.update({
-            visionEnabled: AdminSettingsPresets.toggle(current().visionEnabled),
-          });
-          ctx.menu.update();
-        })
-      )
-      .row()
-      .text(
-        () => {
-          const usage = this.deepSeek.usage;
-          return `📊 DeepSeek сегодня: ${usage.requests} запр., ${usage.tokens} ток., ≈ ${formatUsd(
-            usage.costUsd
-          )}${usage.peak ? ' (пик)' : ''}`;
-        },
-        this.ownerGuard(async (ctx) => {
-          await ctx.answerCallbackQuery('Обновлено');
-        })
-      )
-      .row()
-      .text(
-        '📋 Биографии участников',
-        this.ownerGuard((ctx) => ctx.menu.nav(AdminMenusEnum.TROLL_BIOS_CHATS_MENU))
-      )
-      .row()
-      .text(
-        '💬 Чаты бота',
-        this.ownerGuard((ctx) => ctx.menu.nav(AdminMenusEnum.TROLL_CHATS_MENU))
-      )
-      .row()
-      .text(
-        '♻️ Сбросить настройки',
-        this.ownerGuard(async (ctx) => {
-          await this.trollSettings.reset();
-          await ctx.answerCallbackQuery('Настройки сброшены');
-          ctx.menu.update();
-        })
-      )
-      .row()
-      .back('Назад');
-
-    trollSettingsMenu.register(trollChatsMenu);
-
     menu.register(moderatorsListMenu);
     menu.register(moderatorSettingMenu);
     menu.register(memeLimitControlMenu);
     menu.register(memeLimitSelectUserMenu);
     menu.register(memeLimitOptionsMenu);
-    menu.register(trollSettingsMenu);
-    menu.register(trollBiosChatsMenu);
-    menu.register(trollBiosMenu);
     menu.register(this.parserMenuService.getMenu());
     menu.register(botsMenu);
     menu.register(publicationsMenu);

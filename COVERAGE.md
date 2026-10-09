@@ -3,45 +3,46 @@
 
 ![coverage](./coverage-badge.svg)
 
-Generated: 2026-09-18 16:31:28 · commit `1305d9f` · Jest + ts-jest
+Generated: 2026-10-09 06:58:01 · commit `c477796` · Jest + ts-jest
 
-**Overall: 99.87% statements · 97.98% branches · 100.00% functions · 99.89% lines** (threshold 95%).
+**Overall: 98.79% statements · 95.09% branches · 97.75% functions · 98.96% lines** (threshold 95%).
 
 | Metric | Covered | Total | % |
 | --- | ---: | ---: | ---: |
-| Statements | 4855 | 4861 | **99.87%** |
-| Branches | 2580 | 2633 | **97.98%** |
-| Functions | 924 | 924 | **100.00%** |
-| Lines | 4598 | 4603 | **99.89%** |
+| Statements | 6213 | 6289 | **98.79%** |
+| Branches | 3390 | 3565 | **95.09%** |
+| Functions | 1130 | 1156 | **97.75%** |
+| Lines | 5734 | 5794 | **98.96%** |
 
 ## By module
 
 | Module | Files | Statements | Branches | Functions | Lines |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| `troll` | 17 | 99.9% | 98.4% | 100.0% | 99.9% |
-| `post-management` | 6 | 99.6% | 96.2% | 100.0% | 99.6% |
-| `menus` | 4 | 100.0% | 98.2% | 100.0% | 100.0% |
-| `bot` | 17 | 99.6% | 96.4% | 100.0% | 99.6% |
-| `year-results` | 2 | 100.0% | 99.7% | 100.0% | 100.0% |
-| `observatory` | 6 | 100.0% | 97.8% | 100.0% | 100.0% |
-| `client` | 2 | 99.6% | 95.3% | 100.0% | 100.0% |
-| `s3` | 3 | 100.0% | 98.5% | 100.0% | 100.0% |
-| `channel-monitor` | 3 | 100.0% | 100.0% | 100.0% | 100.0% |
-| `app` | 1 | 100.0% | 96.5% | 100.0% | 100.0% |
-| `cron` | 2 | 100.0% | 100.0% | 100.0% | 100.0% |
+| `parser` | 24 | 98.9% | 94.5% | 97.7% | 99.0% |
+| `post-management` | 8 | 99.5% | 96.3% | 99.4% | 99.5% |
+| `bot` | 18 | 98.2% | 94.8% | 100.0% | 98.3% |
+| `menus` | 6 | 98.4% | 99.0% | 94.6% | 98.8% |
+| `year-results` | 4 | 100.0% | 99.6% | 100.0% | 100.0% |
+| `client` | 4 | 95.1% | 84.9% | 97.4% | 95.3% |
+| `llm` | 4 | 99.7% | 100.0% | 100.0% | 99.7% |
+| `app` | 15 | 100.0% | 96.4% | 95.1% | 100.0% |
+| `observatory` | 5 | 98.4% | 90.5% | 98.5% | 99.1% |
+| `cron` | 4 | 100.0% | 92.7% | 100.0% | 100.0% |
+| `metrics` | 2 | 96.1% | 100.0% | 87.5% | 100.0% |
 | `config` | 2 | 100.0% | 100.0% | 100.0% | 100.0% |
 | `mattermost` | 1 | 100.0% | 100.0% | 100.0% | 100.0% |
+| `channel-monitor` | 1 | 100.0% | 100.0% | 100.0% | 100.0% |
 | `common` | 1 | 100.0% | 100.0% | 100.0% | 100.0% |
 | `environments` | 2 | 100.0% | 100.0% | 100.0% | 100.0% |
 
 ## By file
 
 <details>
-<summary>Full per-file breakdown (69 files)</summary>
+<summary>Full per-file breakdown (101 files)</summary>
 
 | File | Statements | Branches | Functions | Lines |
 | --- | ---: | ---: | ---: | ---: |
-| `apps/memes-bot/src/app/app.service.ts` | 100% | 96.49% | 100% | 100% |
+| `apps/memes-bot/src/app/app.service.ts` | 100% | 95.58% | 100% | 100% |
 | `apps/memes-bot/src/app/modules/bot/constants/user-permission.enum.ts` | 100% | 100% | 100% | 100% |
 | `apps/memes-bot/src/app/modules/bot/entities/cringe-post.entity.ts` | 100% | 100% | 100% | 100% |
 | `apps/memes-bot/src/app/modules/bot/entities/post-scheduler.entity.ts` | 100% | 100% | 100% | 100% |
@@ -52,62 +53,94 @@ Generated: 2026-09-18 16:31:28 · commit `1305d9f` · Jest + ts-jest
 | `apps/memes-bot/src/app/modules/bot/providers/bot-config.middleware.ts` | 100% | 91.66% | 100% | 100% |
 | `apps/memes-bot/src/app/modules/bot/providers/bot.provider.ts` | 100% | 100% | 100% | 100% |
 | `apps/memes-bot/src/app/modules/bot/services/cringe-management.service.ts` | 100% | 100% | 100% | 100% |
-| `apps/memes-bot/src/app/modules/bot/services/deduplication.service.ts` | 97.22% | 97.05% | 100% | 97.01% |
-| `apps/memes-bot/src/app/modules/bot/services/post-scheduler.service.ts` | 100% | 100% | 100% | 100% |
+| `apps/memes-bot/src/app/modules/bot/services/deduplication.service.ts` | 90% | 87.87% | 100% | 91.35% |
+| `apps/memes-bot/src/app/modules/bot/services/post-scheduler.service.ts` | 98.63% | 96.22% | 100% | 98.51% |
 | `apps/memes-bot/src/app/modules/bot/services/settings.service.ts` | 100% | 94.44% | 100% | 100% |
+| `apps/memes-bot/src/app/modules/bot/services/startup-notifier.service.ts` | 100% | 66.66% | 100% | 100% |
 | `apps/memes-bot/src/app/modules/bot/services/user-request.service.ts` | 100% | 100% | 100% | 100% |
 | `apps/memes-bot/src/app/modules/bot/services/user.service.ts` | 100% | 90.47% | 100% | 100% |
 | `apps/memes-bot/src/app/modules/bot/session/session-manager.service.ts` | 100% | 100% | 100% | 100% |
 | `apps/memes-bot/src/app/modules/bot/session/session.entity.ts` | 100% | 100% | 100% | 100% |
-| `apps/memes-bot/src/app/modules/channel-monitor/controllers/memes.controller.ts` | 100% | 100% | 100% | 100% |
 | `apps/memes-bot/src/app/modules/channel-monitor/entities/channel-meme.entity.ts` | 100% | 100% | 100% | 100% |
-| `apps/memes-bot/src/app/modules/channel-monitor/services/channel-monitor-bot.service.ts` | 100% | 100% | 100% | 100% |
+| `apps/memes-bot/src/app/modules/client/domain/ad-detector.ts` | 91.89% | 80% | 100% | 91.74% |
+| `apps/memes-bot/src/app/modules/client/entities/best-meme-post.entity.ts` | 100% | 100% | 100% | 100% |
 | `apps/memes-bot/src/app/modules/client/entities/client-session.entity.ts` | 100% | 100% | 100% | 100% |
-| `apps/memes-bot/src/app/modules/client/services/client-base.service.ts` | 99.58% | 95.27% | 100% | 100% |
+| `apps/memes-bot/src/app/modules/client/services/client-base.service.ts` | 96.13% | 89.81% | 96.96% | 96.68% |
 | `apps/memes-bot/src/app/modules/common/scheduler-common.service.ts` | 100% | 100% | 100% | 100% |
 | `apps/memes-bot/src/app/modules/config/base-config.service.ts` | 100% | 100% | 100% | 100% |
 | `apps/memes-bot/src/app/modules/config/configuration.ts` | 100% | 100% | 100% | 100% |
+| `apps/memes-bot/src/app/modules/cron/entities/queue-alert-state.entity.ts` | 100% | 100% | 100% | 100% |
 | `apps/memes-bot/src/app/modules/cron/service/cron.service.ts` | 100% | 100% | 100% | 100% |
 | `apps/memes-bot/src/app/modules/cron/service/monthly-stat.service.ts` | 100% | 100% | 100% | 100% |
+| `apps/memes-bot/src/app/modules/cron/service/queue-alert.service.ts` | 100% | 91.48% | 100% | 100% |
+| `apps/memes-bot/src/app/modules/llm/constants/deepseek-pricing.ts` | 100% | 100% | 100% | 100% |
+| `apps/memes-bot/src/app/modules/llm/constants/llm-limits.ts` | 100% | 100% | 100% | 100% |
+| `apps/memes-bot/src/app/modules/llm/services/deepseek.service.ts` | 99.52% | 100% | 100% | 99.51% |
+| `apps/memes-bot/src/app/modules/llm/utils/llm-json.ts` | 100% | 100% | 100% | 100% |
 | `apps/memes-bot/src/app/modules/mattermost/mattermost.service.ts` | 100% | 100% | 100% | 100% |
-| `apps/memes-bot/src/app/modules/menus/admin-menu.service.ts` | 100% | 97.77% | 100% | 100% |
+| `apps/memes-bot/src/app/modules/menus/admin-menu.service.ts` | 97.95% | 98.78% | 92.55% | 98.43% |
 | `apps/memes-bot/src/app/modules/menus/constants/bot-menus.enum.ts` | 100% | 100% | 100% | 100% |
 | `apps/memes-bot/src/app/modules/menus/main-menu.service.ts` | 100% | 100% | 100% | 100% |
+| `apps/memes-bot/src/app/modules/menus/menu-presenter.ts` | 100% | 100% | 100% | 100% |
 | `apps/memes-bot/src/app/modules/menus/moderator-menu.service.ts` | 100% | 100% | 100% | 100% |
+| `apps/memes-bot/src/app/modules/menus/year-results-menu-text.ts` | 100% | 100% | 100% | 100% |
+| `apps/memes-bot/src/app/modules/metrics/bot-telemetry.service.ts` | 100% | 100% | 100% | 100% |
+| `apps/memes-bot/src/app/modules/metrics/metrics-collector.service.ts` | 92.5% | 100% | 78.57% | 100% |
 | `apps/memes-bot/src/app/modules/observatory/contsants/observatory-post-menus.enum.ts` | 100% | 100% | 100% | 100% |
 | `apps/memes-bot/src/app/modules/observatory/entities/observatory-post.entity.ts` | 100% | 100% | 100% | 100% |
-| `apps/memes-bot/src/app/modules/observatory/entities/user-message-moderated-post.entity.ts` | 100% | 100% | 100% | 100% |
-| `apps/memes-bot/src/app/modules/observatory/entities/user-moderated-post.entity.ts` | 100% | 100% | 100% | 100% |
-| `apps/memes-bot/src/app/modules/observatory/services/observatory.service.ts` | 100% | 97.18% | 100% | 100% |
-| `apps/memes-bot/src/app/modules/observatory/services/user-moderated-post.service.ts` | 100% | 100% | 100% | 100% |
+| `apps/memes-bot/src/app/modules/observatory/services/observatory-post-formatter.ts` | 100% | 75% | 100% | 100% |
+| `apps/memes-bot/src/app/modules/observatory/services/observatory-publish-policy.ts` | 100% | 100% | 100% | 100% |
+| `apps/memes-bot/src/app/modules/observatory/services/observatory.service.ts` | 97.93% | 91% | 98.11% | 98.9% |
+| `apps/memes-bot/src/app/modules/parser/constants/parser.constants.ts` | 100% | 100% | 100% | 100% |
+| `apps/memes-bot/src/app/modules/parser/domain/parser-cross-links.ts` | 100% | 100% | 100% | 100% |
+| `apps/memes-bot/src/app/modules/parser/domain/parser-media.ts` | 100% | 100% | 100% | 100% |
+| `apps/memes-bot/src/app/modules/parser/domain/parser-quotas.ts` | 100% | 100% | 100% | 100% |
+| `apps/memes-bot/src/app/modules/parser/domain/parser-scoring.ts` | 100% | 100% | 100% | 100% |
+| `apps/memes-bot/src/app/modules/parser/domain/parser-source-weight.ts` | 100% | 94.28% | 100% | 100% |
+| `apps/memes-bot/src/app/modules/parser/domain/tme-preview.ts` | 100% | 96% | 100% | 100% |
+| `apps/memes-bot/src/app/modules/parser/entities/observed-post.entity.ts` | 100% | 100% | 100% | 100% |
+| `apps/memes-bot/src/app/modules/parser/entities/parser-settings.entity.ts` | 100% | 100% | 100% | 100% |
+| `apps/memes-bot/src/app/modules/parser/entities/source-candidate.entity.ts` | 100% | 100% | 100% | 100% |
+| `apps/memes-bot/src/app/modules/parser/entities/source-channel.entity.ts` | 100% | 100% | 100% | 100% |
+| `apps/memes-bot/src/app/modules/parser/services/parser-ai.service.ts` | 100% | 100% | 100% | 100% |
+| `apps/memes-bot/src/app/modules/parser/services/parser-client.service.ts` | 100% | 100% | 100% | 100% |
+| `apps/memes-bot/src/app/modules/parser/services/parser-collector.service.ts` | 97.63% | 92.38% | 90.47% | 98.63% |
+| `apps/memes-bot/src/app/modules/parser/services/parser-delivery.service.ts` | 97.1% | 90.99% | 100% | 97.28% |
+| `apps/memes-bot/src/app/modules/parser/services/parser-discovery.service.ts` | 97.83% | 95.45% | 96% | 97.57% |
+| `apps/memes-bot/src/app/modules/parser/services/parser-evaluator.service.ts` | 100% | 97.7% | 100% | 100% |
+| `apps/memes-bot/src/app/modules/parser/services/parser-menu.service.ts` | 100% | 98.07% | 100% | 100% |
+| `apps/memes-bot/src/app/modules/parser/services/parser-moderation.service.ts` | 99.55% | 97.52% | 100% | 99.54% |
+| `apps/memes-bot/src/app/modules/parser/services/parser-mtproto-guard.service.ts` | 93.75% | 82.6% | 80% | 93.1% |
+| `apps/memes-bot/src/app/modules/parser/services/parser-registry.service.ts` | 99.13% | 94.44% | 97.14% | 99.52% |
+| `apps/memes-bot/src/app/modules/parser/services/parser-selector.service.ts` | 99.59% | 89.06% | 100% | 99.51% |
+| `apps/memes-bot/src/app/modules/parser/services/parser-settings.service.ts` | 100% | 96.42% | 100% | 100% |
+| `apps/memes-bot/src/app/modules/parser/services/parser.service.ts` | 97.29% | 96.49% | 93.33% | 97.6% |
 | `apps/memes-bot/src/app/modules/post-management/ask-admin.service.ts` | 100% | 100% | 100% | 100% |
 | `apps/memes-bot/src/app/modules/post-management/constants/conversations.enum.ts` | 100% | 100% | 100% | 100% |
 | `apps/memes-bot/src/app/modules/post-management/constants/post-moderation-menus.enum.ts` | 100% | 100% | 100% | 100% |
 | `apps/memes-bot/src/app/modules/post-management/constants/publication-modes.enum.ts` | 100% | 100% | 100% | 100% |
-| `apps/memes-bot/src/app/modules/post-management/user-post-management.service.ts` | 99.6% | 95.45% | 100% | 99.58% |
+| `apps/memes-bot/src/app/modules/post-management/services/duplicate-policy.ts` | 100% | 100% | 100% | 100% |
+| `apps/memes-bot/src/app/modules/post-management/services/user-post-formatter.ts` | 100% | 100% | 100% | 100% |
+| `apps/memes-bot/src/app/modules/post-management/user-post-management.service.ts` | 99.38% | 94.7% | 99.01% | 99.36% |
 | `apps/memes-bot/src/app/modules/post-management/utils/admin-reply.ts` | 100% | 100% | 100% | 100% |
-| `apps/memes-bot/src/app/modules/s3/middleware/channel-post.middleware.ts` | 100% | 100% | 100% | 100% |
-| `apps/memes-bot/src/app/modules/s3/services/meme-upload.service.ts` | 100% | 100% | 100% | 100% |
-| `apps/memes-bot/src/app/modules/s3/services/s3.service.ts` | 100% | 97.5% | 100% | 100% |
-| `apps/memes-bot/src/app/modules/troll/constants/deepseek-pricing.ts` | 100% | 100% | 100% | 100% |
-| `apps/memes-bot/src/app/modules/troll/constants/troll-addresses.ts` | 100% | 100% | 100% | 100% |
-| `apps/memes-bot/src/app/modules/troll/constants/troll-callback.enum.ts` | 100% | 100% | 100% | 100% |
-| `apps/memes-bot/src/app/modules/troll/constants/troll-limits.ts` | 100% | 100% | 100% | 100% |
-| `apps/memes-bot/src/app/modules/troll/constants/troll-prompts.ts` | 100% | 100% | 100% | 100% |
-| `apps/memes-bot/src/app/modules/troll/entities/troll-chat.entity.ts` | 100% | 100% | 100% | 100% |
-| `apps/memes-bot/src/app/modules/troll/entities/troll-defect.entity.ts` | 100% | 100% | 100% | 100% |
-| `apps/memes-bot/src/app/modules/troll/entities/troll-message.entity.ts` | 100% | 100% | 100% | 100% |
-| `apps/memes-bot/src/app/modules/troll/entities/troll-prediction.entity.ts` | 100% | 100% | 100% | 100% |
-| `apps/memes-bot/src/app/modules/troll/entities/troll-settings.entity.ts` | 100% | 100% | 100% | 100% |
-| `apps/memes-bot/src/app/modules/troll/services/deepseek.service.ts` | 99.31% | 100% | 100% | 99.29% |
-| `apps/memes-bot/src/app/modules/troll/services/troll-settings.service.ts` | 100% | 100% | 100% | 100% |
-| `apps/memes-bot/src/app/modules/troll/services/troll.service.ts` | 100% | 97.83% | 100% | 100% |
-| `apps/memes-bot/src/app/modules/troll/utils/llm-json.ts` | 100% | 100% | 100% | 100% |
-| `apps/memes-bot/src/app/modules/troll/utils/troll-context.ts` | 100% | 100% | 100% | 100% |
-| `apps/memes-bot/src/app/modules/troll/utils/troll-defect.ts` | 100% | 100% | 100% | 100% |
-| `apps/memes-bot/src/app/modules/troll/utils/troll-sanitizer.ts` | 100% | 100% | 100% | 100% |
 | `apps/memes-bot/src/app/modules/year-results/entities/year-result.entity.ts` | 100% | 100% | 100% | 100% |
-| `apps/memes-bot/src/app/modules/year-results/services/year-results.service.ts` | 100% | 99.67% | 100% | 100% |
+| `apps/memes-bot/src/app/modules/year-results/services/year-results.formatter.ts` | 100% | 99.3% | 100% | 100% |
+| `apps/memes-bot/src/app/modules/year-results/services/year-results.service.ts` | 100% | 100% | 100% | 100% |
+| `apps/memes-bot/src/app/modules/year-results/services/year-statistics.query.ts` | 100% | 100% | 100% | 100% |
+| `apps/memes-bot/src/app/shared/clock.ts` | 100% | 100% | 100% | 100% |
+| `apps/memes-bot/src/app/shared/constants/duplicate-similarity.ts` | 100% | 100% | 100% | 100% |
+| `apps/memes-bot/src/app/shared/display-name.ts` | 100% | 100% | 100% | 100% |
+| `apps/memes-bot/src/app/shared/metrics/index.ts` | 100% | 100% | 66.66% | 100% |
+| `apps/memes-bot/src/app/shared/metrics/metrics-server.ts` | 100% | 97.95% | 100% | 100% |
+| `apps/memes-bot/src/app/shared/metrics/metrics.ts` | 100% | 100% | 100% | 100% |
+| `apps/memes-bot/src/app/shared/metrics/render.ts` | 100% | 100% | 100% | 100% |
+| `apps/memes-bot/src/app/shared/publication/mattermost-post.ts` | 100% | 100% | 100% | 100% |
+| `apps/memes-bot/src/app/shared/publication/media-url.ts` | 100% | 100% | 100% | 100% |
+| `apps/memes-bot/src/app/shared/publication/publication-mode.ts` | 100% | 100% | 100% | 100% |
+| `apps/memes-bot/src/app/shared/publication/telegram-link.ts` | 100% | 94.28% | 100% | 100% |
+| `apps/memes-bot/src/app/shared/random.ts` | 100% | 100% | 100% | 100% |
+| `apps/memes-bot/src/app/shared/russian-plural.ts` | 100% | 100% | 100% | 100% |
+| `apps/memes-bot/src/app/version.ts` | 100% | 83.33% | 100% | 100% |
 | `apps/memes-bot/src/environments/environment.prod.ts` | 100% | 100% | 100% | 100% |
 | `apps/memes-bot/src/environments/environment.ts` | 100% | 100% | 100% | 100% |
 
@@ -126,4 +159,4 @@ Coverage is collected from `apps/memes-bot/src/**/*.ts`.
 Excluded: `*.spec.ts` (tests), `src/main.ts` (process bootstrap), and `*.module.ts`
 (NestJS dependency-injection wiring with no executable logic).
 
-69 source files · 4861 statements · 2633 branches · 924 functions · 4603 lines.
+101 source files · 6289 statements · 3565 branches · 1156 functions · 5794 lines.

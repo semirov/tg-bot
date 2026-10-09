@@ -2,7 +2,7 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { BotModule } from '../bot/bot.module';
 import { ClientModule } from '../client/client.module';
-import { TrollModule } from '../troll/troll.module';
+import { LlmModule } from '../llm/llm.module';
 import { AppConfigModule } from '../config/app-config.module';
 import { ObservedPostEntity } from './entities/observed-post.entity';
 import { ParserSettingsEntity } from './entities/parser-settings.entity';
@@ -31,7 +31,7 @@ import { ParserService } from './services/parser.service';
   imports: [
     BotModule,
     ClientModule,
-    TrollModule,
+    LlmModule,
     AppConfigModule,
     TypeOrmModule.forFeature([
       SourceChannelEntity,

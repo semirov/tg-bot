@@ -3,7 +3,7 @@ import { BotContext } from '../bot/interfaces/bot-context.interface';
 import { Logger } from '@nestjs/common';
 import { InlineKeyboard } from 'grammy';
 
-// axios — ESM и не парсится jest; DeepSeekService в тестах не используется.
+// axios — ESM и не парсится jest; DeepSeekService в тестах меню не используется.
 jest.mock('axios', () => ({
   __esModule: true,
   default: { create: jest.fn(() => ({ post: jest.fn() })) },
@@ -122,40 +122,6 @@ function makeCtx(overrides: any = {}): any {
   };
 }
 
-function settingsBase(): any {
-  return {
-    enabled: true,
-    criminalEnabled: true,
-    criminalThreshold: 0.5,
-    criminalHighThreshold: 0.8,
-    analyzeCooldownSec: 10,
-    sarcasmEnabled: true,
-    sarcasmChance: 0.1,
-    sarcasmCooldownSec: 300,
-    mirrorEnabled: true,
-    mirrorChance: 0.1,
-    mirrorCooldownSec: 300,
-    reactionEnabled: true,
-    reactionChance: 0.1,
-    reactionCooldownSec: 300,
-    jerkEnabled: true,
-    addressReactionEnabled: true,
-    jerkBatchWindowSec: 15,
-    jerkCooldownSec: 60,
-    dialogPauseMin: 15,
-    memeAnnounceEnabled: true,
-    memeAnnounceChance: 0.1,
-    dailyRequestLimit: 500,
-    maxInputChars: 1000,
-    selfCheckEnabled: true,
-    selfCheckThreshold: 0.6,
-    memberTagsEnabled: true,
-    memberBioEnabled: true,
-    visionEnabled: true,
-    useProModel: true,
-  };
-}
-
 function makePost(mode: PublicationModesEnum, overrides: any = {}): any {
   return {
     mode,
@@ -190,38 +156,6 @@ const PERMISSIONS = [
   { field: 'allowMakeBan', yes: 'Может банить', no: 'Не может банить', row: 5 },
 ];
 
-const TROLL_ROWS: { row: number; field: string; type: 'toggle' | 'cycle'; presets?: number[] }[] = [
-  { row: 0, field: 'enabled', type: 'toggle' },
-  { row: 1, field: 'criminalEnabled', type: 'toggle' },
-  { row: 2, field: 'criminalThreshold', type: 'cycle', presets: [0.3, 0.4, 0.5, 0.6, 0.7] },
-  { row: 3, field: 'criminalHighThreshold', type: 'cycle', presets: [0.7, 0.8, 0.9] },
-  { row: 4, field: 'analyzeCooldownSec', type: 'cycle', presets: [0, 5, 10, 15, 30, 60] },
-  { row: 5, field: 'sarcasmEnabled', type: 'toggle' },
-  { row: 6, field: 'sarcasmChance', type: 'cycle', presets: [0.01, 0.03, 0.05, 0.1, 0.15, 0.2] },
-  { row: 7, field: 'sarcasmCooldownSec', type: 'cycle', presets: [0, 60, 300, 600, 1800, 3600] },
-  { row: 8, field: 'mirrorEnabled', type: 'toggle' },
-  { row: 9, field: 'mirrorChance', type: 'cycle', presets: [0.01, 0.03, 0.05, 0.1, 0.15, 0.2] },
-  { row: 10, field: 'mirrorCooldownSec', type: 'cycle', presets: [0, 60, 300, 600, 1800, 3600] },
-  { row: 11, field: 'reactionEnabled', type: 'toggle' },
-  { row: 12, field: 'reactionChance', type: 'cycle', presets: [0.01, 0.03, 0.05, 0.1, 0.15, 0.2] },
-  { row: 13, field: 'reactionCooldownSec', type: 'cycle', presets: [0, 60, 300, 600, 1800, 3600] },
-  { row: 14, field: 'jerkEnabled', type: 'toggle' },
-  { row: 15, field: 'addressReactionEnabled', type: 'toggle' },
-  { row: 16, field: 'jerkBatchWindowSec', type: 'cycle', presets: [0, 10, 15, 30, 60, 120] },
-  { row: 17, field: 'jerkCooldownSec', type: 'cycle', presets: [0, 30, 60, 120, 180, 300, 600] },
-  { row: 18, field: 'dialogPauseMin', type: 'cycle', presets: [5, 10, 15, 30, 60, 120, 360] },
-  { row: 19, field: 'memeAnnounceEnabled', type: 'toggle' },
-  { row: 20, field: 'memeAnnounceChance', type: 'cycle', presets: [0.05, 0.1, 0.2, 0.3, 0.5] },
-  { row: 21, field: 'dailyRequestLimit', type: 'cycle', presets: [100, 200, 500, 1000, 2000, 4000, 5000, 10000] },
-  { row: 22, field: 'maxInputChars', type: 'cycle', presets: [500, 800, 1000, 1500, 2000, 3000] },
-  { row: 23, field: 'selfCheckEnabled', type: 'toggle' },
-  { row: 24, field: 'selfCheckThreshold', type: 'cycle', presets: [0.4, 0.5, 0.6, 0.7, 0.8] },
-  { row: 25, field: 'memberTagsEnabled', type: 'toggle' },
-  { row: 26, field: 'memberBioEnabled', type: 'toggle' },
-  { row: 27, field: 'useProModel', type: 'toggle' },
-  { row: 28, field: 'visionEnabled', type: 'toggle' },
-];
-
 describe('AdminMenuService', () => {
   let service: AdminMenuService;
   let bot: any;
@@ -230,9 +164,6 @@ describe('AdminMenuService', () => {
   let clientBaseService: any;
   let postSchedulerService: any;
   let yearResultsService: any;
-  let trollService: any;
-  let trollSettings: any;
-  let deepSeek: any;
   let parserModeration: any;
 
   beforeEach(() => {
@@ -278,17 +209,6 @@ describe('AdminMenuService', () => {
       yearResultRepository: { find: jest.fn().mockResolvedValue([]) },
       formatPersonalMessage: jest.fn().mockReturnValue('personal-msg'),
     };
-    trollService = {
-      getAllChats: jest.fn().mockResolvedValue([]),
-      setChatActive: jest.fn().mockResolvedValue(undefined),
-      getChatBiosView: jest.fn().mockResolvedValue([]),
-    };
-    trollSettings = {
-      current: settingsBase(),
-      update: jest.fn().mockResolvedValue(undefined),
-      reset: jest.fn().mockResolvedValue(undefined),
-    };
-    deepSeek = { usage: { requests: 12, tokens: 3456, costUsd: 0.5, peak: false } };
     parserModeration = {
       unscheduleByMessageId: jest.fn().mockResolvedValue(true),
     };
@@ -300,9 +220,6 @@ describe('AdminMenuService', () => {
       clientBaseService,
       postSchedulerService,
       yearResultsService,
-      trollService,
-      trollSettings,
-      deepSeek,
       {
         getMenu: jest.fn().mockReturnValue(new Menu<BotContext>('PARSER_SETTINGS_MENU')),
       } as never,
@@ -343,7 +260,7 @@ describe('AdminMenuService', () => {
     it('ownerGuard: не владельцу показывает отказ и не запускает обработчик', async () => {
       const { menu } = buildAdmin();
       const ctx = makeCtx({ config: { isOwner: false, user: {} } });
-      const btn = await findByText(menu.at('admin-bots'), ctx, (t) => t.includes('Тролль'));
+      const btn = await findByText(menu.at('admin-bots'), ctx, (t) => t.includes('Парсер'));
       await btn.middleware[0](ctx, jest.fn());
       expect(ctx.answerCallbackQuery).toHaveBeenCalledWith('Доступно только владельцу');
       expect(ctx.menu.nav).not.toHaveBeenCalled();
@@ -353,14 +270,14 @@ describe('AdminMenuService', () => {
       const { menu } = buildAdmin();
       const ctx = makeCtx({ config: { isOwner: false, user: {} } });
       ctx.answerCallbackQuery.mockRejectedValue(new Error('query too old'));
-      const btn = await findByText(menu.at('admin-bots'), ctx, (t) => t.includes('Тролль'));
+      const btn = await findByText(menu.at('admin-bots'), ctx, (t) => t.includes('Парсер'));
       await expect(btn.middleware[0](ctx, jest.fn())).resolves.toBeUndefined();
     });
 
     it('ownerGuard: при отсутствии config считает не владельцем', async () => {
       const { menu } = buildAdmin();
       const ctx = makeCtx({ config: undefined });
-      const btn = await findByText(menu.at('admin-bots'), ctx, (t) => t.includes('Тролль'));
+      const btn = await findByText(menu.at('admin-bots'), ctx, (t) => t.includes('Парсер'));
       await btn.middleware[0](ctx, jest.fn());
       expect(ctx.answerCallbackQuery).toHaveBeenCalledWith('Доступно только владельцу');
     });
@@ -368,9 +285,9 @@ describe('AdminMenuService', () => {
     it('ownerGuard: владельцу разрешает навигацию', async () => {
       const { menu } = buildAdmin();
       const ctx = makeCtx();
-      const btn = await findByText(menu.at('admin-bots'), ctx, (t) => t.includes('Тролль'));
+      const btn = await findByText(menu.at('admin-bots'), ctx, (t) => t.includes('Парсер'));
       await btn.middleware[0](ctx, jest.fn());
-      expect(ctx.menu.nav).toHaveBeenCalledWith(AdminMenusEnum.TROLL_SETTINGS_MENU);
+      expect(ctx.menu.nav).toHaveBeenCalledWith(AdminMenusEnum.PARSER_SETTINGS_MENU);
     });
 
     it('главное меню: порядок кнопок и отсутствие дублей', async () => {
@@ -569,6 +486,15 @@ describe('AdminMenuService', () => {
       expect(filled).toContain('https://t.me/c/');
       expect(filled).toContain('@mod');
     });
+
+    it('getPostMessagesGrid: пользовательский пост помечен 👨', () => {
+      const filled = service.getPostMessagesGrid('Утро', PublicationModesEnum.NEXT_MORNING, {
+        [PublicationModesEnum.NEXT_MORNING]: [
+          makePost(PublicationModesEnum.NEXT_MORNING, { isUserPost: true }),
+        ],
+      });
+      expect(filled).toContain('👨');
+    });
   });
 
   describe('сетка публикаций: пагинация и снятие', () => {
@@ -684,6 +610,25 @@ describe('AdminMenuService', () => {
       const text = ctx.editMessageText.mock.calls[0][0];
       expect(text).toContain('15.09 12:30');
       expect(text).not.toContain('@');
+    });
+
+    it('sendSchedulePage: пользовательский пост помечен 👤', async () => {
+      const ctx = makeCtx();
+      postSchedulerService.countUpcoming.mockResolvedValue(1);
+      postSchedulerService.getUpcomingPage.mockResolvedValue([
+        {
+          id: 5,
+          requestChannelMessageId: 9,
+          publishDate: new Date('2026-09-15T09:30:00Z'),
+          processedByModerator: null,
+          isUserPost: true,
+        },
+      ]);
+
+      await service.sendSchedulePage(ctx, 0);
+
+      const text = ctx.editMessageText.mock.calls[0][0];
+      expect(text).toContain('👤');
     });
 
     it('без from новое сообщение уходит владельцу', async () => {
@@ -1065,239 +1010,6 @@ describe('AdminMenuService', () => {
 
       await kb[2][0].middleware[0](ctx, jest.fn());
       expect(ctx.menu.back).toHaveBeenCalled();
-    });
-  });
-
-  describe('troll-settings', () => {
-    it('подписи отражают состояние и покрывают ветки форматирования', async () => {
-      const { menu } = buildAdmin();
-      const ctx = makeCtx();
-      const settingsMenu = menu.at(AdminMenusEnum.TROLL_SETTINGS_MENU);
-
-      trollSettings.current = settingsBase();
-      let kb = await rawKeyboard(settingsMenu, ctx);
-      for (const row of kb) for (const btn of row) if (typeof btn.text === 'function') await btn.text(ctx);
-
-      expect(await buttonText(kb[0][0], ctx)).toBe('Бот: 🟢 включён');
-      expect(await buttonText(kb[2][0], ctx)).toBe('Порог статьи: 50%');
-      expect(await buttonText(kb[4][0], ctx)).toBe('Пауза анализа УК: 10 с');
-      expect(await buttonText(kb[7][0], ctx)).toBe('Пауза сарказма: 5 мин');
-      expect(await buttonText(kb[29][0], ctx)).toContain('DeepSeek');
-      expect(await buttonText(kb[29][0], ctx)).not.toContain('(пик)');
-
-      deepSeek.usage.peak = true;
-      deepSeek.usage.costUsd = 0.00005;
-      trollSettings.current = {
-        ...settingsBase(),
-        enabled: false,
-        criminalEnabled: false,
-        sarcasmEnabled: false,
-        mirrorEnabled: false,
-        reactionEnabled: false,
-        jerkEnabled: false,
-        addressReactionEnabled: false,
-        memeAnnounceEnabled: false,
-        selfCheckEnabled: false,
-        // значения вне пресетов и граничные длительности
-        criminalThreshold: 0.55,
-        criminalHighThreshold: 0.75,
-        sarcasmChance: 0.07,
-        mirrorChance: 0.12,
-        reactionChance: 0.02,
-        memeAnnounceChance: 0.15,
-        selfCheckThreshold: 0.65,
-        analyzeCooldownSec: 0,
-        sarcasmCooldownSec: 3600,
-        mirrorCooldownSec: 30,
-        reactionCooldownSec: 3599,
-        jerkBatchWindowSec: 0,
-        jerkCooldownSec: 0,
-        dialogPauseMin: 0,
-        visionEnabled: false,
-        useProModel: false,
-      };
-      kb = await rawKeyboard(settingsMenu, ctx);
-      for (const row of kb) for (const btn of row) if (typeof btn.text === 'function') await btn.text(ctx);
-
-      expect(await buttonText(kb[0][0], ctx)).toBe('Бот: ⚪️ выключен');
-      expect(await buttonText(kb[4][0], ctx)).toBe('Пауза анализа УК: без паузы');
-      expect(await buttonText(kb[7][0], ctx)).toBe('Пауза сарказма: 1 ч');
-      expect(await buttonText(kb[10][0], ctx)).toBe('Пауза кривляния: 30 с');
-      expect(await buttonText(kb[27][0], ctx)).toBe('Модель ответов: deepseek-flash');
-      expect(await buttonText(kb[28][0], ctx)).toContain('Разбор картинок: ⚪️ выкл');
-      expect(await buttonText(kb[29][0], ctx)).toContain('(пик)');
-      expect(await buttonText(kb[29][0], ctx)).toContain('< $0.0001');
-    });
-
-    it('все переключатели и циклы обновляют настройки', async () => {
-      const { menu } = buildAdmin();
-      const ctx = makeCtx();
-      const settingsMenu = menu.at(AdminMenusEnum.TROLL_SETTINGS_MENU);
-      trollSettings.current = settingsBase();
-      const kb = await rawKeyboard(settingsMenu, ctx);
-
-      for (const row of TROLL_ROWS) {
-        const btn = kb[row.row][0];
-        if (row.type === 'toggle') {
-          trollSettings.current[row.field] = true;
-          trollSettings.update.mockClear();
-          ctx.menu.update.mockClear();
-          await btn.middleware[0](ctx, jest.fn());
-          expect(trollSettings.update).toHaveBeenCalledWith({ [row.field]: false });
-          expect(ctx.menu.update).toHaveBeenCalled();
-
-          trollSettings.current[row.field] = false;
-          trollSettings.update.mockClear();
-          await btn.middleware[0](ctx, jest.fn());
-          expect(trollSettings.update).toHaveBeenCalledWith({ [row.field]: true });
-        } else {
-          trollSettings.current[row.field] = row.presets![0];
-          trollSettings.update.mockClear();
-          ctx.menu.update.mockClear();
-          await btn.middleware[0](ctx, jest.fn());
-          expect(trollSettings.update).toHaveBeenCalledWith({ [row.field]: row.presets![1] });
-          expect(ctx.menu.update).toHaveBeenCalled();
-        }
-      }
-
-      await kb[29][0].middleware[0](ctx, jest.fn());
-      expect(ctx.answerCallbackQuery).toHaveBeenCalledWith('Обновлено');
-
-      await kb[31][0].middleware[0](ctx, jest.fn());
-      expect(ctx.menu.nav).toHaveBeenCalledWith(AdminMenusEnum.TROLL_CHATS_MENU);
-
-      trollSettings.reset.mockClear();
-      await kb[32][0].middleware[0](ctx, jest.fn());
-      expect(trollSettings.reset).toHaveBeenCalled();
-      expect(ctx.answerCallbackQuery).toHaveBeenCalledWith('Настройки сброшены');
-
-      await kb[33][0].middleware[0](ctx, jest.fn());
-      expect(ctx.menu.back).toHaveBeenCalled();
-    });
-
-    it('cycle: для значения вне пресетов берёт ближайший и следующий за ним', async () => {
-      const { menu } = buildAdmin();
-      const ctx = makeCtx();
-      const settingsMenu = menu.at(AdminMenusEnum.TROLL_SETTINGS_MENU);
-      // 0.42 не совпадает с пресетами, ближайший — 0.4, следующий — 0.5
-      trollSettings.current = { ...settingsBase(), criminalThreshold: 0.42 };
-      const kb = await rawKeyboard(settingsMenu, ctx);
-
-      await kb[2][0].middleware[0](ctx, jest.fn());
-
-      expect(trollSettings.update).toHaveBeenCalledWith({ criminalThreshold: 0.5 });
-    });
-  });
-
-  describe('troll-chats', () => {
-    it('пустой список чатов', async () => {
-      const { menu } = buildAdmin();
-      const ctx = makeCtx();
-      trollService.getAllChats.mockResolvedValue([]);
-      const chatsMenu = menu.at(AdminMenusEnum.TROLL_CHATS_MENU);
-      const kb = await rawKeyboard(chatsMenu, ctx);
-
-      expect(kb[0][0].text).toBe('Чатов пока нет');
-      await kb[0][0].middleware[0](ctx, jest.fn());
-      expect(ctx.menu.nav).toHaveBeenCalledWith(AdminMenusEnum.TROLL_SETTINGS_MENU);
-    });
-
-    it('список чатов: emoji состояния и переключение активности', async () => {
-      const { menu } = buildAdmin();
-      const ctx = makeCtx();
-      trollService.getAllChats.mockResolvedValue([
-        { chatId: 1, title: 'Чат', isActive: true },
-        { chatId: 2, title: null, isActive: false },
-      ]);
-      const chatsMenu = menu.at(AdminMenusEnum.TROLL_CHATS_MENU);
-      const kb = await rawKeyboard(chatsMenu, ctx);
-
-      expect(kb[0][0].text).toBe('🟢 Чат');
-      expect(kb[1][0].text).toBe('⚪️ 2');
-      expect(kb[2][0].text).toBe('Назад');
-
-      await kb[0][0].middleware[0](ctx, jest.fn());
-      expect(trollService.setChatActive).toHaveBeenCalledWith(1, false);
-      expect(ctx.menu.update).toHaveBeenCalled();
-
-      await kb[2][0].middleware[0](ctx, jest.fn());
-      expect(ctx.menu.back).toHaveBeenCalled();
-    });
-
-    it('длинное название обрезается до 30 символов, берутся только 40 чатов', async () => {
-      const { menu } = buildAdmin();
-      const ctx = makeCtx();
-      const chats = Array.from({ length: 45 }, (_, i) => ({
-        chatId: i + 1,
-        title: 'Очень длинное название чата номер ' + i,
-        isActive: false,
-      }));
-      trollService.getAllChats.mockResolvedValue(chats);
-      const chatsMenu = menu.at(AdminMenusEnum.TROLL_CHATS_MENU);
-      const kb = await rawKeyboard(chatsMenu, ctx);
-      const labels = kb.map((r) => r[0].text).filter((t) => t !== 'Назад');
-      expect(labels).toHaveLength(40);
-      expect(labels[0].length).toBeLessThanOrEqual('⚪️ '.length + 30);
-    });
-  });
-
-  describe('troll-bios', () => {
-    it('пустой список чатов', async () => {
-      const { menu } = buildAdmin();
-      const ctx = makeCtx();
-      trollService.getAllChats.mockResolvedValue([]);
-      const chatsMenu = menu.at(AdminMenusEnum.TROLL_BIOS_CHATS_MENU);
-      const kb = await rawKeyboard(chatsMenu, ctx);
-
-      expect(kb[0][0].text).toBe('Чатов пока нет');
-      await kb[0][0].middleware[0](ctx, jest.fn());
-      expect(ctx.menu.nav).toHaveBeenCalledWith(AdminMenusEnum.TROLL_SETTINGS_MENU);
-    });
-
-    it('выбор чата и просмотр досье участника', async () => {
-      const { menu } = buildAdmin();
-      const ctx = makeCtx();
-      trollService.getAllChats.mockResolvedValue([{ chatId: 77, title: 'Чат', isActive: true }]);
-      trollService.getChatBiosView.mockResolvedValue([
-        { userId: 1, userName: 'Вася', bio: '- Живёт в СПб' },
-      ]);
-
-      const chatsMenu = menu.at(AdminMenusEnum.TROLL_BIOS_CHATS_MENU);
-      const chatsKb = await rawKeyboard(chatsMenu, ctx);
-      await chatsKb[0][0].middleware[0](ctx, jest.fn());
-      expect(ctx.menu.nav).toHaveBeenCalledWith(AdminMenusEnum.TROLL_BIOS_MENU);
-
-      const biosMenu = menu.at(AdminMenusEnum.TROLL_BIOS_MENU);
-      const kb = await rawKeyboard(biosMenu, ctx);
-      expect(kb[0][0].text).toBe('Вася');
-      await kb[0][0].middleware[0](ctx, jest.fn());
-      expect(ctx.reply).toHaveBeenCalledWith(expect.stringContaining('Живёт в СПб'));
-
-      await kb[1][0].middleware[0](ctx, jest.fn());
-      expect(ctx.menu.back).toHaveBeenCalled();
-    });
-
-    it('биографий пока нет', async () => {
-      const { menu } = buildAdmin();
-      const ctx = makeCtx();
-      trollService.getAllChats.mockResolvedValue([{ chatId: 77, title: 'Чат', isActive: true }]);
-      trollService.getChatBiosView.mockResolvedValue([]);
-      const chatsMenu = menu.at(AdminMenusEnum.TROLL_BIOS_CHATS_MENU);
-      const chatsKb = await rawKeyboard(chatsMenu, ctx);
-      await chatsKb[0][0].middleware[0](ctx, jest.fn());
-      const biosMenu = menu.at(AdminMenusEnum.TROLL_BIOS_MENU);
-      const kb = await rawKeyboard(biosMenu, ctx);
-      expect(kb[0][0].text).toBe('Биографий пока нет');
-    });
-
-    it('чат не выбран', async () => {
-      const { menu } = buildAdmin();
-      const ctx = makeCtx();
-      const biosMenu = menu.at(AdminMenusEnum.TROLL_BIOS_MENU);
-      const kb = await rawKeyboard(biosMenu, ctx);
-      expect(kb[0][0].text).toBe('Чат не выбран');
-      await kb[0][0].middleware[0](ctx, jest.fn());
-      expect(ctx.menu.nav).toHaveBeenCalledWith(AdminMenusEnum.TROLL_BIOS_CHATS_MENU);
     });
   });
 

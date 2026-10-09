@@ -67,7 +67,6 @@ function setup() {
     createPublishedPostHash: jest.fn().mockResolvedValue(undefined),
   };
   const mattermostService = { sendPostWithFile: jest.fn().mockResolvedValue(undefined) };
-  const trollService = { maybeRepostMeme: jest.fn().mockResolvedValue(undefined) };
   const parserSettings = { current: { legacyEnabled: true } };
 
   const service = new ObservatoryService(
@@ -80,7 +79,6 @@ function setup() {
     cringeManagementService as any,
     deduplicationService as any,
     mattermostService as any,
-    trollService as any,
     parserSettings as any
   );
 
@@ -95,7 +93,6 @@ function setup() {
     cringeManagementService,
     deduplicationService,
     mattermostService,
-    trollService,
   };
 }
 
@@ -529,7 +526,6 @@ describe('ObservatoryService', () => {
         settingsService,
         deduplicationService,
         observatoryPostRepository,
-        trollService,
       } = setup();
       bot.api.copyMessage.mockResolvedValue({ message_id: 55 });
       settingsService.channelHtmlLinkIfPrivate.mockResolvedValue('<a>канал</a>');
@@ -565,7 +561,6 @@ describe('ObservatoryService', () => {
         }
       );
       expect(deduplicationService.createPublishedPostHash).toHaveBeenCalledWith('hash', 55);
-      expect(trollService.maybeRepostMeme).toHaveBeenCalledWith(baseConfigService.memeChanelId, 55);
     });
 
     it('для ночного кринжа берёт ссылку кринж-канала и обновляет его репозиторий', async () => {
@@ -846,6 +841,84 @@ describe('ObservatoryService', () => {
       const handler = bot.callbackQuery.mock.calls.find((c) => String(c[0]).includes('obsched:unsch'))[1];
       await handler(ctx, undefined);
       expect(ctx.answerCallbackQuery).toHaveBeenCalledWith('Нет прав');
+    });
+
+    it('снятие: пост уже снят, отмена без расписания, обработчики терпят отсутствие match', async () => {
+      const { service, bot, userService, postSchedulerService } = setup();
+      service.onModuleInit();
+      userService.checkPermission.mockReturnValue(true);
+      const ctx = { ...makeCtx(), answerCallbackQuery: jest.fn() } as any;
+      const calls: any[] = bot.callbackQuery.mock.calls;
+      const find = (needle: string) => calls.find((c) => String(c[0]).includes(needle))[1];
+
+      postSchedulerService.removeByRequestMessageId.mockResolvedValue(0);
+      await find('obsched:unschok:').call(null, { ...ctx, match: ['obsched:unschok:11', '11'] });
+      expect(ctx.answerCallbackQuery).toHaveBeenCalledWith('Уже снято');
+
+      postSchedulerService.findByRequestMessageId.mockResolvedValue(null);
+      await find('obsched:unschcancel:').call(null, {
+        ...ctx,
+        match: ['obsched:unschcancel:11', '11'],
+      });
+      expect(ctx.answerCallbackQuery).toHaveBeenCalledWith('Оставлено');
+
+      await find('obsched:unsch:').call(null, { ...ctx, match: undefined });
+      await find('obsched:unschok:').call(null, { ...ctx, match: undefined });
+      expect(bot.api.editMessageReplyMarkup).toHaveBeenCalled();
+    });
+  });
+
+  describe('resolveSource и buildSource', () => {
+    it('без сообщения — null', () => {
+      const { service } = setup();
+      expect((service as any).resolveSource(null)).toBeNull();
+    });
+
+    it('forward_origin channel/chat даёт источник через buildSource', () => {
+      const { service } = setup();
+      const viaChannel = (service as any).resolveSource({
+        forward_origin: {
+          type: 'channel',
+          chat: { id: -100123, username: 'src', title: 'Src' },
+          message_id: 7,
+        },
+      });
+      expect(viaChannel).toEqual({
+        chatId: -100123,
+        messageId: 7,
+        username: 'src',
+        title: 'Src',
+        url: expect.any(String),
+      });
+
+      const noMessageId = (service as any).resolveSource({
+        forward_origin: { type: 'chat', chat: { id: 'x' } },
+      });
+      expect(noMessageId).toMatchObject({
+        chatId: null,
+        messageId: null,
+        username: null,
+        title: null,
+      });
+    });
+
+    it('fallback на legacy forward_from_chat', () => {
+      const { service } = setup();
+      const source = (service as any).resolveSource({
+        forward_from_chat: { id: 55, title: 'Old' },
+        forward_from_message_id: 9,
+      });
+      expect(source).toMatchObject({ chatId: 55, messageId: 9, title: 'Old', username: null });
+
+      const noMessageId = (service as any).resolveSource({
+        forward_from_chat: { id: 56, title: 'Old2' },
+      });
+      expect(noMessageId).toMatchObject({ chatId: 56, messageId: null });
+    });
+
+    it('без заголовка форварда — null', () => {
+      const { service } = setup();
+      expect((service as any).resolveSource({})).toBeNull();
     });
   });
 });

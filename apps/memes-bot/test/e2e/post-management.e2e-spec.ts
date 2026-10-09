@@ -9,7 +9,6 @@ import { DeduplicationService } from '../../src/app/modules/bot/services/dedupli
 import { ObservatoryPostEntity } from '../../src/app/modules/observatory/entities/observatory-post.entity';
 import { PublicationModesEnum } from '../../src/app/modules/post-management/constants/publication-modes.enum';
 import { UserPostManagementService } from '../../src/app/modules/post-management/user-post-management.service';
-import { TrollSettingsService } from '../../src/app/modules/troll/services/troll-settings.service';
 
 /**
  * imghash детерминирован в тестах: дедупликация должна сравнивать хеши реальным

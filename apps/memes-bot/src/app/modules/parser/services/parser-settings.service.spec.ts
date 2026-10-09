@@ -14,7 +14,7 @@ const makeConfig = (overrides: Record<string, unknown> = {}): any => ({
 const row = (overrides: Record<string, unknown> = {}) => ({ id: PARSER_SETTINGS_ID, ...overrides });
 
 describe('ParserSettingsService', () => {
-  it('без строки в БД — дефолты (клон TrollSettings-паттерна)', async () => {
+  it('без строки в БД — дефолты (singleton-паттерн настроек)', async () => {
     const repo = makeRepo();
     repo.findOne.mockResolvedValue(null);
     const service = new ParserSettingsService(repo, makeConfig());

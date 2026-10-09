@@ -4,7 +4,6 @@ import { ClientModule } from '../client/client.module';
 import { ParserModule } from '../parser/parser.module';
 import { AppConfigModule } from '../config/app-config.module';
 import { PostManagementModule } from '../post-management/post-management.module';
-import { TrollModule } from '../troll/troll.module';
 import { YearResultsModule } from '../year-results/year-results.module';
 import { AdminMenuService } from './admin-menu.service';
 import { MainMenuService } from './main-menu.service';
@@ -18,7 +17,6 @@ import { ModeratorMenuService } from './moderator-menu.service';
     ClientModule,
     ParserModule,
     YearResultsModule,
-    TrollModule,
   ],
   providers: [MainMenuService, AdminMenuService, ModeratorMenuService],
   exports: [MainMenuService],

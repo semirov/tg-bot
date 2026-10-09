@@ -3,14 +3,19 @@ import axios, { AxiosInstance } from 'axios';
 import { metrics } from '../../../shared/metrics';
 import { BaseConfigService } from '../../config/base-config.service';
 import {
-  TROLL_HARD_MAX_TOKENS,
-  TROLL_LLM_MAX_RETRIES,
-  TROLL_LLM_RETRY_DELAY_MS,
-  TROLL_LLM_TIMEOUT_MS,
-  TROLL_MAX_CONCURRENT_REQUESTS,
-  TROLL_VISION_MAX_TOKENS,
-} from '../constants/troll-limits';
-import { DeepSeekContentPart, DeepSeekDailyUsage, DeepSeekMessage, DeepSeekOptions } from '../interfaces/troll.interface';
+  LLM_HARD_MAX_TOKENS,
+  LLM_MAX_CONCURRENT_REQUESTS,
+  LLM_MAX_RETRIES,
+  LLM_RETRY_DELAY_MS,
+  LLM_TIMEOUT_MS,
+  LLM_VISION_MAX_TOKENS,
+} from '../constants/llm-limits';
+import {
+  DeepSeekContentPart,
+  DeepSeekDailyUsage,
+  DeepSeekMessage,
+  DeepSeekOptions,
+} from '../interfaces/deepseek.interface';
 import { parseLlmJson } from '../utils/llm-json';
 import {
   DeepSeekTariff,
@@ -18,7 +23,6 @@ import {
   formatUsd,
   isDeepSeekPeak,
 } from '../constants/deepseek-pricing';
-import { TrollSettingsService } from './troll-settings.service';
 
 /**
  * Клиент для DeepSeek API (OpenAI-совместимый /chat/completions).
@@ -26,7 +30,7 @@ import { TrollSettingsService } from './troll-settings.service';
  * Все вызовы проходят через защиту от перерасхода токенов:
  *  - жёсткий потолок max_tokens на запрос;
  *  - лимит одновременных запросов;
- *  - суточный лимит запросов (настраивается в админке);
+ *  - суточный лимит запросов (задаётся через `DEEPSEEK_DAILY_REQUEST_LIMIT`);
  *  - таймаут на запрос и один повтор при сетевом сбое/таймауте.
  * Плюс ведётся учёт суточного расхода: запросы, токены и стоимость в долларах
  * по официальному тарифу DeepSeek (см. constants/deepseek-pricing.ts).
@@ -52,20 +56,17 @@ export class DeepSeekService {
   private dailyByModel = new Map<string, { requests: number; tokens: number; costUsd: number }>();
   private lastBudgetWarnAt = 0;
 
-  constructor(
-    private readonly config: BaseConfigService,
-    private readonly settings: TrollSettingsService
-  ) {
+  constructor(private readonly config: BaseConfigService) {
     this.enabled = !!this.config.deepseekApiKey;
     if (!this.enabled) {
       this.logger.error(
-        'DEEPSEEK_API_KEY не задан — тролль-бот не сможет обращаться к модели (LLM-ответы выключены)'
+        'DEEPSEEK_API_KEY не задан — LLM-функции выключены (запросы к модели не отправляются)'
       );
     }
 
     this.client = axios.create({
       baseURL: this.config.deepseekBaseUrl,
-      timeout: TROLL_LLM_TIMEOUT_MS,
+      timeout: LLM_TIMEOUT_MS,
       headers: {
         Authorization: `Bearer ${this.config.deepseekApiKey}`,
         'Content-Type': 'application/json',
@@ -74,20 +75,13 @@ export class DeepSeekService {
   }
 
   /**
-   * Главная модель текстовых ответов. Тумблер в админке: pro (по умолчанию)
-   * или flash. Если настройка недоступна (узкие тесты) — откат на
-   * `DEEPSEEK_MODEL` из env. Разбор картинок этот геттер не использует:
-   * vision всегда идёт на `deepseekVisionModel`.
+   * Главная модель текстовых ответов. Флаг `DEEPSEEK_USE_PRO_MODEL` (по умолчанию
+   * включён) выбирает `deepseek-v4-pro`; при выключенном берётся `DEEPSEEK_MODEL`.
+   * Разбор картинок этот геттер не использует: vision всегда идёт на
+   * `deepseekVisionModel`.
    */
   private get mainModel(): string {
-    const usePro = this.settings.current.useProModel;
-    if (usePro === true) {
-      return 'deepseek-v4-pro';
-    }
-    if (usePro === false) {
-      return 'deepseek-flash';
-    }
-    return this.config.deepseekModel;
+    return this.config.deepseekUseProModel ? 'deepseek-v4-pro' : this.config.deepseekModel;
   }
 
   /**
@@ -99,9 +93,9 @@ export class DeepSeekService {
     options: DeepSeekOptions = {}
   ): Promise<string> {
     const { temperature = 0.9, maxTokens = 400, json = false, label, model } = options;
-    // Модель можно переопределить для отдельного вызова: диагностика дефекта
-    // идёт на старшей модели, vision — на модели с распознаванием, а вся
-    // остальная работа — на главной модели из админ-тумблера (pro/flash).
+    // Модель можно переопределить для отдельного вызова: vision (разбор
+    // картинок) идёт на модели с распознаванием, остальные вызовы — на
+    // главной модели из настроек (pro/flash).
     const useModel = model ?? this.mainModel;
     const llmLabel = label ?? 'default';
     if (!this.enabled) {
@@ -111,7 +105,7 @@ export class DeepSeekService {
     const tag = label ? `[${label}] ` : '';
     const cappedMaxTokens = Math.min(
       Math.max(1, Math.floor(maxTokens)),
-      TROLL_HARD_MAX_TOKENS
+      LLM_HARD_MAX_TOKENS
     );
 
     if (!this.tryAcquire()) {
@@ -177,7 +171,7 @@ export class DeepSeekService {
     let lastError: unknown;
     const reasoningEffort = this.config.deepseekReasoningEffort;
 
-    for (let attempt = 0; attempt <= TROLL_LLM_MAX_RETRIES; attempt += 1) {
+    for (let attempt = 0; attempt <= LLM_MAX_RETRIES; attempt += 1) {
       const startedAt = Date.now();
       try {
         const response = await this.client.post('/chat/completions', {
@@ -193,7 +187,7 @@ export class DeepSeekService {
 
         this.recordUsage(response.data?.usage, model);
 
-        const limit = this.settings.current.dailyRequestLimit;
+        const limit = this.config.deepseekDailyRequestLimit;
         this.logger.log(
           `${tag}DeepSeek: ответ за ${Date.now() - startedAt}мс, tokens=${
             response.data?.usage?.total_tokens ?? '?'
@@ -214,16 +208,16 @@ export class DeepSeekService {
         return content;
       } catch (error) {
         lastError = error;
-        const canRetry = attempt < TROLL_LLM_MAX_RETRIES && this.isRetriable(error);
+        const canRetry = attempt < LLM_MAX_RETRIES && this.isRetriable(error);
         this.logger.warn(
           `${tag}DeepSeek: запрос не удался за ${Date.now() - startedAt}мс — ${this.describeError(
             error
-          )}${canRetry ? `, повтор ${attempt + 1}/${TROLL_LLM_MAX_RETRIES}` : ''}`
+          )}${canRetry ? `, повтор ${attempt + 1}/${LLM_MAX_RETRIES}` : ''}`
         );
         if (!canRetry) {
           throw error;
         }
-        await this.delay(TROLL_LLM_RETRY_DELAY_MS);
+        await this.delay(LLM_RETRY_DELAY_MS);
       }
     }
 
@@ -332,7 +326,7 @@ export class DeepSeekService {
     }
   ): Promise<string | null> {
     const label = options.label ?? 'vision';
-    const maxTokens = options.maxTokens ?? TROLL_VISION_MAX_TOKENS;
+    const maxTokens = options.maxTokens ?? LLM_VISION_MAX_TOKENS;
     const content: DeepSeekContentPart[] = [
       { type: 'text', text: options.prompt },
       {
@@ -355,7 +349,7 @@ export class DeepSeekService {
     }
   }
 
-  /** Текущее потребление DeepSeek за сутки (для админки). */
+  /** Текущее потребление DeepSeek за сутки (наблюдаемость). */
   public get usage(): { requests: number; tokens: number; costUsd: number; peak: boolean } {
     this.rolloverCounters();
     this.syncDailyGauges();
@@ -368,7 +362,7 @@ export class DeepSeekService {
   }
 
   /**
-   * Суточный расход с разбивкой по моделям — для отчёта владельцу в конце дня.
+   * Суточный расход с разбивкой по моделям — сводка по расходу за день.
    * Модели отсортированы по стоимости (дороже — выше).
    */
   public get dailyReport(): DeepSeekDailyUsage {
@@ -391,7 +385,7 @@ export class DeepSeekService {
     metrics.llm.dailyRequests.set(this.dailyRequests);
     metrics.llm.dailyTokens.set(this.dailyTokens);
     metrics.llm.dailyCostUsd.set(this.dailyCostUsd);
-    metrics.llm.dailyLimit.set(this.settings.current.dailyRequestLimit);
+    metrics.llm.dailyLimit.set(this.config.deepseekDailyRequestLimit);
   }
 
   /**
@@ -401,17 +395,17 @@ export class DeepSeekService {
   private tryAcquire(): boolean {
     this.rolloverCounters();
 
-    const limit = this.settings.current.dailyRequestLimit;
+    const limit = this.config.deepseekDailyRequestLimit;
     if (limit > 0 && this.dailyRequests >= limit) {
       metrics.llm.limitHits.inc({ reason: 'daily' });
       this.warnBudgetOnce(`DeepSeek daily request limit reached (${this.dailyRequests}/${limit})`);
       return false;
     }
 
-    if (this.activeRequests >= TROLL_MAX_CONCURRENT_REQUESTS) {
+    if (this.activeRequests >= LLM_MAX_CONCURRENT_REQUESTS) {
       metrics.llm.limitHits.inc({ reason: 'concurrency' });
       this.warnBudgetOnce(
-        `DeepSeek concurrency limit reached (${this.activeRequests}/${TROLL_MAX_CONCURRENT_REQUESTS})`
+        `DeepSeek concurrency limit reached (${this.activeRequests}/${LLM_MAX_CONCURRENT_REQUESTS})`
       );
       return false;
     }
@@ -590,7 +584,7 @@ export class DeepSeekService {
         status === undefined &&
         (error.code === 'ECONNABORTED' || /abort|timeout/i.test(error.message))
       ) {
-        return `таймаут ${Math.round(TROLL_LLM_TIMEOUT_MS / 1000)}с`;
+        return `таймаут ${Math.round(LLM_TIMEOUT_MS / 1000)}с`;
       }
       if (status !== undefined && status >= 500) {
         return `ошибка на стороне DeepSeek (status ${status})`;

@@ -79,7 +79,6 @@ describe('BaseConfigService', () => {
       ['deepseekModel', 'DEEPSEEK_MODEL', 'deepseek-flash'],
       ['deepseekVisionModel', 'DEEPSEEK_VISION_MODEL', 'deepseek-flash'],
       ['deepseekReasoningEffort', 'DEEPSEEK_REASONING_EFFORT', 'none'],
-      ['deepseekJudgeModel', 'DEEPSEEK_JUDGE_MODEL', 'deepseek-v4-pro'],
       ['deepseekApiKey', 'DEEPSEEK_API_KEY', ''],
     ];
 
@@ -105,48 +104,75 @@ describe('BaseConfigService', () => {
     });
   });
 
-  describe('числовые переменные с дефолтом (getNumber)', () => {
-    const cases: Array<[string, string, number]> = [
-      ['trollSarcasmChance', 'TROLL_SARCASM_CHANCE', 0.05],
-      ['trollSarcasmCooldown', 'TROLL_SARCASM_COOLDOWN', 300],
-      ['trollMirrorChance', 'TROLL_MIRROR_CHANCE', 0.05],
-      ['trollMirrorCooldown', 'TROLL_MIRROR_COOLDOWN', 300],
-      ['trollReactionChance', 'TROLL_REACTION_CHANCE', 0.05],
-      ['trollReactionCooldown', 'TROLL_REACTION_COOLDOWN', 60],
-      ['trollMemeAnnounceChance', 'TROLL_MEME_ANNOUNCE_CHANCE', 0.1],
-      ['trollCriminalThreshold', 'TROLL_CRIMINAL_THRESHOLD', 0.5],
-      ['trollCriminalHighThreshold', 'TROLL_CRIMINAL_HIGH_THRESHOLD', 0.8],
-      ['trollAnalyzeCooldown', 'TROLL_ANALYZE_COOLDOWN', 15],
-      ['trollJerkBatchWindow', 'TROLL_JERK_BATCH_WINDOW', 15],
-      ['trollJerkCooldown', 'TROLL_JERK_COOLDOWN', 180],
-      ['trollDialogPauseMin', 'TROLL_DIALOG_PAUSE_MIN', 15],
-      ['trollDailyRequestLimit', 'TROLL_DAILY_REQUEST_LIMIT', 4000],
-      ['trollMaxInputChars', 'TROLL_MAX_INPUT_CHARS', 1000],
-      ['trollSelfCheckThreshold', 'TROLL_SELF_CHECK_THRESHOLD', 0.6],
-    ];
-
-    it.each(cases)('%s парсит %s', (prop, key) => {
-      const service = new BaseConfigService(makeConfig({ [key]: '7.5' }));
-      expect(getter(service, prop)).toBe(7.5);
+  describe('deepseekUseProModel', () => {
+    it('по умолчанию включён', () => {
+      expect(getter(new BaseConfigService(makeConfig({})), 'deepseekUseProModel')).toBe(true);
     });
 
-    it.each(cases)('%s отдаёт дефолт, когда env нет', (prop, _key, fallback) => {
+    it('выключается строкой "false" (регистр не важен), пустая строка — дефолт', () => {
+      expect(
+        getter(new BaseConfigService(makeConfig({ DEEPSEEK_USE_PRO_MODEL: 'false' })), 'deepseekUseProModel')
+      ).toBe(false);
+      expect(
+        getter(new BaseConfigService(makeConfig({ DEEPSEEK_USE_PRO_MODEL: 'FALSE' })), 'deepseekUseProModel')
+      ).toBe(false);
+      expect(
+        getter(new BaseConfigService(makeConfig({ DEEPSEEK_USE_PRO_MODEL: 'true' })), 'deepseekUseProModel')
+      ).toBe(true);
+      expect(
+        getter(new BaseConfigService(makeConfig({ DEEPSEEK_USE_PRO_MODEL: '' })), 'deepseekUseProModel')
+      ).toBe(true);
+      expect(
+        getter(new BaseConfigService(makeConfig({ DEEPSEEK_USE_PRO_MODEL: null })), 'deepseekUseProModel')
+      ).toBe(true);
+    });
+  });
+
+  describe('parserEnabled', () => {
+    it('по умолчанию включён', () => {
+      expect(getter(new BaseConfigService(makeConfig({})), 'parserEnabled')).toBe(true);
+    });
+
+    it('выключается только строкой "false" (регистр не важен), пустая строка — дефолт', () => {
+      expect(
+        getter(new BaseConfigService(makeConfig({ PARSER_ENABLED: 'false' })), 'parserEnabled')
+      ).toBe(false);
+      expect(
+        getter(new BaseConfigService(makeConfig({ PARSER_ENABLED: 'FALSE' })), 'parserEnabled')
+      ).toBe(false);
+      expect(
+        getter(new BaseConfigService(makeConfig({ PARSER_ENABLED: 'true' })), 'parserEnabled')
+      ).toBe(true);
+      expect(
+        getter(new BaseConfigService(makeConfig({ PARSER_ENABLED: '' })), 'parserEnabled')
+      ).toBe(true);
+      expect(
+        getter(new BaseConfigService(makeConfig({ PARSER_ENABLED: null })), 'parserEnabled')
+      ).toBe(true);
+    });
+  });
+
+  describe('числовые переменные с дефолтом (getNumber)', () => {
+    it('deepseekDailyRequestLimit парсит значение', () => {
+      const service = new BaseConfigService(makeConfig({ DEEPSEEK_DAILY_REQUEST_LIMIT: '7.5' }));
+      expect(getter(service, 'deepseekDailyRequestLimit')).toBe(7.5);
+    });
+
+    it('deepseekDailyRequestLimit отдаёт дефолт, когда env нет', () => {
       const service = new BaseConfigService(makeConfig({}));
-      expect(getter(service, prop)).toBe(fallback);
+      expect(getter(service, 'deepseekDailyRequestLimit')).toBe(2000);
     });
 
     it('нечисловое значение откатывается к дефолту', () => {
       const service = new BaseConfigService(
-        makeConfig({ TROLL_SARCASM_CHANCE: 'не число', TROLL_MIRROR_CHANCE: 'Infinity' })
+        makeConfig({ DEEPSEEK_DAILY_REQUEST_LIMIT: 'Infinity' })
       );
-      expect(getter(service, 'trollSarcasmChance')).toBe(0.05);
-      // Infinity не проходит Number.isFinite — тоже дефолт.
-      expect(getter(service, 'trollMirrorChance')).toBe(0.05);
+      expect(getter(service, 'deepseekDailyRequestLimit')).toBe(2000);
     });
 
     it('пустая строка — это отсутствие значения, а не 0', () => {
-      const service = new BaseConfigService(makeConfig({ TROLL_DAILY_REQUEST_LIMIT: '' }));
-      expect(getter(service, 'trollDailyRequestLimit')).toBe(4000);
+      const service = new BaseConfigService(makeConfig({ DEEPSEEK_DAILY_REQUEST_LIMIT: '' }));
+      expect(getter(service, 'deepseekDailyRequestLimit')).toBe(2000);
     });
   });
 
