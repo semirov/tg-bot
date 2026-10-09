@@ -48,7 +48,10 @@ echo "==> Push образа ${VERSION}"
 docker push "${DEPLOY_IMAGE}:${VERSION}"
 
 # Транспорт к серверу: ключ, если задан, иначе пароль через askpass.
-SSH_BASE=(ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=15)
+# ServerAlive*: SSH к прод-VPS периодически рвётся по idle (TRL-425) — держим
+# соединение живым во время длинного remote-скрипта (pull/run/sleep/logs).
+SSH_BASE=(ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=15 \
+  -o ServerAliveInterval=15 -o ServerAliveCountMax=30 -o TCPKeepAlive=yes)
 if [ -n "${DEPLOY_SSH_KEY:-}" ]; then
   SSH_BASE+=(-i "$DEPLOY_SSH_KEY")
   ssh_cmd() { "${SSH_BASE[@]}" "${DEPLOY_USER}@${DEPLOY_HOST}" "$@"; }
