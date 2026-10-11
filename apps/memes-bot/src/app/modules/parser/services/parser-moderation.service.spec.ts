@@ -331,12 +331,18 @@ describe('ParserModerationService', () => {
 
       await service.handleAction(ctx, 'now', 10);
 
-      expect((service as never as { bot: any }).bot.api.copyMessage).toHaveBeenCalledWith(
-        -1001111111111,
-        -1004444444444,
-        7777,
-        expect.objectContaining({ parse_mode: 'HTML', caption: expect.stringContaining('t.me/c/') })
+      const call = ((service as never as { bot: any }).bot.api.copyMessage as jest.Mock).mock.calls[0];
+      expect(call[0]).toBe(-1001111111111);
+      expect(call[1]).toBe(-1004444444444);
+      expect(call[2]).toBe(7777);
+      const options = call[3];
+      expect(options).toEqual(
+        expect.objectContaining({ parse_mode: 'HTML', disable_notification: true })
       );
+      // TGB-108: служебная подпись карточки («источник») в публикацию не попадает.
+      expect(options.caption).toBe('');
+      expect(options.caption).not.toContain('источник');
+      expect(options.caption).not.toContain('t.me/c/');
       expect(observedRepo.save).toHaveBeenCalledWith(
         expect.objectContaining({ status: ObservedStatus.PUBLISHED, publishedMessageId: 8888 })
       );
@@ -663,12 +669,17 @@ describe('ParserModerationService', () => {
     });
   });
 
-  describe('publishCaption', () => {
-    it('без источника пусто; с источником — внутренняя ссылка', () => {
-      const { service } = setup();
-      const cast = service as never as { publishCaption: (c: unknown) => string };
-      expect(cast.publishCaption(candidate({ sourceChatId: null }))).toBe('');
-      expect(cast.publishCaption(candidate({ sourceChatId: '-1000000000123' }))).toContain('t.me/c/123');
+  describe('publish now caption', () => {
+    it('не переносит источник карточки в публикуемый пост, disable_notification сохраняется', async () => {
+      const { service, bot } = setup({ candidate: { sourceChatId: '-1000000000123' } });
+      const ctx = makeCtx();
+
+      await service.handleAction(ctx, 'now', 10);
+
+      const options = (bot.api.copyMessage as jest.Mock).mock.calls[0][3];
+      expect(options.caption).toBe('');
+      expect(options.caption).not.toContain('https://t.me/c/123');
+      expect(options.disable_notification).toBe(true);
     });
   });
 

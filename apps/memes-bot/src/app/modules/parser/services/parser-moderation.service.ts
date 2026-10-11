@@ -6,7 +6,7 @@ import { InlineKeyboard } from 'grammy';
 import { BOT } from '../../bot/providers/bot.provider';
 import { BotContext } from '../../bot/interfaces/bot-context.interface';
 import { UserPermissionEnum } from '../../bot/constants/user-permission.enum';
-import { channelInternalId, escapeHtml } from '../../../shared/publication/telegram-link';
+import { escapeHtml } from '../../../shared/publication/telegram-link';
 import { UserService } from '../../bot/services/user.service';
 import { PublicationModesEnum } from '../../post-management/constants/publication-modes.enum';
 import {
@@ -233,7 +233,7 @@ export class ParserModerationService {
     await ctx.answerCallbackQuery('Вернул в модерацию');
   }
 
-  /** Публикация сейчас: копия в основной канал + ссылка на источник. */
+  /** Публикация сейчас: копия в основной канал без служебной подписи (TGB-21 AC#4). */
   public async publishNow(ctx: BotContext, candidate: ObservedPostEntity): Promise<void> {
     try {
       const published = await this.bot.api.copyMessage(
@@ -241,7 +241,8 @@ export class ParserModerationService {
         this.config.userRequestMemeChannel,
         Number(candidate.requestChannelMessageId),
         {
-          caption: this.publishCaption(candidate),
+          // Служебная подпись карточки (ссылка на источник) в публикацию не попадает.
+          caption: '',
           parse_mode: 'HTML',
           disable_notification: true,
         }
@@ -433,13 +434,6 @@ export class ParserModerationService {
   private async rememberPublishedHash(candidate: ObservedPostEntity, messageId: number): Promise<void> {
     const hash = candidate.imageHash ?? candidate.perceptualHash;
     if (hash) await this.deduplication.createPublishedPostHash(hash, messageId);
-  }
-
-  /** Подпись публикуемого поста: только ссылка на источник (политика TGB-21). */
-  private publishCaption(candidate: ObservedPostEntity): string {
-    if (!candidate.sourceChatId) return '';
-    const internal = channelInternalId(Number(candidate.sourceChatId));
-    return internal ? `<a href="https://t.me/c/${internal}">источник</a>` : '';
   }
 
   private async replaceKeyboard(ctx: BotContext, keyboard: InlineKeyboard): Promise<void> {
