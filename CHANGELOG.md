@@ -1,3 +1,10 @@
+## [0.41.3](https://github.com/semirov/tg-bot/compare/v0.41.2...v0.41.3) (2026-10-11)
+
+
+### Bug Fixes
+
+* **parser:** drop the «источник» service caption from published posts (TGB-108) ([7e8bc3a](https://github.com/semirov/tg-bot/commit/7e8bc3a4267d08ecb46a22ed04edf2fcae0b8a10))
+
 ## [0.41.2](https://github.com/semirov/tg-bot/compare/v0.41.1...v0.41.2) (2026-10-09)
 
 
