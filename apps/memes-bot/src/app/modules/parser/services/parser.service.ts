@@ -145,21 +145,32 @@ export class ParserService implements OnModuleInit {
     }
   }
 
-  /** Оценка кандидатов, каждые 15 минут. */
+  /**
+   * Оценка кандидатов, каждые 15 минут: первичная оценка pre/final, затем
+   * актуализация уже оценённого пула (перечитать метрики и пересечения).
+   */
   @Cron('*/15 * * * *', { timeZone: 'Europe/Moscow' })
   public async onEvaluate(): Promise<void> {
     if (!this.enabled || this.busy.evaluate) return;
     this.busy.evaluate = true;
     try {
-      await this.runJob('evaluate', () => this.evaluator.evaluateDue());
+      await this.runJob('evaluate', async () => {
+        const evaluated = await this.evaluator.evaluateDue();
+        const refreshed = await this.evaluator.refreshScored();
+        const { expired, forced } = this.evaluator.lastEvaluateStats;
+        this.logger.log(
+          `Parser evaluate: evaluated=${evaluated} refreshed=${refreshed} expired=${expired} forced=${forced}`
+        );
+      });
     } finally {
       this.busy.evaluate = false;
     }
   }
 
   /**
-   * Каждые 20 минут: форс-посты уходят сразу, затем авто-выдача оценённых
-   * постов в предложку (квоты внутри селектора), затем старение бэклога.
+   * Каждые 20 минут: форс-посты уходят сразу, затем авто-выдача лучших
+   * оценённых постов в предложку (дневной разгон и кап на источник внутри
+   * селектора), затем старение бэклога.
    * Ручной «Ещё 20»/`/more` остаётся добором поверх.
    */
   @Cron('*/20 * * * *', { timeZone: 'Europe/Moscow' })
@@ -168,9 +179,14 @@ export class ParserService implements OnModuleInit {
     this.busy.select = true;
     try {
       await this.runJob('select', async () => {
-        await this.selector.deliverForced();
-        await this.selector.deliverDue();
+        const quota = await this.selector.remainingQuota();
+        const forced = await this.selector.deliverForced();
+        const delivered = await this.selector.deliverDue();
         await this.selector.ageBacklog();
+        const backlog = await this.selector.countBacklog();
+        this.logger.log(
+          `Parser select: delivered=${delivered} quota=${quota} backlog=${backlog} forced=${forced}`
+        );
       });
     } finally {
       this.busy.select = false;

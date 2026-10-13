@@ -13,13 +13,25 @@ export class ParserSettingsEntity {
   @Column('bool', { default: true })
   enabled: boolean;
 
-  /** Посты из парсера в предложку за сутки (0 = безлимит). */
-  @Column('int', { default: 0 })
+  /** Посты из парсера в предложку за сутки (0 = безлимит, но с порцией/цикл). */
+  @Column('int', { default: 200 })
   dailyLimit: number;
 
   /** Максимум постов с одного источника за сутки (0 = безлимит). */
-  @Column('int', { default: 0 })
+  @Column('int', { default: 10 })
   sourceDailyCap: number;
+
+  /** Сколько SCORED-постов актуализируем (`refreshScored`) за один прогон. */
+  @Column('int', { default: 120 })
+  refreshBatchSize: number;
+
+  /** Через сколько часов после оценки пост снова считаем протухшим. */
+  @Column('int', { default: 12 })
+  refreshStaleHours: number;
+
+  /** Окно (часы) повторного поиска пересечений при актуализации пула. */
+  @Column('int', { default: 168 })
+  forceRefreshWindowHours: number;
 
   /** Доля кринжа от дневного лимита (0..1). */
   @Column('real', { default: 0.25 })
@@ -77,9 +89,10 @@ export class ParserSettingsEntity {
   evalFinalHours: number;
 
   /**
-   * Версия набора порогов качества. `0` = legacy-строка, к которой при
-   * старте применяется разовое «расслабление» до `2`. Держим дефолт `< 2`,
-   * чтобы `synchronize` проставил его существующей строке и adoption сработал.
+   * Версия пресета настроек. `0` = legacy-строка: при старте применяется
+   * разовое «расслабление» порогов до `2`, затем дефолты выдачи/актуализации до
+   * `3`. Держим дефолт `0`, чтобы `synchronize` проставил его существующей строке
+   * и adoption сработал.
    */
   @Column('int', { default: 0 })
   qualityVersion: number;

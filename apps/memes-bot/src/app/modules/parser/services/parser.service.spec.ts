@@ -32,10 +32,16 @@ const setup = (overrides: { enabled?: boolean; activeClient?: unknown } = {}) =>
     refreshCooldowns: jest.fn().mockResolvedValue(2),
   };
   const collector = { onLiveEvent: jest.fn().mockResolvedValue(undefined), sweepAll: jest.fn().mockResolvedValue(0) };
-  const evaluator = { evaluateDue: jest.fn().mockResolvedValue(0) };
+  const evaluator = {
+    evaluateDue: jest.fn().mockResolvedValue(0),
+    refreshScored: jest.fn().mockResolvedValue(0),
+    lastEvaluateStats: { expired: 0, forced: 0 },
+  };
   const selector = {
     deliverForced: jest.fn().mockResolvedValue(0),
     deliverDue: jest.fn().mockResolvedValue(0),
+    remainingQuota: jest.fn().mockResolvedValue(5),
+    countBacklog: jest.fn().mockResolvedValue(0),
     ageBacklog: jest.fn().mockResolvedValue(0),
     dumpMore: jest.fn().mockResolvedValue(3),
   };
@@ -155,6 +161,29 @@ describe('ParserService', () => {
     await handler(ctx);
 
     expect(bot.api.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it('ошибка удаления уведомления не роняет обработчик', async () => {
+    jest.useFakeTimers();
+    const { service, bot, selector } = setup();
+    selector.dumpMore.mockResolvedValue(0);
+    bot.api.deleteMessage.mockRejectedValue(new Error('gone'));
+    service.onModuleInit();
+    const handler = bot.callbackQuery.mock.calls[0][1];
+    const ctx = { config: { isOwner: true }, answerCallbackQuery: jest.fn() };
+
+    await handler(ctx);
+    jest.advanceTimersByTime(15_000);
+    await flush();
+
+    expect(bot.api.deleteMessage).toHaveBeenCalled();
+  });
+
+  it('ошибка cron-задачи не роняет расписание', async () => {
+    const { service, collector } = setup();
+    collector.sweepAll.mockRejectedValue(new Error('boom'));
+
+    await expect(service.onSweep()).resolves.toBeUndefined();
   });
 
   it('channel_post /more в предложке запускает dumpMore и удаляет команду', async () => {
@@ -415,13 +444,25 @@ describe('ParserService', () => {
 
     expect(collector.sweepAll).toHaveBeenCalledTimes(1);
     expect(evaluator.evaluateDue).toHaveBeenCalledTimes(1);
+    expect(evaluator.refreshScored).toHaveBeenCalledTimes(1);
     expect(selector.deliverForced).toHaveBeenCalledTimes(1);
     expect(selector.deliverDue).toHaveBeenCalledTimes(1);
     expect(selector.ageBacklog).toHaveBeenCalledTimes(1);
     expect(discovery.runWebCheck).toHaveBeenCalledTimes(1);
   });
 
-  it('onSelect: форс → авто-выдача → старение (порядок)', async () => {
+  it('onEvaluate: оценка, затем актуализация пула (порядок)', async () => {
+    const { service, evaluator } = setup();
+    evaluator.lastEvaluateStats = { expired: 2, forced: 1 };
+
+    await service.onEvaluate();
+
+    const evaluated = evaluator.evaluateDue.mock.invocationCallOrder[0];
+    const refreshed = evaluator.refreshScored.mock.invocationCallOrder[0];
+    expect(evaluated).toBeLessThan(refreshed);
+  });
+
+  it('onSelect: форс → авто-выдача → старение (порядок) и лог с квотой/бэклогом', async () => {
     const { service, selector } = setup();
 
     await service.onSelect();
@@ -431,6 +472,8 @@ describe('ParserService', () => {
     const aged = selector.ageBacklog.mock.invocationCallOrder[0];
     expect(forced).toBeLessThan(due);
     expect(due).toBeLessThan(aged);
+    expect(selector.remainingQuota).toHaveBeenCalledTimes(1);
+    expect(selector.countBacklog).toHaveBeenCalledTimes(1);
   });
 
   it('onSelect при disabled не зовёт авто-выдачу', async () => {
@@ -449,6 +492,7 @@ describe('ParserService', () => {
 
     expect(collector.sweepAll).not.toHaveBeenCalled();
     expect(evaluator.evaluateDue).not.toHaveBeenCalled();
+    expect(evaluator.refreshScored).not.toHaveBeenCalled();
     expect(selector.deliverForced).not.toHaveBeenCalled();
     expect(discovery.runWebCheck).not.toHaveBeenCalled();
   });

@@ -27,6 +27,12 @@ export interface ParserRuntimeSettings {
   idlePruneDays: number;
   aiEnabled: boolean;
   aiRelevanceMin: number;
+  /** Сколько SCORED-постов актуализируем за один прогон. */
+  refreshBatchSize: number;
+  /** Через сколько часов после оценки пост снова считаем «протухшим». */
+  refreshStaleHours: number;
+  /** Окно (часы) повторного поиска пересечений при актуализации. */
+  forceRefreshWindowHours: number;
   /** До какого времени действует boost «Насыпать ещё» (null — выключен). */
   boostUntil: string | null;
   /** Старый парсер (обсерватория) включён. */
@@ -35,8 +41,11 @@ export interface ParserRuntimeSettings {
   qualityVersion: number;
 }
 
-/** Актуальная версия пресета качества; применяется к строке настроек при старте. */
-const QUALITY_VERSION = 2;
+/** Актуальная версия пресета настроек; применяется к строке настроек при старте. */
+const QUALITY_VERSION = 3;
+
+/** Версия пресета расслабленных порогов (v2) — отдельная ступень миграции. */
+const RELAXED_QUALITY_VERSION = 2;
 
 /**
  * Целевой расслабленный пресет v2. Adoption применяет его как потолок
@@ -54,6 +63,19 @@ const RELAXED_QUALITY_V2 = {
   errMin: 0.1,
   evalPreHours: 1,
   evalFinalHours: 6,
+} as const;
+
+/**
+ * Дефолты модели «ранжированная выдача» (v3): дневной бюджет и актуализация
+ * пула. Adoption поднимает до них только нулевые legacy-значения; владельческие
+ * положительные значения сохраняются как есть.
+ */
+const DELIVERY_DEFAULTS = {
+  dailyLimit: 200,
+  sourceDailyCap: 10,
+  refreshBatchSize: 120,
+  refreshStaleHours: 12,
+  forceRefreshWindowHours: 168,
 } as const;
 
 const clamp = (value: number, min: number, max: number, fallback: number): number => {
@@ -81,21 +103,22 @@ export class ParserSettingsService implements OnModuleInit {
   async onModuleInit(): Promise<void> {
     await this.refresh();
     await this.adoptRelaxedDefaults();
+    await this.adoptDeliveryDefaults();
   }
 
   /**
-   * Разовая идемпотентная миграция строки настроек: при `qualityVersion < 2`
-   * расслабляем пороги до пресета v2 (`Math.min` — потолок: сохранённые более
-   * строгие значения опускаются до пресета, более мягкие не поднимаются),
-   * сохраняем и поднимаем версию. После этого правки владельца сохраняются
-   * как есть (версия уже 2).
+   * Разовая идемпотентная миграция строки настроек: при
+   * `qualityVersion < RELAXED_QUALITY_VERSION` расслабляем пороги до пресета v2
+   * (`Math.min` — потолок: сохранённые более строгие значения опускаются до
+   * пресета, более мягкие не поднимаются), сохраняем и поднимаем версию.
+   * После этого правки владельца сохраняются как есть (версия уже ≥ 2).
    */
   private async adoptRelaxedDefaults(): Promise<void> {
-    if (this.cached.qualityVersion >= QUALITY_VERSION) return;
+    if (this.cached.qualityVersion >= RELAXED_QUALITY_VERSION) return;
 
     const next: ParserRuntimeSettings = {
       ...this.cached,
-      qualityVersion: QUALITY_VERSION,
+      qualityVersion: RELAXED_QUALITY_VERSION,
     };
     next.minViews = Math.min(next.minViews, RELAXED_QUALITY_V2.minViews);
     next.minReactions = Math.min(next.minReactions, RELAXED_QUALITY_V2.minReactions);
@@ -112,10 +135,42 @@ export class ParserSettingsService implements OnModuleInit {
     try {
       await this.repository.save({ id: PARSER_SETTINGS_ID, ...next, updatedAt: new Date() });
       this.logger.log(
-        `Parser settings: relaxed quality preset v${QUALITY_VERSION} adopted`
+        `Parser settings: relaxed quality preset v${RELAXED_QUALITY_VERSION} adopted`
       );
     } catch (error) {
       this.logger.error(`Не удалось применить relaxed-настройки парсера: ${error}`);
+    }
+  }
+
+  /**
+   * Разовая идемпотентная миграция к модели ранжированной выдачи (v3): legacy
+   * `dailyLimit = 0` («безлимит») поднимаем до 200/сутки, добиваем diversity-кап
+   * источника и настройки актуализации пула. Ненулевые (владельческие) значения
+   * не трогаем. Запускается после `adoptRelaxedDefaults()`.
+   */
+  private async adoptDeliveryDefaults(): Promise<void> {
+    if (this.cached.qualityVersion >= QUALITY_VERSION) return;
+
+    const next: ParserRuntimeSettings = {
+      ...this.cached,
+      qualityVersion: QUALITY_VERSION,
+    };
+    if (next.dailyLimit <= 0) next.dailyLimit = DELIVERY_DEFAULTS.dailyLimit;
+    if (next.sourceDailyCap <= 0) next.sourceDailyCap = DELIVERY_DEFAULTS.sourceDailyCap;
+    if (next.refreshBatchSize <= 0) next.refreshBatchSize = DELIVERY_DEFAULTS.refreshBatchSize;
+    if (next.refreshStaleHours <= 0) next.refreshStaleHours = DELIVERY_DEFAULTS.refreshStaleHours;
+    if (next.forceRefreshWindowHours <= 0) {
+      next.forceRefreshWindowHours = DELIVERY_DEFAULTS.forceRefreshWindowHours;
+    }
+
+    this.cached = next;
+    try {
+      await this.repository.save({ id: PARSER_SETTINGS_ID, ...next, updatedAt: new Date() });
+      this.logger.log(
+        `Parser settings: delivery preset v${QUALITY_VERSION} adopted (dailyLimit=${next.dailyLimit}, sourceDailyCap=${next.sourceDailyCap})`
+      );
+    } catch (error) {
+      this.logger.error(`Не удалось применить delivery-настройки парсера: ${error}`);
     }
   }
 
@@ -164,8 +219,8 @@ export class ParserSettingsService implements OnModuleInit {
   buildDefaults(): ParserRuntimeSettings {
     return {
       enabled: true,
-      dailyLimit: 0,
-      sourceDailyCap: 0,
+      dailyLimit: DELIVERY_DEFAULTS.dailyLimit,
+      sourceDailyCap: DELIVERY_DEFAULTS.sourceDailyCap,
       cringeShare: clamp(0.25, 0, 1, 0.25),
       minViews: 40,
       minReactions: 0,
@@ -183,6 +238,9 @@ export class ParserSettingsService implements OnModuleInit {
       idlePruneDays: 3,
       aiEnabled: false,
       aiRelevanceMin: clamp(0.6, 0, 1, 0.6),
+      refreshBatchSize: DELIVERY_DEFAULTS.refreshBatchSize,
+      refreshStaleHours: DELIVERY_DEFAULTS.refreshStaleHours,
+      forceRefreshWindowHours: DELIVERY_DEFAULTS.forceRefreshWindowHours,
       boostUntil: null,
       legacyEnabled: true,
       qualityVersion: QUALITY_VERSION,
@@ -212,6 +270,12 @@ export class ParserSettingsService implements OnModuleInit {
       idlePruneDays: Math.max(1, nonNegativeInt(row.idlePruneDays, defaults.idlePruneDays)),
       aiEnabled: row.aiEnabled ?? defaults.aiEnabled,
       aiRelevanceMin: clamp(row.aiRelevanceMin, 0, 1, defaults.aiRelevanceMin),
+      refreshBatchSize: nonNegativeInt(row.refreshBatchSize, defaults.refreshBatchSize),
+      refreshStaleHours: nonNegativeInt(row.refreshStaleHours, defaults.refreshStaleHours),
+      forceRefreshWindowHours: nonNegativeInt(
+        row.forceRefreshWindowHours,
+        defaults.forceRefreshWindowHours
+      ),
       boostUntil: row.boostUntil ? new Date(row.boostUntil).toISOString() : null,
       legacyEnabled: row.legacyEnabled ?? defaults.legacyEnabled,
       // Fallback 0: отсутствующее/нулевое значение — legacy-строка, нужен adoption.

@@ -13,8 +13,11 @@ describe('ParserSettingsEntity', () => {
     expect(PARSER_SETTINGS_ID).toBe(1);
     expect(column('id')?.options).toMatchObject({ primary: true });
     expect(column('enabled')?.options).toMatchObject({ default: true });
-    expect(column('dailyLimit')?.options).toMatchObject({ default: 0 });
-    expect(column('sourceDailyCap')?.options).toMatchObject({ default: 0 });
+    expect(column('dailyLimit')?.options).toMatchObject({ default: 200 });
+    expect(column('sourceDailyCap')?.options).toMatchObject({ default: 10 });
+    expect(column('refreshBatchSize')?.options).toMatchObject({ default: 120 });
+    expect(column('refreshStaleHours')?.options).toMatchObject({ default: 12 });
+    expect(column('forceRefreshWindowHours')?.options).toMatchObject({ default: 168 });
     expect(column('cringeShare')?.options).toMatchObject({ default: 0.25 });
     expect(column('errMin')?.options).toMatchObject({ default: 0.1 });
     expect(column('maxSources')?.options).toMatchObject({ default: 40 });

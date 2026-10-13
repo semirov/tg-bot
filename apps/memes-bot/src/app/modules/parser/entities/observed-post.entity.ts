@@ -15,6 +15,7 @@ import { PostMetrics } from '../domain/parser-scoring';
 @Index('ix_observed_status', ['status'])
 @Index('ix_observed_score', ['status', 'score'])
 @Index('ix_observed_media_unique', ['mediaUniqueId'])
+@Index('ix_observed_status_eval', ['status', 'evaluatedAt'])
 export class ObservedPostEntity {
   @PrimaryGeneratedColumn()
   id: number;
@@ -79,6 +80,14 @@ export class ObservedPostEntity {
 
   @Column('timestamp', { nullable: true })
   evaluatedAt: Date | null;
+
+  /** Когда пост последний раз перечитан в актуализации пула (`refreshScored`). */
+  @Column('timestamp', { nullable: true })
+  refreshedAt: Date | null;
+
+  /** Сколько раз актуализация перечитывала этот пост. */
+  @Column('int', { default: 0 })
+  refreshCount: number;
 
   @Column('timestamp', { nullable: true })
   deliveredAt: Date | null;

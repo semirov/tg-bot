@@ -20,8 +20,8 @@ describe('ParserSettingsService', () => {
     const service = new ParserSettingsService(repo, makeConfig());
 
     await service.onModuleInit();
-    expect(service.current.dailyLimit).toBe(0);
-    expect(service.current.sourceDailyCap).toBe(0);
+    expect(service.current.dailyLimit).toBe(200);
+    expect(service.current.sourceDailyCap).toBe(10);
     expect(service.current.minViews).toBe(40);
     expect(service.current.minReactions).toBe(0);
     expect(service.current.nvMin).toBe(0.5);
@@ -34,10 +34,15 @@ describe('ParserSettingsService', () => {
     expect(service.current.evalFinalHours).toBe(6);
     expect(service.current.candidateTtlHours).toBe(96);
     expect(service.current.idlePruneDays).toBe(3);
-    expect(service.current.qualityVersion).toBe(2);
+    expect(service.current.refreshBatchSize).toBe(120);
+    expect(service.current.refreshStaleHours).toBe(12);
+    expect(service.current.forceRefreshWindowHours).toBe(168);
+    expect(service.current.qualityVersion).toBe(3);
     expect(service.current.enabled).toBe(true);
     expect(service.current.boostUntil).toBeNull();
     expect(service.current.legacyEnabled).toBe(true);
+    // Дефолты уже актуальной версии — adoption не пишет строку.
+    expect(repo.save).not.toHaveBeenCalled();
   });
 
   it('boost: boostActive учитывает boostUntil', async () => {
@@ -110,7 +115,7 @@ describe('ParserSettingsService', () => {
     repo.findOne.mockRejectedValue(new Error('db down'));
     const service = new ParserSettingsService(repo, makeConfig());
     await expect(service.onModuleInit()).resolves.toBeUndefined();
-    expect(service.current.dailyLimit).toBe(0);
+    expect(service.current.dailyLimit).toBe(200);
   });
 
   it('update сохраняет в БД и в кэш; сброс возвращает дефолты', async () => {
@@ -124,15 +129,17 @@ describe('ParserSettingsService', () => {
     expect(service.current.dailyLimit).toBe(15);
 
     await service.reset();
-    expect(service.current.dailyLimit).toBe(0);
+    expect(service.current.dailyLimit).toBe(200);
     expect(service.current.minViews).toBe(40);
   });
 
-  it('строка без qualityVersion (legacy) — расслабляется один раз до v2', async () => {
+  it('строка без qualityVersion (legacy) — расслабляется до v2 и получает дефолты выдачи v3', async () => {
     const repo = makeRepo();
     repo.findOne.mockResolvedValue(
       row({
         qualityVersion: 0,
+        dailyLimit: 0,
+        sourceDailyCap: 0,
         minViews: 500,
         minReactions: 5,
         nvMin: 1.5,
@@ -148,7 +155,9 @@ describe('ParserSettingsService', () => {
     const service = new ParserSettingsService(repo, makeConfig());
     await service.onModuleInit();
 
-    expect(service.current.qualityVersion).toBe(2);
+    expect(service.current.qualityVersion).toBe(3);
+    expect(service.current.dailyLimit).toBe(200);
+    expect(service.current.sourceDailyCap).toBe(10);
     expect(service.current.minViews).toBe(40);
     expect(service.current.minReactions).toBe(0);
     expect(service.current.nvMin).toBe(0.5);
@@ -160,7 +169,13 @@ describe('ParserSettingsService', () => {
     expect(service.current.evalPreHours).toBe(1);
     expect(service.current.evalFinalHours).toBe(6);
     expect(repo.save).toHaveBeenCalledWith(
-      expect.objectContaining({ id: 1, qualityVersion: 2, errMin: 0.1 })
+      expect.objectContaining({
+        id: 1,
+        qualityVersion: 3,
+        errMin: 0.1,
+        dailyLimit: 200,
+        sourceDailyCap: 10,
+      })
     );
   });
 
@@ -175,12 +190,73 @@ describe('ParserSettingsService', () => {
     expect(service.current.minViews).toBe(10);
     expect(service.current.errMin).toBe(0.05);
     expect(service.current.evalFinalHours).toBe(3);
-    expect(service.current.qualityVersion).toBe(2);
+    expect(service.current.qualityVersion).toBe(3);
   });
 
-  it('строка с qualityVersion = 2 не мигрируется повторно', async () => {
+  it('v2 → v3: нулевые legacy-значения поднимаются до дефолтов выдачи', async () => {
     const repo = makeRepo();
-    repo.findOne.mockResolvedValue(row({ qualityVersion: 2, minViews: 500 }));
+    repo.findOne.mockResolvedValue(
+      row({
+        qualityVersion: 2,
+        dailyLimit: 0,
+        sourceDailyCap: 0,
+        refreshBatchSize: 0,
+        refreshStaleHours: 0,
+        forceRefreshWindowHours: 0,
+        minViews: 500,
+      })
+    );
+    const service = new ParserSettingsService(repo, makeConfig());
+    await service.onModuleInit();
+
+    expect(service.current.qualityVersion).toBe(3);
+    expect(service.current.dailyLimit).toBe(200);
+    expect(service.current.sourceDailyCap).toBe(10);
+    expect(service.current.refreshBatchSize).toBe(120);
+    expect(service.current.refreshStaleHours).toBe(12);
+    expect(service.current.forceRefreshWindowHours).toBe(168);
+    // Релакс-пресет v2 повторно не применяется.
+    expect(service.current.minViews).toBe(500);
+    expect(repo.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: 1,
+        qualityVersion: 3,
+        dailyLimit: 200,
+        sourceDailyCap: 10,
+        refreshBatchSize: 120,
+      })
+    );
+  });
+
+  it('v2 → v3: положительные владельческие значения сохраняются', async () => {
+    const repo = makeRepo();
+    repo.findOne.mockResolvedValue(
+      row({
+        qualityVersion: 2,
+        dailyLimit: 50,
+        sourceDailyCap: 4,
+        refreshBatchSize: 30,
+        refreshStaleHours: 6,
+        forceRefreshWindowHours: 72,
+      })
+    );
+    const service = new ParserSettingsService(repo, makeConfig());
+    await service.onModuleInit();
+
+    expect(service.current.dailyLimit).toBe(50);
+    expect(service.current.sourceDailyCap).toBe(4);
+    expect(service.current.refreshBatchSize).toBe(30);
+    expect(service.current.refreshStaleHours).toBe(6);
+    expect(service.current.forceRefreshWindowHours).toBe(72);
+    expect(service.current.qualityVersion).toBe(3);
+    expect(repo.save).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 1, qualityVersion: 3, dailyLimit: 50, sourceDailyCap: 4 })
+    );
+  });
+
+  it('строка с qualityVersion = 3 не мигрируется повторно', async () => {
+    const repo = makeRepo();
+    repo.findOne.mockResolvedValue(row({ qualityVersion: 3, minViews: 500 }));
     const service = new ParserSettingsService(repo, makeConfig());
     await service.onModuleInit();
 
@@ -188,7 +264,7 @@ describe('ParserSettingsService', () => {
     expect(repo.save).not.toHaveBeenCalled();
   });
 
-  it('after adoption owner edits persist (версия 2 дальше)', async () => {
+  it('after adoption owner edits persist (версия 3 дальше)', async () => {
     const repo = makeRepo();
     repo.findOne.mockResolvedValue(row({ qualityVersion: 0, minViews: 500 }));
     const service = new ParserSettingsService(repo, makeConfig());
@@ -198,9 +274,9 @@ describe('ParserSettingsService', () => {
     await service.update({ minViews: 500 });
 
     expect(service.current.minViews).toBe(500);
-    expect(service.current.qualityVersion).toBe(2);
+    expect(service.current.qualityVersion).toBe(3);
     expect(repo.save).toHaveBeenCalledWith(
-      expect.objectContaining({ minViews: 500, qualityVersion: 2 })
+      expect.objectContaining({ minViews: 500, qualityVersion: 3 })
     );
   });
 
@@ -212,7 +288,7 @@ describe('ParserSettingsService', () => {
 
     await expect(service.onModuleInit()).resolves.toBeUndefined();
     expect(service.current.minViews).toBe(40);
-    expect(service.current.qualityVersion).toBe(2);
+    expect(service.current.qualityVersion).toBe(3);
   });
 
   it('ошибка сохранения update не роняет, кэш обновляется', async () => {
@@ -234,9 +310,9 @@ describe('ParserSettingsService', () => {
     const service = new ParserSettingsService(repo, makeConfig());
     await service.onModuleInit();
 
-    expect(service.current.dailyLimit).toBe(0);
+    expect(service.current.dailyLimit).toBe(200);
     expect(service.current.cringeShare).toBeLessThanOrEqual(1);
     expect(service.current.evalFinalHours).toBeGreaterThanOrEqual(2);
-    expect(service.current.sourceDailyCap).toBeGreaterThanOrEqual(0);
+    expect(service.current.sourceDailyCap).toBe(10);
   });
 });

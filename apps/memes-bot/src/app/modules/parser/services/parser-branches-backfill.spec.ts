@@ -83,6 +83,7 @@ const candidate = (overrides: Record<string, unknown> = {}): any => ({
 const makeObservedRepo = (): any => ({
   findOne: jest.fn().mockResolvedValue(null),
   count: jest.fn().mockResolvedValue(0),
+  update: jest.fn().mockResolvedValue({ affected: 1 }),
   find: jest.fn().mockResolvedValue([]),
   create: jest.fn().mockImplementation((value) => ({ ...value })),
   save: jest.fn().mockImplementation(save),
@@ -544,7 +545,8 @@ describe('parser services branch backfill', () => {
     ]);
 
     expect(await service.evaluateDue()).toBe(0);
-    expect(observedRepo.save).not.toHaveBeenCalledWith(
+    expect(observedRepo.update).not.toHaveBeenCalledWith(
+      expect.anything(),
       expect.objectContaining({ rejectReason: 'message-gone' })
     );
   });

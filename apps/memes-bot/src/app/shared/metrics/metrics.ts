@@ -138,6 +138,11 @@ export const metrics = {
       'reason',
     ]),
     albums: counter('parser_albums_total', 'Обработанные медиагруппы (альбомы).', ['source']),
+    refreshed: counter(
+      'parser_refreshed_total',
+      'Актуализация оценённого пула по результату (refreshed/rejected/gone/skipped).',
+      ['result']
+    ),
     jobDuration: histogram(
       'parser_job_duration_seconds',
       'Длительность cron-задач парсера, сек.',

@@ -83,6 +83,7 @@ const makeObservedRepo = (): any => ({
   create: jest.fn().mockImplementation((value) => ({ ...value })),
   save: jest.fn().mockImplementation(save),
   count: jest.fn().mockResolvedValue(0),
+  update: jest.fn().mockResolvedValue({ affected: 1 }),
   createQueryBuilder: jest.fn(() => ({
     select: jest.fn().mockReturnThis(),
     addSelect: jest.fn().mockReturnThis(),
@@ -335,7 +336,9 @@ describe('parser branches round 2', () => {
 
     await service.evaluateDue();
 
-    expect(observedRepo.save).toHaveBeenCalledWith(
+    // Guarded-запись: ожидаемый статус на момент чтения — SCORED (дозрел до FINAL).
+    expect(observedRepo.update).toHaveBeenCalledWith(
+      { id: 10, status: ObservedStatus.SCORED },
       expect.objectContaining({ status: ObservedStatus.REJECTED, evalStage: 'final' })
     );
   });

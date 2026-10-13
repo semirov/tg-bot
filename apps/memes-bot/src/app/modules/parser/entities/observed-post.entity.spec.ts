@@ -44,6 +44,13 @@ describe('ObservedPostEntity', () => {
     expect(column('forced')?.options).toMatchObject({ default: false });
   });
 
+  it('актуализация пула: refreshedAt/refreshCount и индекс (status, evaluatedAt)', () => {
+    expect(column('refreshedAt')?.options).toMatchObject({ type: 'timestamp', nullable: true });
+    expect(column('refreshCount')?.options).toMatchObject({ type: 'int', default: 0 });
+    const index = indexByName('ix_observed_status_eval');
+    expect(index?.columns).toEqual(['status', 'evaluatedAt']);
+  });
+
   it('экземпляр хранит значения', () => {
     const entity = new ObservedPostEntity();
     entity.sourceChatId = '-1001';

@@ -1,19 +1,22 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, LessThan, IsNull, MoreThanOrEqual, Not, Repository } from 'typeorm';
+import { utcToZonedTime, zonedTimeToUtc } from 'date-fns-tz';
 import { Bot } from 'grammy';
 import { CLOCK, Clock } from '../../../shared/clock';
 import { BOT } from '../../bot/providers/bot.provider';
 import { BotContext } from '../../bot/interfaces/bot-context.interface';
 import {
-  AUTO_DELIVER_PER_RUN,
+  AUTO_DELIVER_PER_CYCLE,
   BACKLOG_TTL_DAYS,
   DUMP_COOLDOWN_MINUTES,
   DUMP_PER_SOURCE_CAP,
   DUMP_SIZE,
-  EVAL_PAUSE_BACKLOG,
+  FORCE_PER_CYCLE_CAP,
   ObservedStatus,
   POOL_TTL_DAYS,
+  QUEUE_EMERGENCY_CAP,
+  RANK_WINDOW,
 } from '../constants/parser.constants';
 import { ObservedPostEntity } from '../entities/observed-post.entity';
 import { SourceChannelEntity } from '../entities/source-channel.entity';
@@ -24,12 +27,16 @@ import { ParserRegistryService } from './parser-registry.service';
 import { ParserSettingsService } from './parser-settings.service';
 import { BaseConfigService } from '../../config/base-config.service';
 
+/** День бюджета считаем по московскому времени — как объявлены cron-задачи. */
+const PARSER_TIMEZONE = 'Europe/Moscow';
+
 /**
- * Селектор предложки. Авто-выдача (`deliverDue`, каждые 20 мин) сама кладёт
- * оценённые посты в предложку пачками до AUTO_DELIVER_PER_RUN, уважая дневные
- * квоты. Ручной добор «Ещё 20»/`/more` (`dumpMore`, до DUMP_SIZE) остаётся
- * опциональным верхом. Форс-посты (разошлись по 3+ каналам) доставляются сразу.
- * Бэклог стареет: карточки старше BACKLOG_TTL_DAYS удаляются, пул — POOL_TTL_DAYS.
+ * Селектор предложки. Авто-выдача (`deliverDue`, каждые 20 мин) ранжирует
+ * оценённый пул (`rankScore` = score × вес источника) и кладёт **лучшие**
+ * карточки порциями `AUTO_DELIVER_PER_CYCLE`, уважая дневной разгон
+ * (`dailyLimit`, форс-посты в него не входят) и дневной кап на источник.
+ * Ручной добор «Ещё 20»/`/more` (`dumpMore`) — вне бюджета. Форс-посты
+ * доставляются сразу, но тоже порциями; бэклог и пул стареют (TTL).
  */
 @Injectable()
 export class ParserSelectorService {
@@ -63,11 +70,16 @@ export class ParserSelectorService {
   }
 
   private async deliverForcedInner(): Promise<number> {
+    if ((await this.countBacklog()) >= QUEUE_EMERGENCY_CAP) {
+      this.logger.debug('Parser selector: бэклог на аварийном пороге, форс-выдача пропущена');
+      return 0;
+    }
+
     const config = this.settings.current;
     const rows = await this.observedRepository.find({
       where: { status: ObservedStatus.SCORED, forced: true },
       order: { createdAt: 'ASC' },
-      take: DUMP_SIZE * 5,
+      take: FORCE_PER_CYCLE_CAP * 5,
     });
     if (!rows.length) return 0;
 
@@ -80,12 +92,12 @@ export class ParserSelectorService {
     });
     if (!eligible.length) return 0;
 
-    return this.deliverRows(this.pickDiverse(eligible, DUMP_SIZE), sources, false);
+    return this.deliverRows(this.pickDiverse(eligible, FORCE_PER_CYCLE_CAP), sources, false);
   }
 
   /**
-   * «Насыпать ещё»: отдаёт до count самых свежих оценённых постов (свежие
-   * первыми, вес — тай-брейкер). Пропускает excluded; cooldown игнорируется.
+   * «Насыпать ещё»: отдаёт до count лучших по рангу оценённых (не форс) постов —
+   * ручной добор вне дневного бюджета, со своим cooldown и без ERR-гейта.
    */
   public async dumpMore(count = DUMP_SIZE): Promise<number> {
     if (this.busy) {
@@ -104,7 +116,7 @@ export class ParserSelectorService {
     try {
       // Шире выборка — чтобы кап на источник реально давал разнообразие.
       const rows = await this.observedRepository.find({
-        where: { status: ObservedStatus.SCORED, rejectReason: IsNull() },
+        where: { status: ObservedStatus.SCORED, rejectReason: IsNull(), forced: false },
         order: { createdAt: 'DESC' },
         take: Math.max(limit * 5, limit + 20),
       });
@@ -128,15 +140,11 @@ export class ParserSelectorService {
   }
 
   /**
-   * Авто-выдача: каждый select-цикл (20 мин) кладёт в предложку до
-   * AUTO_DELIVER_PER_RUN свежих оценённых постов. Раньше это делал только
-   * ручной `dumpMore()`; теперь предложка наполняется сама.
-   *
-   * Свежие первыми, вес источника — тай-брейкер. Уважает `dailyLimit` и
-   * `sourceDailyCap`, когда > 0 (0 = безлимит). Cooldown ручного добора
-   * (`DUMP_COOLDOWN_MINUTES`) здесь не применяется.
+   * Авто-выдача: каждый select-цикл (20 мин) кладёт лучшие оценённые посты, но
+   * не больше дневного разгона `dailyLimit` (когда > 0) и не больше
+   * `AUTO_DELIVER_PER_CYCLE` за цикл. Форс-посты бюджет не тратят.
    */
-  public async deliverDue(count = AUTO_DELIVER_PER_RUN): Promise<number> {
+  public async deliverDue(count = AUTO_DELIVER_PER_CYCLE): Promise<number> {
     if (this.busy) return 0;
     this.busy = true;
     try {
@@ -146,24 +154,37 @@ export class ParserSelectorService {
     }
   }
 
+  /** Остаток порции авто-выдачи на текущий цикл (для логов и меню). */
+  public async remainingQuota(): Promise<number> {
+    const config = this.settings.current;
+    return this.deliveryQuota(this.clock.now(), config.dailyLimit, AUTO_DELIVER_PER_CYCLE);
+  }
+
   private async deliverDueInner(count: number): Promise<number> {
-    // Обратное давление: если предложка уже на пороге паузы оценки, не льём
-    // дальше — иначе авто-выдача обгоняет модерацию и переполняет очередь.
-    if ((await this.countBacklog()) >= EVAL_PAUSE_BACKLOG) {
-      this.logger.debug('Parser selector: бэклог на пороге паузы, авто-выдача пропущена');
+    // Аварийный вентиль общий с форс-выдачей: выше него не льём ни то, ни другое.
+    if ((await this.countBacklog()) >= QUEUE_EMERGENCY_CAP) {
+      this.logger.debug('Parser selector: бэклог на аварийном пороге, авто-выдача пропущена');
       return 0;
     }
 
     const config = this.settings.current;
-    const remaining = await this.remainingDailyBudget(config.dailyLimit);
-    const limit = Math.min(count, remaining);
+    const now = this.clock.now();
+    // Дневной разгон: сколько не-форс постов «разрешено» отдать к этому часу.
+    const quota = await this.deliveryQuota(now, config.dailyLimit, AUTO_DELIVER_PER_CYCLE);
+    const limit = Math.min(count, quota);
     if (limit <= 0) return 0;
 
-    // Шире выборка — чтобы кап на источник реально давал разнообразие.
+    // Окно ранжирования: топ по score, вес источника домешивается в памяти.
+    // `score IS NOT NULL`: в PG NULL-и сортировки впереди и вытеснили бы топ.
     const rows = await this.observedRepository.find({
-      where: { status: ObservedStatus.SCORED, rejectReason: IsNull() },
-      order: { createdAt: 'DESC' },
-      take: Math.max(limit * 5, limit + 20),
+      where: {
+        status: ObservedStatus.SCORED,
+        rejectReason: IsNull(),
+        forced: false,
+        score: Not(IsNull()),
+      },
+      order: { score: 'DESC' },
+      take: RANK_WINDOW,
     });
     if (!rows.length) return 0;
 
@@ -184,25 +205,35 @@ export class ParserSelectorService {
   }
 
   /**
-   * Сколько постов ещё можно отдать сегодня с учётом дневного лимита.
-   * `dailyLimit <= 0` = безлимит.
+   * Сколько не-форс постов можно отдать в этом цикле: линейный разгон от начала
+   * суток (`allowedByNow`) минус отданное сегодня, но не больше порции.
+   * `dailyLimit <= 0` = безлимит (порция всё равно ограничивает залп).
    */
-  private async remainingDailyBudget(dailyLimit: number): Promise<number> {
+  private async deliveryQuota(now: Date, dailyLimit: number, perCycleCap: number): Promise<number> {
     const limit = Number(dailyLimit) || 0;
-    if (limit <= 0) return Number.MAX_SAFE_INTEGER;
-    const delivered = await this.observedRepository.count({
+    const start = this.startOfToday(now);
+    const deliveredToday = await this.observedRepository.count({
       where: {
-        status: In(DELIVERED_TODAY_STATUSES),
-        deliveredAt: MoreThanOrEqual(this.startOfToday()),
+        // Считаем доставки (по `deliveredAt`), а не текущий статус: карточка,
+        // отданная и затем отклонённая/истёкшая, остаётся в бюджете дня.
+        deliveredAt: MoreThanOrEqual(start),
+        // Форс-посты идут вне дневного бюджета и не должны его съедать.
+        forced: false,
       },
     });
-    return Math.max(0, limit - delivered);
+    if (limit <= 0) return perCycleCap;
+
+    const dayMs = 86_400_000;
+    const elapsed = Math.min(dayMs, Math.max(0, now.getTime() - start.getTime()));
+    // ceil: иначе `dailyLimit` 1–2 не отдают ничего до конца суток.
+    const allowedByNow = Math.ceil((limit * elapsed) / dayMs);
+    return Math.min(perCycleCap, Math.max(0, allowedByNow - deliveredToday));
   }
 
   /**
-   * Кап на источник за сутки: убирает кандидатов, чей канал уже исчерпал
-   * дневную квоту. Учитывает и посты, отобранные в этом же прогоне.
-   * `sourceDailyCap <= 0` = безлимит.
+   * Кап на источник за сутки: один `GROUP BY` по источникам пачки (учитывает и
+   * посты, отобранные в этом же прогоне). Считаем доставки по `deliveredAt`, а не
+   * текущий статус, и без форса. `sourceDailyCap <= 0` = безлимит.
    */
   private async applySourceDailyCap(
     rows: ObservedPostEntity[],
@@ -211,18 +242,20 @@ export class ParserSelectorService {
     const cap = Number(sourceDailyCap) || 0;
     if (cap <= 0 || !rows.length) return rows;
 
-    const start = this.startOfToday();
+    const sourceIds = [...new Set(rows.map((row) => row.sourceChatId))];
+    const counts = await this.observedRepository
+      .createQueryBuilder('o')
+      .select('o.sourceChatId', 'sourceChatId')
+      .addSelect('COUNT(*)', 'delivered')
+      .where('o.sourceChatId IN (:...sourceIds)', { sourceIds })
+      .andWhere('o.deliveredAt >= :start', { start: this.startOfToday() })
+      .andWhere('o.forced = :forced', { forced: false })
+      .groupBy('o.sourceChatId')
+      .getRawMany<{ sourceChatId: string; delivered: string }>();
+
     const alreadyDelivered = new Map<string, number>();
-    for (const row of rows) {
-      if (alreadyDelivered.has(row.sourceChatId)) continue;
-      const used = await this.observedRepository.count({
-        where: {
-          sourceChatId: row.sourceChatId,
-          status: In(DELIVERED_TODAY_STATUSES),
-          deliveredAt: MoreThanOrEqual(start),
-        },
-      });
-      alreadyDelivered.set(row.sourceChatId, used);
+    for (const row of counts) {
+      alreadyDelivered.set(String(row.sourceChatId), Number(row.delivered) || 0);
     }
 
     const usedThisRun = new Map<string, number>();
@@ -235,10 +268,11 @@ export class ParserSelectorService {
     });
   }
 
-  private startOfToday(): Date {
-    const start = new Date(this.clock.now());
-    start.setHours(0, 0, 0, 0);
-    return start;
+  /** Начало текущих суток в Europe/Moscow (как у cron-задач), а не в TZ процесса. */
+  private startOfToday(now: Date = this.clock.now()): Date {
+    const zoned = utcToZonedTime(now, PARSER_TIMEZONE);
+    zoned.setHours(0, 0, 0, 0);
+    return zonedTimeToUtc(zoned, PARSER_TIMEZONE);
   }
 
   /** Старение бэклога: карточки 7д и оценённый пул 14д истекают. */
@@ -370,11 +404,14 @@ export class ParserSelectorService {
     );
     const byId = new Map(rows.map((row) => [row.id, row]));
     const ordered = ids.map((id) => byId.get(id)).filter((row): row is ObservedPostEntity => Boolean(row));
-    // Свежие первыми, вес и скор — тай-брейкеры.
+    // Лучшие первыми (rankScore = score × вес источника); свежесть — только
+    // тай-брейкер, чтобы старый пост не запирал топ при равном ранге.
     return ordered.sort((a, b) => {
-      const fresh = b.createdAt.getTime() - a.createdAt.getTime();
-      if (fresh !== 0) return fresh;
-      return (ranks.get(b.id) ?? 0) - (ranks.get(a.id) ?? 0);
+      const rankDiff = (ranks.get(b.id) ?? 0) - (ranks.get(a.id) ?? 0);
+      if (rankDiff !== 0) return rankDiff;
+      const evalDiff = (b.evaluatedAt?.getTime() ?? 0) - (a.evaluatedAt?.getTime() ?? 0);
+      if (evalDiff !== 0) return evalDiff;
+      return b.createdAt.getTime() - a.createdAt.getTime();
     });
   }
 
@@ -461,10 +498,3 @@ export class ParserSelectorService {
 
 /** Ошибки доставки, которые не имеет смысла повторять. */
 const TERMINAL_FAILS = new Set(['media-too-large', 'message-gone', 'source-missing']);
-
-/** Статусы, которые считаются «отдано в предложку/очередь» при подсчёте суток. */
-const DELIVERED_TODAY_STATUSES = [
-  ObservedStatus.DELIVERED,
-  ObservedStatus.QUEUED,
-  ObservedStatus.PUBLISHED,
-];
