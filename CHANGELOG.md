@@ -1,3 +1,10 @@
+## [0.41.4](https://github.com/semirov/tg-bot/compare/v0.41.3...v0.41.4) (2026-10-13)
+
+
+### Bug Fixes
+
+* **parser:** rank proposal-queue candidates and cap auto-delivery at 200/day (TGB-110) ([c30fa99](https://github.com/semirov/tg-bot/commit/c30fa99254d10770d44343b88a730441a64e4499))
+
 ## [0.41.3](https://github.com/semirov/tg-bot/compare/v0.41.2...v0.41.3) (2026-10-11)
 
 
