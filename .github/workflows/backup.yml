@@ -1,0 +1,82 @@
+name: DB backup
+
+# Scheduled encrypted dump of the memes-bot database (TGB-113). The dump is age
+# encrypted AT THE SOURCE on the production host (plaintext never reaches a disk),
+# and what leaves the host is ciphertext; the artifact published here is that
+# ciphertext. Same recipe as the troll contour (TRL-241) so the two stay comparable.
+#
+# No GitHub secret is involved: the production credentials are the ones the deploy
+# already uses, read from the secrets directory mounted read-only into the
+# self-hosted runner ($DEPLOY_SECRETS_DIR/target.env — see tools/backup/README.md).
+# The private age identity is NOT materialized here: this job only publishes
+# ciphertext and never has the means to decrypt it (that is the drill's job).
+#
+# Triggers are schedule/workflow_dispatch only: a pull request cannot reach this job,
+# and the run fails closed when the target file is missing or the host cannot be
+# reached — it never falls back to an unencrypted dump.
+on:
+  schedule:
+    - cron: '30 2 * * *' # 02:30 UTC daily; the troll backup runs at 02:00
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write # failure alert (tools/backup/notify-failure.sh)
+
+concurrency:
+  group: db-backup-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  backup:
+    name: pg_dump → encrypted artifact
+    runs-on: [self-hosted, linux, arm64, memes-bot]
+    # No `environment`: the credentials live in the runner's mounted secrets dir, not
+    # in GitHub, so a missing directory fails the run instead of silently skipping
+    # the dump. A stuck ssh must not hold the queue either.
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Backup script tests (offline, no host)
+        # The scripts are the contour: a broken one must fail here, before it is
+        # allowed to talk to the production host. Pure bash with PATH stubs.
+        run: |
+          bash tools/backup/remote-dump.test.sh
+          bash tools/backup/db-backup.test.sh
+
+      - name: Dump the database on the production host
+        # Snapshot on the host (encrypted there) + keepalive/retried download with
+        # an age-magic check; a plaintext `.sql.gz` fails the run (fail-closed).
+        run: bash tools/backup/db-backup.sh "$RUNNER_TEMP/backups"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: memes-bot-db-${{ github.run_id }}
+          # db-backup.sh fails closed, so only age ciphertext can get here.
+          path: ${{ runner.temp }}/backups/*.sql.gz.age
+          # 3 days: short exposure window in the artifacts; the host keeps the last 3
+          # archives and the home-server keeps the long tail (tools/backup/offsite-pull.sh).
+          retention-days: 3
+          if-no-files-found: error
+
+      - name: Notify on failure
+        # A scheduled job that fails silently is worse than no job: open/update an
+        # issue with the run link (idempotent, only github.token).
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          bash tools/backup/notify-failure.sh \
+            "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+      - name: Summary
+        if: success()
+        run: |
+          {
+            echo "## DB backup"
+            echo
+            echo "Encrypted artifact published for run ${{ github.run_id }}."
+            echo "Decryption needs the age identity - see tools/backup/README.md."
+          } >> "$GITHUB_STEP_SUMMARY"

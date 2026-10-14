@@ -1,0 +1,145 @@
+name: DB restore drill
+
+# Proves the memes-bot backup is restorable (TGB-113), not merely present: pull the
+# latest successful backup artifact, decrypt it, restore into a throwaway PostgreSQL 14
+# with no published ports, and compare per-table row counts against the counts carried
+# by the dump itself. A drill that only checks the artifact exists proves nothing.
+#
+# A separate workflow on purpose:
+#   1) the private age identity is materialized ONLY here — the backup job publishes
+#      ciphertext it cannot decrypt;
+#   2) the drill checks the RETENTION artifact (what a restore would actually use),
+#      not the dump that was just taken;
+#   3) the drill can be disabled or rescheduled without touching the backup.
+#
+# The identity is the existing one, already on this node at
+# $DEPLOY_SECRETS_DIR/backup-age-identity.txt (same file the owner keeps in
+# ~/.deploy-secrets, same recipient the troll contour encrypts to). No new key pair,
+# no new GitHub secret. The drill never touches production: see the header of
+# tools/backup/restore-drill.sh.
+on:
+  schedule:
+    - cron: '30 3 * * 0' # weekly, Sunday 03:30 UTC; the troll drill runs at 03:00
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read # download the artifact of the last successful backup run
+  issues: write # failure alert
+
+concurrency:
+  group: db-restore-drill-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  drill:
+    name: restore from the latest backup artifact
+    runs-on: [self-hosted, linux, arm64, memes-bot]
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install age (idempotent — the runner is a long-lived container)
+        # Decryption is the whole point of this job. The runner image ships no `age`,
+        # and this runner is Ubuntu 20.04, whose repositories have no such package
+        # ("E: Unable to locate package age" — measured 2026-10-14; the troll runner's
+        # 22.04 does have it). Pin the upstream release and check its digest instead of
+        # installing whatever a repository happens to serve. The digest was taken from
+        # the v1.2.1 release asset (same value from two independent downloads; upstream
+        # ships a transparency-log `.proof` next to it). Later runs take the fast path.
+        run: |
+          set -euo pipefail
+          if command -v age >/dev/null 2>&1; then
+            echo "age already present: $(age --version)"
+            exit 0
+          fi
+          ver=1.2.1
+          sha=57fd79a7ece5fe501f351b9dd51a82fbee1ea8db65a8839db17f5c080245e99f
+          tmp="$(mktemp -d)"
+          curl -fsSL -o "$tmp/age.tar.gz" \
+            "https://github.com/FiloSottile/age/releases/download/v${ver}/age-v${ver}-linux-arm64.tar.gz"
+          echo "${sha}  ${tmp}/age.tar.gz" | sha256sum -c -
+          tar -xzf "$tmp/age.tar.gz" -C "$tmp"
+          install -m 755 "$tmp/age/age" /usr/local/bin/age
+          rm -rf "$tmp"
+          age --version
+
+      - name: Materialize the backup identity (mounted secret → RUNNER_TEMP, 0600)
+        # Fail-closed: no identity, no drill. The key stays out of argv and out of the
+        # logs; only its path is exported to the following steps.
+        run: |
+          set -euo pipefail
+          src="${DEPLOY_SECRETS_DIR:-/deploy-secrets}/backup-age-identity.txt"
+          if [ ! -s "$src" ]; then
+            echo "::error::no age identity at $src — the drill cannot decrypt anything (fail-closed)"
+            exit 1
+          fi
+          dst="$RUNNER_TEMP/deploy-secrets/backup-age-identity.txt"
+          mkdir -p "$(dirname "$dst")"
+          install -m 600 "$src" "$dst"
+          echo "BACKUP_AGE_KEY_FILE=$dst" >> "$GITHUB_ENV"
+
+      - name: Backup script tests (offline, no host)
+        run: bash tools/backup/restore-drill.test.sh
+
+      - name: Fetch the latest successful backup artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          run_id="$(gh run list --repo "$GITHUB_REPOSITORY" \
+            --workflow=backup.yml --status=success --limit 1 \
+            --json databaseId --jq '.[0].databaseId')"
+          if [ -z "$run_id" ] || [ "$run_id" = "null" ]; then
+            echo "::error::there is no successful backup.yml run to drill"
+            exit 1
+          fi
+          echo "backup run: $run_id"
+          mkdir -p "$RUNNER_TEMP/artifact"
+          gh run download "$run_id" --repo "$GITHUB_REPOSITORY" -D "$RUNNER_TEMP/artifact"
+          # -print -quit rather than `| head -1`: with `pipefail` a SIGPIPE'd find would
+          # fail the step it was only meant to report to.
+          find "$RUNNER_TEMP/artifact" -type f -name 'memes-bot-db-*.sql.gz.age' -print -quit
+
+      - name: Restore drill
+        run: |
+          set -euo pipefail
+          artifact="$(find "$RUNNER_TEMP/artifact" -type f -name 'memes-bot-db-*.sql.gz.age' -print -quit)"
+          [ -n "$artifact" ] || { echo "::error::the artifact holds no *.sql.gz.age"; exit 1; }
+          bash tools/backup/restore-drill.sh "$artifact" "$RUNNER_TEMP/drill-out" \
+            | tee "$RUNNER_TEMP/restore-drill-report.txt"
+
+      - name: Publish the report
+        if: always()
+        run: |
+          set -euo pipefail
+          report="$RUNNER_TEMP/restore-drill-report.txt"
+          if [ -s "$report" ]; then
+            {
+              echo '## Restore drill'
+              echo '```'
+              cat "$report"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload the report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: restore-drill-report-${{ github.run_id }}
+          path: ${{ runner.temp }}/restore-drill-report.txt
+          retention-days: 3
+          if-no-files-found: warn
+
+      - name: Notify on failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BACKUP_ALERT_TITLE: '[auto] Restore drill failed'
+          BACKUP_ALERT_KIND: 'The scheduled **restore drill**'
+          BACKUP_ALERT_OUTCOME: 'the backup could not be restored or the integrity checks did not pass'
+          BACKUP_ALERT_HINT: 'the "Restore drill" step log, the freshness of the newest backup.yml artifact, and the age identity in the runner secrets directory'
+        run: |
+          bash tools/backup/notify-failure.sh \
+            "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
