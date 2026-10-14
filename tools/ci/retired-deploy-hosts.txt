@@ -1,0 +1,27 @@
+# Retired deploy hosts for the memes-bot stack — fail-closed deny-list (TGB-112).
+#
+# Repo-resident source of truth (NOT a secret). tools/ci/deploy-target-guard.sh
+# refuses to deploy when DEPLOY_HOST matches an entry here; tools/deploy/deploy.sh
+# calls that guard before it makes a single docker or ssh call.
+#
+# Why a host belongs here: the memes bot is a long-polling grammY runner AND, in the
+# same process, a gramjs MTProto userbot whose session is a Postgres row. A deploy
+# that starts a second instance on a host which still carries the bot token produces
+# the TRL-604 failure mode (a getUpdates conflict against live prod); a second login
+# with the same credentials can invalidate the parser session. A host the stack has
+# been moved off is exactly that risk.
+#
+# This is deliberately NOT a copy of the TRL list — that one serves another bot
+# (troll-bot) and another host set. An entry is added by the change that retires the
+# host for THIS stack; removing one is a deliberate review decision.
+#
+# 38.180.69.206 — the memes-bot prod host until TGB-112 moved it onto 185.238.169.171
+# (is*hosting, to be cancelled by the owner). It stays listed after burial because the
+# risk is not the machine, it is a stale $DEPLOY_SECRETS_DIR/target.env or a
+# copy-pasted ssh aimed at an address we no longer own: while the entry is there, such
+# a deploy is refused (a blocked deploy is the intended failure direction — never a
+# second poller).
+#
+# Format: one host per line; blank lines and `#` comments are ignored.
+# Matching is case-insensitive and exact (no wildcards).
+38.180.69.206
