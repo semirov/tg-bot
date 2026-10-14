@@ -39,14 +39,16 @@
 # against the dump itself, so only these catch a *wholesale* loss on the source (an
 # empty or half-written database). They are recorded from the production base of
 # 2026-10-14 — 26 tables, 280,860 rows, of which observatory_post_entity alone had
-# 180,323 and user_request_entity 12,068 — and set at roughly a third of it: a drop
-# that large is an incident, not noise. Lower them only as a deliberate decision.
+# 180,323 and user_request_entity 12,068. The table floor sits at 24 (losing more than
+# two tables is not a migration accident) and the row floor at roughly a third of the
+# base: a drop that large is an incident, not noise. Lower either one only as a
+# deliberate decision, and say why in the commit.
 #
 # Usage: restore-drill.sh <artifact.sql.gz.age> [outDir]
 #        The report is written to [outDir]/restore-drill-report.txt unless DRILL_REPORT says
 #        otherwise; nothing else is written there (the plaintext never reaches a disk).
 # Env: BACKUP_AGE_KEY_FILE (required — the key is never passed in argv)
-#      DRILL_MAX_AGE_HOURS (48), DRILL_EXPECT_TABLES (20)
+#      DRILL_MAX_AGE_HOURS (48), DRILL_EXPECT_TABLES (24 — the recorded base is 26)
 #      DRILL_MIN_ROWS (100000 — see the floors note above)
 #      DRILL_CANARIES ("client_session_entity:1 parser_settings_entity:1
 #                      user_request_entity:5000 observatory_post_entity:100000")
@@ -68,7 +70,7 @@ OUT_DIR="${2:-$(dirname "$ARTIFACT")}"
 BACKUP_AGE_KEY_FILE="${BACKUP_AGE_KEY_FILE:?BACKUP_AGE_KEY_FILE is not set — no identity to decrypt with}"
 
 MAX_AGE_HOURS="${DRILL_MAX_AGE_HOURS:-48}"
-EXPECT_TABLES="${DRILL_EXPECT_TABLES:-20}"
+EXPECT_TABLES="${DRILL_EXPECT_TABLES:-24}"
 MIN_ROWS="${DRILL_MIN_ROWS:-100000}"
 CANARIES="${DRILL_CANARIES:-client_session_entity:1 parser_settings_entity:1 user_request_entity:5000 observatory_post_entity:100000}"
 # Pinned by digest (the manifest list digest of postgres:14-alpine, measured 2026-10-14):

@@ -2,10 +2,13 @@
 # Tests for tools/backup/offsite-pull.sh (TGB-113) with no production host.
 #
 # `ssh` is a PATH shim answering the four calls the script makes (list the newest
-# archive, its size, its sha256, its bytes). What is checked: the newest archive lands
-# in the off-site directory with ciphertext verified before it is promoted, the run is
-# idempotent, a stale or non-ciphertext source is refused, and rotation keeps the last
-# OFFSITE_KEEP of our naming while never touching the hand-made memes-final-* copies.
+# archive, its size, its sha256, its bytes), and the size/digest it reports are
+# independent of the payload it delivers — which is how a source that lies about its own
+# artifact is simulated. What is checked: the newest archive lands in the off-site
+# directory only after the payload matches the source on **size and sha256**, the run is
+# idempotent, and a stale source, a non-ciphertext payload, a payload shorter than the
+# source claims, a wrong digest or an unreadable digest are all refused. Rotation keeps
+# the last OFFSITE_KEEP of our naming and never touches the hand-made memes-final-* copies.
 #
 # Run: bash tools/backup/offsite-pull.test.sh
 # bash 3.2 (macOS) compatible. Prints PASS/FAIL; exits 1 on failure.
@@ -50,9 +53,10 @@ while [ "$i" -lt "${#args[@]}" ]; do
   if [ -z "$target" ]; then target="$a"; else cmd="${cmd:+$cmd }$a"; fi
   i=$((i + 1))
 done
+[ "${STUB_UNREACHABLE:-0}" != "1" ] || { echo "ssh: connect to host 192.0.2.10 port 22: Connection timed out" >&2; exit 255; }
 case "$cmd" in
   *"ls -1t"*) printf '%s\n' "${STUB_NEWEST:-}"; exit 0;;
-  *"wc -c"*)  printf '%s\n' "${STUB_BYTES:-0}"; exit 0;;
+  *"wc -c"*)  [ "${STUB_SIZE_UNREADABLE:-0}" != "1" ] || exit 0; printf '%s\n' "${STUB_BYTES:-0}"; exit 0;;
   *sha256sum*) printf '%s\n' "${STUB_SHA:-}"; exit 0;;
   cat\ *)
     case "${STUB_BODY:-age}" in
@@ -102,6 +106,7 @@ fresh_offsite() {
 run_pull() {
   STUB_LOG="$WORK/ssh.log" STUB_NEWEST="${STUB_NEWEST-/opt/memes-bot/backups/$NEWEST}" \
   STUB_BYTES="${STUB_BYTES-$BODY_BYTES}" STUB_SHA="${STUB_SHA-$BODY_SHA}" \
+  STUB_UNREACHABLE="${STUB_UNREACHABLE:-0}" STUB_SIZE_UNREADABLE="${STUB_SIZE_UNREADABLE:-0}" \
   STUB_BODY="${STUB_BODY:-age}" \
   VPS_SSH_KEY="$KEY" VPS_TARGET=root@192.0.2.10 OFFSITE_DIR="$DEST" OFFSITE_KEEP="${OFFSITE_KEEP:-2}" \
   OFFSITE_MAX_AGE_HOURS="${OFFSITE_MAX_AGE_HOURS:-48}" OFFSITE_DRY_RUN="${OFFSITE_DRY_RUN:-0}" \
@@ -167,6 +172,92 @@ if [ "$((CALLS_AFTER - CALLS_BEFORE))" -le 3 ]; then
   pass "the no-op run does not re-download the payload"
 else
   fail "idempotency" "the payload was fetched again ($((CALLS_AFTER - CALLS_BEFORE)) calls)"
+fi
+# The heartbeat is read as "the cron is alive", so a no-op run must refresh it too —
+# otherwise a perfectly healthy pull would look stopped after a day.
+printf 'STALE-MARKER\n' > "$DEST/.last-success"
+rc=0; run_pull || rc=$?
+if [ "$rc" -eq 0 ] && grep -q 'state=up-to-date' "$DEST/.last-success" \
+   && ! grep -q 'STALE-MARKER' "$DEST/.last-success"; then
+  pass "a no-op run refreshes the heartbeat"
+else
+  fail "heartbeat on no-op" "$(cat "$DEST/.last-success" 2>/dev/null)"
+fi
+
+# ------------------------- a payload shorter than the source claims ----------
+# The reviewer's scenario (TGB-113 re-review): the source claims 1000 B and an all-zero
+# digest while the payload is the 27 B body. Before the fix that was promoted and logged
+# as a successful pull of 1000 bytes; the next run was the first to notice.
+fresh_offsite
+: > "$WORK/ssh.log"
+rc=0; STUB_BYTES=1000 STUB_SHA='0000000000000000000000000000000000000000000000000000000000000000' run_pull || rc=$?
+if [ "$rc" -ne 0 ]; then pass "a payload shorter than the source fails the run"; else fail "short payload" "rc=0"; fi
+if [ ! -f "$DEST/$NEWEST" ]; then
+  pass "a payload shorter than the source is never stored"
+else
+  fail "short payload" "the file was stored anyway"
+fi
+if ! grep -q 'pulled' "$WORK/out.log"; then
+  pass "the run does not report a successful pull"
+else
+  fail "short payload" "the log claims a pull: $(grep pulled "$WORK/out.log")"
+fi
+if grep -q 'truncated download' "$WORK/err.log"; then
+  pass "the failure names the byte mismatch against the source"
+else
+  fail "short payload message" "$(cat "$WORK/err.log")"
+fi
+
+# ------------------------------- the same size, a different digest ------------
+fresh_offsite
+: > "$WORK/ssh.log"
+rc=0; STUB_SHA='0000000000000000000000000000000000000000000000000000000000000000' run_pull || rc=$?
+if [ "$rc" -ne 0 ] && grep -q 'sha256 does not match the source' "$WORK/err.log"; then
+  pass "a payload of the right size with the wrong digest is refused"
+else
+  fail "digest mismatch" "rc=$rc: $(cat "$WORK/err.log")"
+fi
+if [ ! -f "$DEST/$NEWEST" ]; then
+  pass "an altered payload is never stored"
+else
+  fail "digest mismatch" "the file was stored anyway"
+fi
+
+# ------------------------------------ the source answers no digest ------------
+fresh_offsite
+: > "$WORK/ssh.log"
+rc=0; STUB_SHA='' run_pull || rc=$?
+if [ "$rc" -ne 0 ] && grep -q 'answered no sha256' "$WORK/err.log"; then
+  pass "a source that answers no digest fails closed"
+else
+  fail "no digest" "rc=$rc: $(cat "$WORK/err.log")"
+fi
+
+# ------------------------------------ the source cannot be measured ----------
+# No size, no comparison — and no promotion: "I could not check" is a failure, not a
+# weaker check (TGB-113 re-review).
+fresh_offsite
+: > "$WORK/ssh.log"
+rc=0; STUB_SIZE_UNREADABLE=1 run_pull || rc=$?
+if [ "$rc" -ne 0 ] && grep -q 'could not read the size' "$WORK/err.log"; then
+  pass "an unmeasurable source fails the run"
+else
+  fail "unmeasurable source" "rc=$rc: $(cat "$WORK/err.log")"
+fi
+if [ ! -f "$DEST/$NEWEST" ]; then
+  pass "nothing is stored when the source cannot be measured"
+else
+  fail "unmeasurable source" "a file was stored"
+fi
+
+# ---------------------------------------- the source is unreachable ----------
+fresh_offsite
+: > "$WORK/ssh.log"
+rc=0; STUB_UNREACHABLE=1 run_pull || rc=$?
+if [ "$rc" -ne 0 ] && [ "$(count_matching "$DEST" 'memes-bot-db-*.sql.gz.age')" = "3" ]; then
+  pass "an unreachable source fails the run and changes nothing"
+else
+  fail "unreachable source" "rc=$rc, dir: $(ls -1 "$DEST" | tr '\n' ' ')"
 fi
 
 # ------------------------------------------------- nothing on the source -----

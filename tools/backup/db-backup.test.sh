@@ -279,6 +279,24 @@ else
   fail "size sweep" "$(ls -1 "$OUTD" | tr '\n' ' ')"
 fi
 
+# ------------------------------------------ the host answers no digest --------
+# A source without sha256sum/shasum/openssl must not silently degrade to a byte-count
+# check (TGB-113 re-review, nit): the run fails closed.
+write_target 192.0.2.10
+: > "$WORK/ssh.log"
+OUTD="$WORK/out-nodigest"
+rc=0; STUB_SHA_UNREADABLE=1 run_backup "$OUTD" || rc=$?
+if [ "$rc" -ne 0 ] && grep -q 'no sha256' "$WORK/err.log"; then
+  pass "a host that answers no digest fails closed"
+else
+  fail "missing digest" "rc=$rc: $(cat "$WORK/err.log")"
+fi
+if [ "$(count_matching "$OUTD" '*')" = "0" ]; then
+  pass "nothing is published when the digest cannot be obtained"
+else
+  fail "digest sweep" "$(ls -1 "$OUTD" | tr '\n' ' ')"
+fi
+
 # --------------------------------------------- a dropped payload channel -----
 write_target 192.0.2.10
 : > "$WORK/ssh.log"

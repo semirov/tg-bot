@@ -99,6 +99,11 @@ jobs:
           ARTIFACT: ${{ steps.dump.outputs.path }}
         run: |
           set -euo pipefail
+          if command -v sha256sum >/dev/null 2>&1; then
+            digest="$(sha256sum "$ARTIFACT" | cut -d' ' -f1)"
+          else
+            digest="$(shasum -a 256 "$ARTIFACT" | cut -d' ' -f1)"
+          fi
           {
             echo "## DB backup"
             echo
@@ -106,7 +111,7 @@ jobs:
             echo
             echo "| bytes | sha256 | run |"
             echo "| --- | --- | --- |"
-            echo "| $(wc -c < "$ARTIFACT" | tr -d ' ') | \`$(sha256sum "$ARTIFACT" | cut -d' ' -f1)\` | ${{ github.run_id }} |"
+            echo "| $(wc -c < "$ARTIFACT" | tr -d ' ') | \`${digest}\` | ${{ github.run_id }} |"
             echo
             echo "Decryption needs the age identity - see tools/backup/README.md."
           } >> "$GITHUB_STEP_SUMMARY"

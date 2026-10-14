@@ -14,6 +14,14 @@
 # (nothing newer than OFFSITE_MAX_AGE_HOURS) is a failure, not a warning — silent
 # staleness is the failure mode this copy exists to prevent.
 #
+# Verified BEFORE promotion, like the CI side (TGB-113 re-review): the source's byte
+# count and sha256 are read first, and the download is promoted only when both match.
+# The age magic alone is not a completeness check — it sits at the START of the file,
+# so a truncated or altered transfer keeps it. This matters more here than anywhere
+# else: nothing downstream ever validates the off-host copy (the drill reads the CI
+# artifact), so this script is its only gate. A source that cannot answer the size or
+# the digest fails the run instead of degrading to a weaker check.
+#
 # Env: VPS_SSH_KEY        private key for the production host (required)
 #      VPS_TARGET         user@host (root@185.238.169.171)
 #      VPS_BACKUP_DIR     source directory (/opt/memes-bot/backups)
@@ -57,8 +65,22 @@ count_matching() {
 
 sha256_of() {
   if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | cut -d' ' -f1
-  else shasum -a 256 "$1" | cut -d' ' -f1; fi
+  elif command -v shasum >/dev/null 2>&1; then shasum -a 256 "$1" | cut -d' ' -f1
+  else openssl dgst -sha256 "$1" | awk '{print $NF}'; fi
 }
+
+# What the source says a complete copy is. Both answers are mandatory: an empty one is
+# a failed run, never a weaker check (a source without any of these three tools is not
+# a source we can verify against).
+remote_size() { # remote_size <remote-path>
+  "${SSH_BASE[@]}" "$VPS_TARGET" "wc -c < $(printf '%q' "$1")" 2>/dev/null | tr -d ' \r'
+}
+remote_sha() { # remote_sha <remote-path> — hex digest, empty when the host offers no tool
+  "${SSH_BASE[@]}" "$VPS_TARGET" \
+    "f=$(printf '%q' "$1"); if command -v sha256sum >/dev/null 2>&1; then sha256sum \"\$f\" | cut -d' ' -f1; elif command -v shasum >/dev/null 2>&1; then shasum -a 256 \"\$f\" | cut -d' ' -f1; elif command -v openssl >/dev/null 2>&1; then openssl dgst -sha256 \"\$f\" | awk '{print \$NF}'; fi" \
+    2>/dev/null | tr -d '\r\n'
+}
+local_size() { wc -c < "$1" | tr -d ' '; }
 
 stamp_epoch() { # YYYYMMDDTHHMMSSZ → epoch
   local s="$1" iso
@@ -89,20 +111,38 @@ AGE_HOURS=$(( ($(date -u +%s) - $(stamp_epoch "$STAMP")) / 3600 ))
 
 LOCAL="$OFFSITE_DIR/$NAME"
 
-# --- already pulled? (size first — cheap — then the hash) ----------------------
-REMOTE_BYTES="$("${SSH_BASE[@]}" "$VPS_TARGET" "wc -c < $(printf '%q' "$REMOTE_PATH")" | tr -d ' \r')"
-case "$REMOTE_BYTES" in ''|*[!0-9]*) die "could not read the size of ${REMOTE_PATH} on the source host";; esac
+write_heartbeat() { # write_heartbeat <state> — refreshed on every successful run
+  {
+    date -u +%Y-%m-%dT%H:%M:%SZ
+    echo "artifact=${NAME} bytes=${REMOTE_BYTES} sha256=${REMOTE_SHA} kept=${KEPT}/${OFFSITE_KEEP} rotated=${REMOVED} state=$1"
+  } > "$OFFSITE_DIR/.last-success"
+  chmod 600 "$OFFSITE_DIR/.last-success" 2>/dev/null || true
+}
 
-if [ -f "$LOCAL" ] && [ "$(wc -c < "$LOCAL" | tr -d ' ')" = "$REMOTE_BYTES" ]; then
-  REMOTE_SHA="$("${SSH_BASE[@]}" "$VPS_TARGET" "sha256sum $(printf '%q' "$REMOTE_PATH") | cut -d' ' -f1" | tr -d '\r')"
-  if [ -n "$REMOTE_SHA" ] && [ "$REMOTE_SHA" = "$(sha256_of "$LOCAL")" ]; then
-    echo "==> up to date: ${NAME} (${REMOTE_BYTES} bytes, ${AGE_HOURS}h old)"
-    exit 0
-  fi
+# --- what the source claims (mandatory: both answers, before anything is promoted) ---
+REMOTE_BYTES="$(remote_size "$REMOTE_PATH")"
+case "$REMOTE_BYTES" in ''|*[!0-9]*) die "could not read the size of ${REMOTE_PATH} on the source host";; esac
+REMOTE_SHA="$(remote_sha "$REMOTE_PATH")"
+case "$REMOTE_SHA" in
+  ''|*[!0-9a-f]*) die "the source host answered no sha256 for ${REMOTE_PATH} (no sha256sum/shasum/openssl?) — refusing to store an unverified copy (fail-closed)";;
+esac
+
+# --- already pulled? (size first — cheap — then the digest) --------------------
+if [ -f "$LOCAL" ] && [ "$(local_size "$LOCAL")" = "$REMOTE_BYTES" ] \
+   && [ "$(sha256_of "$LOCAL")" = "$REMOTE_SHA" ]; then
+  KEPT="$(count_matching "$OFFSITE_DIR" "${PREFIX}-*.sql.gz.age")"
+  REMOVED=0
+  # The heartbeat is refreshed here too: the run succeeded and the off-host copy is
+  # verified, which is what the timestamp is read for (a stale heartbeat means the
+  # cron stopped, not that the source changed).
+  write_heartbeat "up-to-date"
+  echo "==> up to date: ${NAME} (${REMOTE_BYTES} bytes, ${AGE_HOURS}h old)"
+  echo "==> heartbeat: $(head -1 "$OFFSITE_DIR/.last-success")"
+  exit 0
 fi
 
 if [ "$DRY_RUN" = "1" ]; then
-  echo "==> would pull ${NAME} (${REMOTE_BYTES} bytes, ${AGE_HOURS}h old) → ${LOCAL}"
+  echo "==> would pull ${NAME} (${REMOTE_BYTES} bytes, sha256 ${REMOTE_SHA}, ${AGE_HOURS}h old) → ${LOCAL}"
   exit 0
 fi
 
@@ -116,11 +156,15 @@ trap cleanup EXIT INT TERM
 [ -s "$TMP" ] || die "empty download from the source host — nothing was written"
 head -c 64 "$TMP" | grep -q 'age-encryption.org/v1' \
   || die "the downloaded file is not age ciphertext — refusing to store it (fail-closed)"
+[ "$(local_size "$TMP")" = "$REMOTE_BYTES" ] \
+  || die "truncated download: the source has ${REMOTE_BYTES} B, the download is $(local_size "$TMP") B — refusing to store it (fail-closed)"
+[ "$(sha256_of "$TMP")" = "$REMOTE_SHA" ] \
+  || die "the download's sha256 does not match the source — refusing to store it (fail-closed)"
 
 mv -f "$TMP" "$LOCAL"
 chmod 600 "$LOCAL" 2>/dev/null || true
 trap - EXIT INT TERM
-echo "==> pulled ${NAME} (${REMOTE_BYTES} bytes, ${AGE_HOURS}h old)"
+echo "==> pulled ${NAME} (${REMOTE_BYTES} bytes, sha256 ${REMOTE_SHA}, ${AGE_HOURS}h old)"
 
 # --- rotation: only this contour's naming, the one-off memes-final-* stay -------
 REMOVED=0
@@ -148,13 +192,10 @@ chmod 600 "$OFFSITE_DIR/SHA256SUMS.memes-bot" 2>/dev/null || true
 # --- heartbeat (TGB-113 review §M10) --------------------------------------------
 # The pull fails loudly, but its only *signal* is this log: a silently stopped cron
 # would age the recovery point while the CI drill keeps passing against its own
-# artifact. The timestamp file is what a monitoring check (or a human) reads; the
-# dashboard/exporter side is the SRV Triage item linked from TGB-113.
-{
-  date -u +%Y-%m-%dT%H:%M:%SZ
-  echo "artifact=${NAME} bytes=${REMOTE_BYTES} kept=${KEPT}/${OFFSITE_KEEP} rotated=${REMOVED}"
-} > "$OFFSITE_DIR/.last-success"
-chmod 600 "$OFFSITE_DIR/.last-success" 2>/dev/null || true
+# artifact. The timestamp file is what a monitoring check (or a human) reads — and it
+# is refreshed on the no-op path too, so "older than a day" really does mean the cron
+# stopped. The dashboard/exporter side is SRV-215.
+write_heartbeat "pulled"
 
 echo "==> offsite copy: ${KEPT}/${OFFSITE_KEEP} kept, ${REMOVED} rotated out, dir=$(printf '%s' "$OFFSITE_DIR")"
 echo "==> heartbeat: $(head -1 "$OFFSITE_DIR/.last-success")"

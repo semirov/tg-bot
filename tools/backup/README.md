@@ -27,7 +27,7 @@ public, so an unencrypted artifact is not an option:
 | Host pin | `tools/backup/expected-hosts.txt` — the positive counterpart to `tools/ci/retired-deploy-hosts.txt`: the dump may only come from these hosts |
 | Publication | `.github/workflows/backup.yml` → artifact `memes-bot-db-<run_id>`, `retention-days: 3` |
 | Restore drill | `tools/backup/restore-drill.sh` + `.github/workflows/restore-drill.yml` (weekly + manual) |
-| Off-host copy | `tools/backup/offsite-pull.sh`, run on the home-server (cron) → `/home/filipp/backups/memes-bot/` (rotation: last 14) |
+| Off-host copy | `tools/backup/offsite-pull.sh`, run on the home-server (cron) → `/home/filipp/backups/memes-bot/` (rotation: last 14; the source's byte count **and** sha256 are verified **before** the file is promoted, and a source that cannot answer either fails the run) |
 | Alert | `tools/backup/notify-failure.sh` → GitHub issue, deduplicated by title |
 
 ## Cadence and retention
@@ -102,7 +102,7 @@ It takes the artifact of the **last successful backup run**, decrypts it
 | restore | `age -d | gunzip | psql` runs to completion |
 | parity | per-table row counts from the dump's own COPY blocks == the restored counts |
 | canaries | `client_session_entity` (the MTProto session row), `parser_settings_entity`, `user_request_entity` and `observatory_post_entity` are above their floors |
-| shape | at least `DRILL_EXPECT_TABLES` (20) tables and at least `DRILL_MIN_ROWS` rows |
+| shape | at least `DRILL_EXPECT_TABLES` (24 of the recorded 26) tables and at least `DRILL_MIN_ROWS` (100000) rows |
 | verifier image | the throwaway server reports the source's major version (14.x) |
 | exposure | the throwaway instance publishes no port, runs with no network, and keeps PGDATA on a tmpfs (asserted, not assumed) |
 
@@ -110,8 +110,9 @@ The **absolute floors** are the deliberate guard (TGB-113 review §M5): row pari
 measured against the dump itself, so it cannot notice a database that is empty *at the
 source* as well. They are recorded from the production base of 2026-10-14 — 26 tables,
 280,860 rows (`observatory_post_entity` alone 180,323, `user_request_entity` 12,068) —
-and set at roughly a third of it, because a drop that large is an incident rather than
-noise. Lower a floor only as a deliberate decision, and say why in the commit.
+and set just inside it: 24 tables (losing more than two is not a migration accident) and
+roughly a third of the rows, because a drop that large is an incident rather than noise.
+Lower a floor only as a deliberate decision, and say why in the commit.
 
 The verifier image is pinned by digest (not by the floating `postgres:14-alpine` tag),
 so a green drill cannot be explained by an image that moved underneath it; if the
@@ -204,8 +205,10 @@ script is idempotent and moves ciphertext only.
   # → timestamp + artifact=<name> bytes=<n> kept=<n>/14
   ```
 
-  A heartbeat older than a day means the cron stopped, and the recovery point is aging
-  while the CI drill keeps passing against its own artifact. Wiring this into the
+  The heartbeat is refreshed by every successful run, **including a no-op one** (the
+  run verified the copy; nothing had changed), so a heartbeat older than a day means the
+  cron itself stopped — and the recovery point is aging while the CI drill keeps passing
+  against its own artifact. Wiring this into the
   home-server monitoring is tracked as [SRV-215](https://wiki.semirov.dev/SRV/issues/SRV-215)
   (Triage, anomaly).
 - If the source host itself is lost, the home-server copy is the recovery point.

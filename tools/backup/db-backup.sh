@@ -11,12 +11,13 @@
 # SSH resilience follows the deploy path (TGB-112 / TRL-148): keepalive on the long
 # CI↔host channel, a retried snapshot phase, and a streamed `ssh … cat` download into
 # `<local>.part` that is promoted by an atomic `mv` only once it matches the SOURCE:
-# the age magic, the byte count from `wc -c`, and — when the host answers with one —
-# the sha256. The age magic alone is not a completeness check: it sits at the START of
-# the file, so a head-intact truncation passes it while failing to decrypt (TGB-113
-# review §1: a 55 % prefix of a real artifact looked "ready"; only the weekly drill
-# would have noticed). Every mismatch is a retried phase, and the run fails closed if
-# it cannot be resolved.
+# the age magic, the byte count from `wc -c` and the sha256 (asked for with a
+# sha256sum/shasum/openssl fallback; a host that answers neither is refused rather than
+# verified weakly). The age magic alone is not a completeness check: it sits at the
+# START of the file, so a head-intact truncation passes it while failing to decrypt
+# (TGB-113 review §1: a 55 % prefix of a real artifact looked "ready"; only the weekly
+# drill would have noticed). Every mismatch is a retried phase, and the run fails closed
+# if it cannot be resolved.
 #
 # Usage: db-backup.sh [outDir]
 # Credentials come from $DEPLOY_SECRETS_DIR/target.env — the same file the deploy
@@ -116,10 +117,17 @@ sha256_of() {
   if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | cut -d' ' -f1
   else shasum -a 256 "$1" | cut -d' ' -f1; fi
 }
-# What the source says a complete copy is. Empty output = the host could not answer,
-# which fails the attempt instead of letting an unverified file through.
-remote_size() { "${SSH_BASE[@]}" "$TARGET" "wc -c < $(qq "$1")" 2>/dev/null | tr -d ' \r'; }
-remote_sha() { "${SSH_BASE[@]}" "$TARGET" "sha256sum $(qq "$1") 2>/dev/null | cut -d' ' -f1" 2>/dev/null | tr -d '\r\n'; }
+# What the source says a complete copy is. Both answers are mandatory: empty output
+# fails the attempt instead of letting an unverified file through, and the digest is
+# requested with a fallback chain rather than skipped when one tool is missing.
+remote_size() { # remote_size <remote-path>
+  "${SSH_BASE[@]}" "$TARGET" "wc -c < $(qq "$1")" 2>/dev/null | tr -d ' \r'
+}
+remote_sha() { # remote_sha <remote-path> — hex digest, empty when the host offers no tool
+  "${SSH_BASE[@]}" "$TARGET" \
+    "f=$(qq "$1"); if command -v sha256sum >/dev/null 2>&1; then sha256sum \"\$f\" | cut -d' ' -f1; elif command -v shasum >/dev/null 2>&1; then shasum -a 256 \"\$f\" | cut -d' ' -f1; elif command -v openssl >/dev/null 2>&1; then openssl dgst -sha256 \"\$f\" | awk '{print \$NF}'; fi" \
+    2>/dev/null | tr -d '\r\n'
+}
 
 net_backoff() { # delay for attempt N (the last value is the ceiling)
   local i=1 last=30
@@ -161,7 +169,7 @@ snapshot_remote() {
 # a broken transfer is a non-zero ssh exit, and the partial file stays in `.part`.
 fetch_dump() {
   local remote="$1" local_final="$2" tmp="${2}.part"
-  local attempt=1 rc reason delay expected_size expected_sha actual_sha
+  local attempt=1 rc reason delay expected_size expected_sha
 
   while :; do
     rc=0; reason=""
@@ -174,6 +182,8 @@ fetch_dump() {
     rm -f "$tmp"
     if [ -z "$expected_size" ]; then
       rc=1; reason="could not read the source size (host unreachable, or the file is gone)"
+    elif [ -z "$expected_sha" ]; then
+      rc=1; reason="the host answered no sha256 (sha256sum/shasum/openssl all missing?) — refusing to publish an unverified artifact (fail-closed)"
     elif ! "${SSH_BASE[@]}" "$TARGET" "cat $(qq "$remote")" > "$tmp"; then
       rc=1; reason="ssh channel dropped"
     elif [ ! -s "$tmp" ]; then
@@ -186,15 +196,11 @@ fetch_dump() {
       fi
     elif [ "$(local_size "$tmp")" != "$expected_size" ]; then
       rc=1; reason="truncated download: ${expected_size} B on the host, $(local_size "$tmp") B here (fail-closed)"
-    elif [ -n "$expected_sha" ]; then
-      actual_sha="$(sha256_of "$tmp")"
-      if [ "$actual_sha" != "$expected_sha" ]; then
-        rc=1; reason="sha256 mismatch against the host (fail-closed)"
-      fi
+    elif [ "$(sha256_of "$tmp")" != "$expected_sha" ]; then
+      rc=1; reason="sha256 mismatch against the host (fail-closed)"
     fi
 
     if [ "$rc" -eq 0 ]; then
-      [ -n "$expected_sha" ] || echo "    note: the host answered no sha256 — the byte count is the completeness check"
       mv -f "$tmp" "$local_final"
       return 0
     fi
@@ -249,8 +255,8 @@ else
   if [ -z "$FINAL_SIZE" ] || [ "$(local_size "$LOCAL")" != "$FINAL_SIZE" ]; then
     echo "!! the published artifact does not match the source (${FINAL_SIZE:-?} B on the host, $(local_size "$LOCAL") B here): ${LOCAL}" >&2
     PUBLISHED_RC=1
-  elif [ -n "$FINAL_SHA" ] && [ "$(sha256_of "$LOCAL")" != "$FINAL_SHA" ]; then
-    echo "!! the published artifact's sha256 does not match the source: ${LOCAL}" >&2
+  elif [ -z "$FINAL_SHA" ] || [ "$(sha256_of "$LOCAL")" != "$FINAL_SHA" ]; then
+    echo "!! the published artifact's sha256 is missing from the source or does not match it: ${LOCAL}" >&2
     PUBLISHED_RC=1
   fi
 fi
