@@ -137,7 +137,9 @@ if [ -n "$BUILT_SHA" ] && docker pull "$IMAGE_SHA" >/dev/null 2>&1; then
   docker tag "$IMAGE_SHA" "${DEPLOY_IMAGE}:${VERSION}"
 else
   echo "==> sha-${BUILT_SHA:-?} not found — building ${DEPLOY_IMAGE}:${VERSION} (linux/amd64)"
-  docker build --platform linux/amd64 \
+  # --provenance=false --sbom=false: the registry rejects the BuildKit attestation
+  # manifest (TGB-112, 2026-10-14), so this fallback build must not emit one.
+  docker build --provenance=false --sbom=false --platform linux/amd64 \
     --build-arg DEPS_IMAGE="$DEPS_IMAGE" \
     -f apps/memes-bot/Dockerfile \
     -t "${DEPLOY_IMAGE}:${VERSION}" .

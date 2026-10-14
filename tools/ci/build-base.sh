@@ -34,7 +34,12 @@ if docker manifest inspect "$TAG" >/dev/null 2>&1; then
   echo "==> Базовый образ уже в реестре: $TAG" >&2
 else
   echo "==> Сборка базового образа $TAG" >&2
-  docker build --build-arg NODE_VERSION="$NODE_VERSION" \
+  # --provenance=false --sbom=false: the registry (YCR) rejects the BuildKit
+  # attestation manifest ("Cannot read manifest data", TGB-112, 2026-10-14) —
+  # it is an extra index entry with platform unknown/unknown. Re-enable once the
+  # registry accepts it again.
+  docker build --provenance=false --sbom=false \
+    --build-arg NODE_VERSION="$NODE_VERSION" \
     -f Dockerfile.deps -t "$TAG" -t "$LATEST" .
   echo "==> Push базового образа" >&2
   docker push "$TAG"

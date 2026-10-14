@@ -90,7 +90,12 @@ jobs:
           source tools/ci/docker-config.sh
           IMAGE=cr.yandex/crp8g8jm3p8d780a8hk3/telegram-bot
           TAG="sha-${GITHUB_SHA::7}"
-          docker build --build-arg DEPS_IMAGE="$(cat .deps-image)" -f apps/memes-bot/Dockerfile -t "$IMAGE:$TAG" .
+          # --provenance=false --sbom=false on every push path: this registry rejects
+          # the BuildKit attestation manifest (TGB-112, 2026-10-14, "Cannot read
+          # manifest data"), so a push that emits one cannot succeed. Re-enable when
+          # the registry accepts it again.
+          docker build --provenance=false --sbom=false \
+            --build-arg DEPS_IMAGE="$(cat .deps-image)" -f apps/memes-bot/Dockerfile -t "$IMAGE:$TAG" .
           docker push "$IMAGE:$TAG"
 
   e2e:
