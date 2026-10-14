@@ -83,6 +83,19 @@ jobs:
           docker run --rm memes-bot-tests bash tools/ci/deploy-target-guard.test.sh
           docker run --rm memes-bot-tests bash tools/deploy/remote-preflight.test.sh
           docker run --rm memes-bot-tests bash tools/deploy/deploy-guards.test.sh
+      - name: Backup contour (offline shell tests)
+        # TGB-113: the backup scripts are the contour, so their negative cases must run
+        # on every push — plaintext refused, truncated download refused, parity
+        # mismatch, stale artifact, missing identity, rotation boundaries. All five
+        # suites are pure bash with PATH stubs (no host, no docker, no secret) and run
+        # inside the test image, next to the deploy guards above.
+        run: |
+          docker run --rm memes-bot-tests bash -c '
+            set -e
+            for suite in remote-dump db-backup restore-drill offsite-pull notify-failure; do
+              echo "== tools/backup/$suite.test.sh =="
+              bash "tools/backup/$suite.test.sh"
+            done'
       - name: Unit tests + coverage (порог 95%)
         run: docker run --rm -e NODE_OPTIONS=--no-deprecation memes-bot-tests npx nx test memes-bot --codeCoverage
       - name: Build & push production image

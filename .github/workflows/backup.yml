@@ -1,0 +1,117 @@
+name: DB backup
+
+# Scheduled encrypted dump of the memes-bot database (TGB-113). The dump is age
+# encrypted AT THE SOURCE on the production host (plaintext never reaches a disk),
+# and what leaves the host is ciphertext; the artifact published here is that
+# ciphertext. Same recipe as the troll contour (TRL-241) so the two stay comparable.
+#
+# No GitHub secret is involved: the production credentials are the ones the deploy
+# already uses, read from the secrets directory mounted read-only into the
+# self-hosted runner ($DEPLOY_SECRETS_DIR/target.env — see tools/backup/README.md).
+# The private age identity is NOT materialized here: this job only publishes
+# ciphertext and never has the means to decrypt it (that is the drill's job).
+#
+# Triggers are schedule/workflow_dispatch only: a pull request cannot reach this job,
+# and the run fails closed when the target file is missing or the host cannot be
+# reached — it never falls back to an unencrypted dump.
+on:
+  schedule:
+    - cron: '30 2 * * *' # 02:30 UTC daily; the troll backup runs at 02:00
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write # failure alert (tools/backup/notify-failure.sh)
+
+concurrency:
+  group: db-backup-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  backup:
+    name: pg_dump → encrypted artifact
+    runs-on: [self-hosted, linux, arm64, memes-bot]
+    # No `environment`: the credentials live in the runner's mounted secrets dir, not
+    # in GitHub, so a missing directory fails the run instead of silently skipping
+    # the dump. A stuck ssh must not hold the queue either.
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Backup script tests (offline, no host)
+        # The scripts are the contour: a broken one must fail here, before it is
+        # allowed to talk to the production host. Pure bash with PATH stubs.
+        run: |
+          bash tools/backup/remote-dump.test.sh
+          bash tools/backup/db-backup.test.sh
+
+      - name: Preflight - runner prerequisites
+        # A missing tool must fail here with a name, not halfway through a dump or, worse,
+        # only in the alert step after the real failure (TGB-113 review §M1).
+        run: |
+          missing=""
+          for c in ssh gh gzip gunzip; do
+            command -v "$c" >/dev/null 2>&1 || missing="$missing $c"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::missing on this runner:$missing"
+            exit 1
+          fi
+          echo "runner prerequisites present"
+
+      - name: Dump the database on the production host
+        id: dump
+        # Snapshot on the host (encrypted there) + keepalive/retried download, promoted
+        # only when the byte count and the sha256 match the source; a plaintext `.sql.gz`
+        # or a truncated transfer fails the run (fail-closed).
+        run: |
+          set -euo pipefail
+          art="$(bash tools/backup/db-backup.sh "$RUNNER_TEMP/backups" | tee /dev/stderr | tail -1)"
+          [ -n "$art" ] || { echo "::error::db-backup.sh printed no artifact path"; exit 1; }
+          echo "path=$art" >> "$GITHUB_OUTPUT"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: memes-bot-db-${{ github.run_id }}
+          # db-backup.sh fails closed, so only age ciphertext can get here.
+          path: ${{ runner.temp }}/backups/*.sql.gz.age
+          # 3 days: short exposure window in the artifacts; the host keeps the last 3
+          # archives and the home-server keeps the long tail (tools/backup/offsite-pull.sh).
+          retention-days: 3
+          if-no-files-found: error
+
+      - name: Notify on failure
+        # A scheduled job that fails silently is worse than no job: open/update an
+        # issue with the run link (idempotent, only github.token).
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          bash tools/backup/notify-failure.sh \
+            "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+      - name: Summary
+        # Name, size and hash only: no values from the dump (TGB-113 review §M3 — a
+        # summary that cannot be tied to an artifact is a run log, not evidence).
+        if: success()
+        env:
+          ARTIFACT: ${{ steps.dump.outputs.path }}
+        run: |
+          set -euo pipefail
+          if command -v sha256sum >/dev/null 2>&1; then
+            digest="$(sha256sum "$ARTIFACT" | cut -d' ' -f1)"
+          else
+            digest="$(shasum -a 256 "$ARTIFACT" | cut -d' ' -f1)"
+          fi
+          {
+            echo "## DB backup"
+            echo
+            echo "Encrypted artifact: $(basename "$ARTIFACT")"
+            echo
+            echo "| bytes | sha256 | run |"
+            echo "| --- | --- | --- |"
+            echo "| $(wc -c < "$ARTIFACT" | tr -d ' ') | \`${digest}\` | ${{ github.run_id }} |"
+            echo
+            echo "Decryption needs the age identity - see tools/backup/README.md."
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -59,6 +59,10 @@ butcher-*.md
 prod_data.json
 SECURITY_AUDIT.md
 
+# DB backup artifacts (tools/backup/db-backup.sh writes here by default; ciphertext
+# only, but a dump never belongs in the repository)
+/backups/
+
 # Кэш сборки
 .angular/
 .nx/
