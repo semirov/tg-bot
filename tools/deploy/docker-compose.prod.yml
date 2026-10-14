@@ -1,0 +1,159 @@
+# Pinned production definition of the memes-bot (tg-bot) stack — TGB-112 / TRL-1017.
+#
+# Why this file exists: prod used to be two standalone `docker run` containers
+# (`telegram-bot`, deployed by tools/deploy/deploy.sh, and `postgres`, created by hand —
+# neither carried any compose label) plus a compose-managed redis. There was nothing to
+# diff and nothing to move, which is how the unmanaged `0.0.0.0:5432` publish happened
+# (SRV-199). This file is now the source of truth: tools/deploy/deploy.sh syncs it to
+# $DEPLOY_STACK_DIR on the target host and drives it with `docker compose` — a bare
+# `docker run` recreates prod without the caps, the second loopback publish and the
+# healthcheck that the cutover gate reads.
+#
+# Values are the measured runtime contract (TGB-112 comment #3269) plus the caps and
+# loopback binds pinned in TRL-DOC-323 §4.1/§4.2. The bot image is pinned by tag; the
+# measured digest of telegram-bot:0.41.4 was sha256:de54aa71…62ee40bc0c1377.
+#
+# Files expected next to this file on the target host (all mode 600, none in the repo):
+#   .env        image pointer, written by deploy.sh: MEMES_BOT_IMAGE + MEMES_BOT_VERSION
+#               (compose interpolates this file; it holds no secret)
+#   bot.env     the app's own keys — the 37 the image expects (DATABASE_*, BOT_TOKEN,
+#               REDIS_URL, API_JWT_SECRET, …)
+#   infra.env   infra only: POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB, REDIS_PASSWORD
+#   redis.conf  redis-server config: requirepass + appendonly + maxmemory policy
+# bot.env and infra.env are split so the bot token does not sit in the DB and cache
+# containers. Key names only are documented above — never values.
+#
+# Modes: the deploy-time preflight asserts that every file this definition mounts — the
+# two env files and every bind source (redis.conf) — carries no group/world permission
+# bit, and it re-checks the bind sources of the containers that are actually running, so
+# a hand-made `docker run -v` with a laxer file is caught too. `.env` holds no secret;
+# deploy.sh writes it 0600 for consistency but it is deliberately outside that assertion.
+#
+# Local render check (no secrets, no host): create a temp dir with a dummy .env and run
+#   docker compose -f tools/deploy/docker-compose.prod.yml config -q
+# WARNING for anyone running on a host with the real env files: plain
+# `docker compose config` RESOLVES them into the service `environment:` and prints the
+# values (it drops the `env_file:` paths entirely on compose v5). Use `config -q`, or
+# project only the fields you need — never pipe the full render to a log (observed once
+# during the TGB-112 review fixes, 2026-10-14).
+x-logging: &default-logging
+  # Pinned explicitly rather than inherited: 185's daemon default is already
+  # json-file 10m x 3 (TRL-1017 host prep), and pinning the same values keeps the
+  # definition self-contained if the daemon default ever changes.
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: "3"
+
+services:
+  postgres:
+    image: postgres:14 # same image as the retired prod (it ran server 14.23)
+    container_name: memes-postgres
+    restart: unless-stopped
+    # The official image reads POSTGRES_*, not the app's DATABASE_* names: pointing it
+    # at bot.env would leave the instance uninitialised and the restored objects
+    # unowned (security review A3).
+    env_file: [./infra.env]
+    mem_limit: 224m
+    mem_reservation: 96m
+    cpus: "0.4"
+    oom_score_adj: -200
+    security_opt: ["no-new-privileges:true"]
+    volumes:
+      - memes-pgdata:/var/lib/postgresql/data
+    networks: [memes-net]
+    # NO ports: — the bot reaches it as host `postgres` on memes-net
+    # (DATABASE_HOST=postgres, measured). The retired host published 5432 on 0.0.0.0.
+    # pg_trgm comes from the dump (`CREATE EXTENSION IF NOT EXISTS pg_trgm` is part of
+    # pg_dump output) and ships with the image's contrib modules; no initdb mount needed.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    logging: *default-logging
+
+  redis:
+    image: redis:7-alpine
+    container_name: memes-redis
+    restart: unless-stopped
+    # Read only for REDIS_PASSWORD, which the healthcheck below needs. The password
+    # itself lives in redis.conf (mounted below), never on a command line: the retired
+    # app-redis carried `--requirepass <value>` in argv, readable by any local
+    # `docker inspect` (TRL-327 / design D8).
+    env_file: [./infra.env]
+    command: ["redis-server", "/etc/redis/redis.conf"]
+    mem_limit: 96m
+    mem_reservation: 16m
+    cpus: "0.2"
+    security_opt: ["no-new-privileges:true"]
+    volumes:
+      - ./redis.conf:/etc/redis/redis.conf:ro
+      - memes-redis:/data
+    networks: [memes-net]
+    healthcheck:
+      # `$$` keeps compose from interpolating: the container's own shell expands
+      # REDISCLI_AUTH from its environment, so no secret reaches docker inspect.
+      test: ["CMD-SHELL", "REDISCLI_AUTH=\"$$REDIS_PASSWORD\" redis-cli ping | grep -q PONG"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    logging: *default-logging
+
+  telegram-bot:
+    # Set by deploy.sh in ./.env (and by hand at the first cutover start):
+    #   MEMES_BOT_IMAGE=cr.yandex/crp8g8jm3p8d780a8hk3/telegram-bot:0.41.4
+    # Rotating this pointer is the whole upgrade/rollback operation — there is no
+    # `-prev` container any more.
+    image: "${MEMES_BOT_IMAGE:?set MEMES_BOT_IMAGE in the compose .env (see tools/deploy/deploy.sh)}"
+    container_name: telegram-bot
+    restart: unless-stopped
+    env_file: [./bot.env]
+    environment:
+      APP_VERSION: "${MEMES_BOT_VERSION:-unknown}"
+      METRICS_PORT: "9464"
+    mem_limit: 384m
+    mem_reservation: 200m
+    cpus: "0.7"
+    oom_score_adj: -400
+    security_opt: ["no-new-privileges:true"]
+    ports:
+      # Loopback only: 185's edge (Caddy) is host-networked, so the app API and the
+      # metrics endpoint must be reachable from the host. Nothing is published on
+      # 0.0.0.0 (D4/I9), and 185's DOCKER-USER guard drops the rest.
+      - "127.0.0.1:9464:9464" # metrics + /healthz, consumed by bot-metrics-tunnel
+      - "127.0.0.1:3333:3333" # app API, consumed by the vhost's /api/* route
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks: [memes-net]
+    healthcheck:
+      # The app serves /healthz (200, no token) next to /metrics
+      # (apps/memes-bot/src/app/shared/metrics/metrics-server.ts) — a stronger start
+      # gate than parsing the start line out of the log, and the only gate that needs
+      # no secret. Node is guaranteed here: the image is node:20-alpine.
+      test:
+        ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:9464/healthz',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 90s
+    logging: *default-logging
+
+volumes:
+  # Explicit names, so the state does not move with the compose project name.
+  memes-pgdata:
+    name: memes-pgdata
+  memes-redis:
+    name: memes-redis
+
+networks:
+  # Created by TRL-1017 host prep (bridge, not internal). `external: true` means
+  # compose never creates or removes it — a typo in the name fails closed instead of
+  # silently isolating the stack on a fresh network.
+  memes-net:
+    external: true
