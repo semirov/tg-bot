@@ -122,14 +122,6 @@ chmod 600 "$LOCAL" 2>/dev/null || true
 trap - EXIT INT TERM
 echo "==> pulled ${NAME} (${REMOTE_BYTES} bytes, ${AGE_HOURS}h old)"
 
-# --- manifest (same convention as the hand-made copies: SHA256SUMS.memes-bot) ---
-if command -v sha256sum >/dev/null 2>&1; then
-  (cd "$OFFSITE_DIR" && sha256sum ./*.sql.gz.age > SHA256SUMS.memes-bot)
-else
-  (cd "$OFFSITE_DIR" && shasum -a 256 ./*.sql.gz.age > SHA256SUMS.memes-bot)
-fi
-chmod 600 "$OFFSITE_DIR/SHA256SUMS.memes-bot" 2>/dev/null || true
-
 # --- rotation: only this contour's naming, the one-off memes-final-* stay -------
 REMOVED=0
 if ls -1t "$OFFSITE_DIR"/${PREFIX}-*.sql.gz.age >/dev/null 2>&1; then
@@ -153,4 +145,16 @@ else
 fi
 chmod 600 "$OFFSITE_DIR/SHA256SUMS.memes-bot" 2>/dev/null || true
 
+# --- heartbeat (TGB-113 review §M10) --------------------------------------------
+# The pull fails loudly, but its only *signal* is this log: a silently stopped cron
+# would age the recovery point while the CI drill keeps passing against its own
+# artifact. The timestamp file is what a monitoring check (or a human) reads; the
+# dashboard/exporter side is the SRV Triage item linked from TGB-113.
+{
+  date -u +%Y-%m-%dT%H:%M:%SZ
+  echo "artifact=${NAME} bytes=${REMOTE_BYTES} kept=${KEPT}/${OFFSITE_KEEP} rotated=${REMOVED}"
+} > "$OFFSITE_DIR/.last-success"
+chmod 600 "$OFFSITE_DIR/.last-success" 2>/dev/null || true
+
 echo "==> offsite copy: ${KEPT}/${OFFSITE_KEEP} kept, ${REMOVED} rotated out, dir=$(printf '%s' "$OFFSITE_DIR")"
+echo "==> heartbeat: $(head -1 "$OFFSITE_DIR/.last-success")"

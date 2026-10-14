@@ -43,10 +43,14 @@ EOF
 
 # Dedup by title. A failed lookup or a non-numeric answer means "create a new issue":
 # a duplicate is better than silence.
+# gh has no --arg, so the title is escaped into the jq program as a string literal: a
+# quote in it would otherwise break the lookup and silently degrade to "create a new
+# issue" (TGB-113 review §M11). No jq binary is required — gh embeds its own.
+JQ_TITLE="$(printf '%s' "$TITLE" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g')"
 existing="$(
   gh issue list --repo "$REPO" --state open --limit 100 \
     --json number,title \
-    --jq "[.[] | select(.title == \"${TITLE}\")] | .[0].number // empty" 2>/dev/null || true
+    --jq "[.[] | select(.title == \"${JQ_TITLE}\")] | .[0].number // empty" 2>/dev/null || true
 )"
 case "$existing" in
   ''|*[!0-9]*) existing="";;

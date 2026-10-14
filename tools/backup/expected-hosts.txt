@@ -1,0 +1,12 @@
+# Hosts the memes-bot DB backup is allowed to read from — tools/backup/db-backup.sh.
+#
+# The positive counterpart to tools/ci/retired-deploy-hosts.txt: that list says which
+# hosts are wrong, this one says which host is right. It exists because the deny-list
+# alone would let a stale-but-well-formed target.env dump a *different* database and
+# publish it as `memes-bot-db-<stamp>.sql.gz.age` — the artifact is encrypted, so
+# nothing would be disclosed, it would simply be mislabelled and useless for a restore
+# (TGB-113 review §M8).
+#
+# One host per line, `#` starts a comment. Moving production means updating this file,
+# exactly like the deny-list. An empty file refuses instead of allowing everything.
+185.238.169.171    # memes-bot prod stack (pinned by TGB-112 / TRL-1017)

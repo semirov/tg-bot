@@ -45,10 +45,30 @@ jobs:
           bash tools/backup/remote-dump.test.sh
           bash tools/backup/db-backup.test.sh
 
+      - name: Preflight - runner prerequisites
+        # A missing tool must fail here with a name, not halfway through a dump or, worse,
+        # only in the alert step after the real failure (TGB-113 review §M1).
+        run: |
+          missing=""
+          for c in ssh gh gzip gunzip; do
+            command -v "$c" >/dev/null 2>&1 || missing="$missing $c"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::missing on this runner:$missing"
+            exit 1
+          fi
+          echo "runner prerequisites present"
+
       - name: Dump the database on the production host
-        # Snapshot on the host (encrypted there) + keepalive/retried download with
-        # an age-magic check; a plaintext `.sql.gz` fails the run (fail-closed).
-        run: bash tools/backup/db-backup.sh "$RUNNER_TEMP/backups"
+        id: dump
+        # Snapshot on the host (encrypted there) + keepalive/retried download, promoted
+        # only when the byte count and the sha256 match the source; a plaintext `.sql.gz`
+        # or a truncated transfer fails the run (fail-closed).
+        run: |
+          set -euo pipefail
+          art="$(bash tools/backup/db-backup.sh "$RUNNER_TEMP/backups" | tee /dev/stderr | tail -1)"
+          [ -n "$art" ] || { echo "::error::db-backup.sh printed no artifact path"; exit 1; }
+          echo "path=$art" >> "$GITHUB_OUTPUT"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -72,11 +92,21 @@ jobs:
             "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
 
       - name: Summary
+        # Name, size and hash only: no values from the dump (TGB-113 review §M3 — a
+        # summary that cannot be tied to an artifact is a run log, not evidence).
         if: success()
+        env:
+          ARTIFACT: ${{ steps.dump.outputs.path }}
         run: |
+          set -euo pipefail
           {
             echo "## DB backup"
             echo
-            echo "Encrypted artifact published for run ${{ github.run_id }}."
+            echo "Encrypted artifact: $(basename "$ARTIFACT")"
+            echo
+            echo "| bytes | sha256 | run |"
+            echo "| --- | --- | --- |"
+            echo "| $(wc -c < "$ARTIFACT" | tr -d ' ') | \`$(sha256sum "$ARTIFACT" | cut -d' ' -f1)\` | ${{ github.run_id }} |"
+            echo
             echo "Decryption needs the age identity - see tools/backup/README.md."
           } >> "$GITHUB_STEP_SUMMARY"

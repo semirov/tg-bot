@@ -51,7 +51,7 @@ case "$sub" in
     shift || true              # container name
     cmd="${1:-}"; shift || true
     case "$cmd" in
-      postgres) echo "postgres (PostgreSQL) 14.24"; exit 0;;
+      postgres) echo "${MOCK_PG_VERSION:-postgres (PostgreSQL) 14.24}"; exit 0;;
       psql)
         sql=""
         while [ $# -gt 0 ]; do
@@ -139,6 +139,7 @@ make_artifact() { # make_artifact <path> [age-magic]
 run_drill() { # run_drill <artifact> [outdir]
   MOCK_FIXTURE="$FIX" MOCK_GZIP="$FIX/artifact.gz" MOCK_PORTS="${MOCK_PORTS-{}}" \
   MOCK_RESTORE_RC="${MOCK_RESTORE_RC:-0}" MOCK_PS_NAMES="${MOCK_PS_NAMES:-}" \
+  MOCK_PG_VERSION="${MOCK_PG_VERSION:-}" \
   BACKUP_AGE_KEY_FILE="$KEY" PATH="$BIN:/usr/bin:/bin" \
   DRILL_EXPECT_TABLES="${DRILL_EXPECT_TABLES:-3}" \
   DRILL_CANARIES="${DRILL_CANARIES:-client_session_entity:1 observatory_post_entity:1}" \
@@ -166,6 +167,16 @@ if grep -q 'artifact_sha256: [0-9a-f]\{64\}' "$WORK/report.out"; then pass "the 
 if grep -q 'dump_tables: 3  restored_tables: 3' "$WORK/report.out"; then pass "the report carries both table sets"; else fail "table counts" "missing"; fi
 if grep -q 'canary client_session_entity=1' "$WORK/report.out"; then pass "the session row is checked as a canary"; else fail "canary" "$(grep canary "$WORK/report.out" | tr '\n' ' ')"; fi
 if grep -q -- '--network none' "$FIX/docker.log"; then pass "the throwaway instance runs with no network"; else fail "network" "not pinned"; fi
+if grep -q -- '--tmpfs /var/lib/postgresql/data' "$FIX/docker.log"; then
+  pass "the restored rows live on a tmpfs, never on the runner's disk"
+else
+  fail "tmpfs" "PGDATA is not a tmpfs"
+fi
+if grep -q 'pg_verifier: (PostgreSQL) 14.24 is 14.x as the source' "$WORK/report.out"; then
+  pass "the verifier's PostgreSQL major is asserted against the source"
+else
+  fail "pg major" "$(grep pg_verifier "$WORK/report.out" | tr '\n' ' ')"
+fi
 if grep -q -- '-p ' "$FIX/docker.log"; then fail "published port" "the drill instance publishes a port"; else pass "nothing is published on the drill instance"; fi
 if grep -q 'no_published_ports' "$WORK/report.out"; then pass "the absence of published ports is asserted"; else fail "exposure check" "missing"; fi
 
@@ -236,6 +247,41 @@ if [ "$rc" -ne 0 ] && grep -q 'FAIL freshness' "$WORK/report.out"; then
   pass "an artifact older than the freshness window fails"
 else
   fail "freshness" "rc=$rc: $(grep freshness "$WORK/report.out" | tr '\n' ' ')"
+fi
+
+# ------------------------------- the deliberate per-table disclosure switch ----
+# The report artifact is world readable on a public repository; DRILL_REPORT_VERBOSE=0
+# keeps the checks and the totals but drops the per-table detail.
+rc=0; DRILL_REPORT_VERBOSE=0 run_drill "$ART" "$WORK/out-quiet" || rc=$?
+if [ "$rc" -eq 0 ] && grep -q 'result: OK' "$WORK/report.out" \
+   && grep -q 'parity_rows: 3/3 tables match the dump' "$WORK/report.out" \
+   && ! grep -q 'client_session_entity  *1  *1' "$WORK/report.out" \
+   && ! grep -q '^table  *dump' "$WORK/report.out"; then
+  pass "a non-verbose report keeps the verdict and drops the per-table detail"
+else
+  fail "verbose switch" "rc=$rc: $(grep -c . "$WORK/report.out") lines"
+fi
+
+# ------------------------------------------- the verifier image moved --------
+# The pinned image should keep reporting 14.x; if that tag/digest ever resolves to
+# another major, the drill must say so instead of proving less.
+export MOCK_PG_VERSION='postgres (PostgreSQL) 15.4'
+rc=0; run_drill "$ART" "$WORK/out-pg15" || rc=$?
+unset MOCK_PG_VERSION
+if [ "$rc" -ne 0 ] && grep -q 'FAIL pg_verifier' "$WORK/report.out"; then
+  pass "a verifier image from another major fails the drill"
+else
+  fail "pg major drift" "rc=$rc: $(grep pg_verifier "$WORK/report.out" | tr '\n' ' ')"
+fi
+
+# ------------------------------------------------- below the shape floor -----
+# The absolute floors are the only guard against a wholesale loss on the source (row
+# parity is measured against the dump itself), so they must be able to fail.
+rc=0; DRILL_MIN_ROWS=10 run_drill "$ART" "$WORK/out-floor" || rc=$?
+if [ "$rc" -ne 0 ] && grep -q 'FAIL total_rows' "$WORK/report.out"; then
+  pass "a dump below the row floor fails the drill"
+else
+  fail "row floor" "rc=$rc: $(grep total_rows "$WORK/report.out" | tr '\n' ' ')"
 fi
 
 # ------------------------------------------------------- refusing inputs -----

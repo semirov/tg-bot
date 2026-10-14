@@ -23,7 +23,8 @@ public, so an unencrypted artifact is not an option:
 | Layer | File / location |
 | --- | --- |
 | Snapshot + encryption on the host | `tools/backup/remote-dump.sh` → `/opt/memes-bot/backups/memes-bot-db-<UTCstamp>.sql.gz.age` (rotation: last 3) |
-| Fetch to the CI node | `tools/backup/db-backup.sh` (ssh keepalive/retries, age-magic check, fails closed on plaintext) |
+| Fetch to the CI node | `tools/backup/db-backup.sh` (ssh keepalive/retries; promoted only when the age magic plus the source **byte count and sha256** match; fails closed on plaintext, on a truncation or on a digest mismatch) |
+| Host pin | `tools/backup/expected-hosts.txt` — the positive counterpart to `tools/ci/retired-deploy-hosts.txt`: the dump may only come from these hosts |
 | Publication | `.github/workflows/backup.yml` → artifact `memes-bot-db-<run_id>`, `retention-days: 3` |
 | Restore drill | `tools/backup/restore-drill.sh` + `.github/workflows/restore-drill.yml` (weekly + manual) |
 | Off-host copy | `tools/backup/offsite-pull.sh`, run on the home-server (cron) → `/home/filipp/backups/memes-bot/` (rotation: last 14) |
@@ -34,9 +35,9 @@ public, so an unencrypted artifact is not an option:
 | Copy | Where | Cadence | Kept |
 | --- | --- | --- | --- |
 | Source | `/opt/memes-bot/backups` on `185.238.169.171` | 02:30 UTC daily (`backup.yml`) | 3 (`BACKUP_KEEP`) |
-| CI artifact | GitHub Actions artifact | same run | 3 days |
-| Off-host | `/home/filipp/backups/memes-bot` on the home-server | pulls daily (see cron) | 14 (`OFFSITE_KEEP`) |
-| Drill | weekly, Sunday 03:30 UTC | `restore-drill.yml` | report: 3 days |
+| CI artifact | GitHub Actions artifact | with every backup run | 3 days |
+| Off-host | `/home/filipp/backups/memes-bot` on the home-server | every day, 04:00 UTC (cron: `30 4 * * *`) | 14 (`OFFSITE_KEEP`) |
+| Drill | on the CI node (throwaway container + tmpfs) | weekly, Sunday 03:30 UTC (`restore-drill.yml`) | report: 3 days |
 
 The off-host copy keeps the long tail on purpose: the source retention is short, and a
 problem noticed a week later must still have a dump to go back to.
@@ -100,9 +101,21 @@ It takes the artifact of the **last successful backup run**, decrypts it
 | gzip integrity | the decrypted stream is a complete gzip stream |
 | restore | `age -d | gunzip | psql` runs to completion |
 | parity | per-table row counts from the dump's own COPY blocks == the restored counts |
-| canaries | `client_session_entity` (the MTProto session row), `parser_settings_entity`, `observatory_post_entity` are non-empty |
-| shape | at least `DRILL_EXPECT_TABLES` (20) tables, at least `DRILL_MIN_ROWS` rows |
-| exposure | the throwaway instance publishes no port (asserted, not assumed) |
+| canaries | `client_session_entity` (the MTProto session row), `parser_settings_entity`, `user_request_entity` and `observatory_post_entity` are above their floors |
+| shape | at least `DRILL_EXPECT_TABLES` (20) tables and at least `DRILL_MIN_ROWS` rows |
+| verifier image | the throwaway server reports the source's major version (14.x) |
+| exposure | the throwaway instance publishes no port, runs with no network, and keeps PGDATA on a tmpfs (asserted, not assumed) |
+
+The **absolute floors** are the deliberate guard (TGB-113 review §M5): row parity is
+measured against the dump itself, so it cannot notice a database that is empty *at the
+source* as well. They are recorded from the production base of 2026-10-14 — 26 tables,
+280,860 rows (`observatory_post_entity` alone 180,323, `user_request_entity` 12,068) —
+and set at roughly a third of it, because a drop that large is an incident rather than
+noise. Lower a floor only as a deliberate decision, and say why in the commit.
+
+The verifier image is pinned by digest (not by the floating `postgres:14-alpine` tag),
+so a green drill cannot be explained by an image that moved underneath it; if the
+digest ever resolves to another major the `pg_verifier` check turns red.
 
 Local run (needs docker + age):
 
@@ -115,6 +128,17 @@ The parity check is why the drill needs **no production access**: the dump is it
 reference, so a green drill cannot be explained away by "prod was empty at the time".
 A green drill on an artifact older than the freshness window still fails — it is a
 check on the *contour*, not only on the file.
+
+## What the report exposes (public repository)
+
+This repository is public, so the job summary and the uploaded drill report are world
+readable. They contain the artifact **name, byte count and sha256**, **table names** and
+**per-table row counts**, plus the PostgreSQL/age versions — counters and identifiers,
+never values from the dump (the project's data rule allows exactly this projection). The
+one item worth being deliberate about is the per-table detail: it is a real (if small)
+disclosure about production *volume*, so it is a conscious decision, recorded here. To
+drop it to pass/fail, set `DRILL_REPORT_VERBOSE=0`; the check results and the totals
+stay.
 
 ## Restoring into the running stack (read this first)
 
@@ -170,8 +194,20 @@ script is idempotent and moves ciphertext only.
 - A failed scheduled run opens (or comments on) an issue titled
   `[auto] Scheduled DB backup failed` / `[auto] Restore drill failed`.
 - A broken contour **skips a backup** — it never falls back to an unencrypted dump:
-  no `age` or no recipient on the host aborts before the dump, and plaintext arriving
-  at CI aborts before publication.
+  no `age` or no recipient on the host aborts before the dump, and plaintext, a
+  truncated transfer or a digest mismatch aborts before publication.
+- **The off-host pull is the quiet one.** It fails loudly in its own log, but nothing
+  outside the home-server watches it; check the heartbeat:
+
+  ```bash
+  ssh home-server 'cat /home/filipp/backups/memes-bot/.last-success'
+  # → timestamp + artifact=<name> bytes=<n> kept=<n>/14
+  ```
+
+  A heartbeat older than a day means the cron stopped, and the recovery point is aging
+  while the CI drill keeps passing against its own artifact. Wiring this into the
+  home-server monitoring is tracked as [SRV-215](https://wiki.semirov.dev/SRV/issues/SRV-215)
+  (Triage, anomaly).
 - If the source host itself is lost, the home-server copy is the recovery point.
 
 ## Rollback of this contour

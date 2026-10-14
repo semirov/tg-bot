@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
-# Tests for tools/backup/notify-failure.sh (TGB-113) with no GitHub.
+# Tests for tools/backup/notify-failure.sh (TGB-113) with no GitHub and no jq.
 #
-# `gh` is a PATH shim. What is checked: a failed scheduled run opens an issue that
-# names the run, an already-open issue gets a comment instead of a duplicate (a run of
-# failures must not spam the tracker), a missing token or a missing gh fails loudly —
-# the alert must never look sent when it was not.
+# `gh` is a PATH shim: it logs the full argv (so the jq program the script sends is
+# visible) and answers the dedup lookup from $STUB_LIST_RESULT. What is checked: a
+# failed scheduled run opens an issue that names the run, an already-open issue gets a
+# comment instead of a duplicate (a run of failures must not spam the tracker), a title
+# containing a quote is still looked up correctly, and a missing token or a missing gh
+# fails loudly — the alert must never look sent when it was not.
 #
 # Run: bash tools/backup/notify-failure.test.sh
 # bash 3.2 (macOS) compatible. Prints PASS/FAIL; exits 1 on failure.
@@ -30,7 +32,7 @@ echo "gh $*" >> "${STUB_LOG:?}"
 case "${1:-}" in
   issue)
     case "${2:-}" in
-      list) printf '%s\n' "${STUB_EXISTING:-}"; exit 0;;
+      list) printf '%s\n' "${STUB_LIST_RESULT:-}"; exit 0;;
       create)
         if [ "${STUB_NO_LABEL:-0}" = "1" ]; then
           case "$*" in *--label*) exit 1;; esac
@@ -47,7 +49,8 @@ RUN_URL='https://github.com/semirov/tg-bot/actions/runs/12345'
 
 run_notify() {
   GH_TOKEN="${GH_TOKEN-gh-token-placeholder}" GITHUB_REPOSITORY=semirov/tg-bot \
-  STUB_LOG="$WORK/gh.log" STUB_EXISTING="${STUB_EXISTING:-}" STUB_NO_LABEL="${STUB_NO_LABEL:-0}" \
+  BACKUP_ALERT_TITLE="${STUB_ALERT_TITLE:-}" \
+  STUB_LOG="$WORK/gh.log" STUB_LIST_RESULT="${STUB_LIST_RESULT-}" STUB_NO_LABEL="${STUB_NO_LABEL:-0}" \
   PATH="$BIN:/usr/bin:/bin" \
     bash "$NOTIFY" "$RUN_URL" > "$WORK/out.log" 2> "$WORK/err.log"
   return $?
@@ -63,7 +66,7 @@ if grep -q "$RUN_URL" "$WORK/gh.log"; then pass "the body links the failed run";
 
 # -------------------------------------------------- comments on the open one ---
 : > "$WORK/gh.log"
-rc=0; STUB_EXISTING=42 run_notify || rc=$?
+rc=0; STUB_LIST_RESULT=42 run_notify || rc=$?
 if [ "$rc" -eq 0 ] && grep -q 'issue comment 42' "$WORK/gh.log" && ! grep -q 'issue create' "$WORK/gh.log"; then
   pass "an open issue gets a comment, not a second issue"
 else
@@ -71,12 +74,30 @@ else
 fi
 
 # --------------------------------------------- garbage from the lookup ---------
+# An unusable answer (or a broken pipeline) must still produce an issue: a duplicate is
+# better than silence.
 : > "$WORK/gh.log"
-rc=0; STUB_EXISTING='not-a-number' run_notify || rc=$?
+rc=0; STUB_LIST_RESULT='not-a-number' run_notify || rc=$?
 if [ "$rc" -eq 0 ] && grep -q 'issue create' "$WORK/gh.log"; then
   pass "an unusable lookup answer still produces a new issue"
 else
   fail "lookup fallback" "$(cat "$WORK/gh.log")"
+fi
+
+# ------------------------------------------ a quote inside the title -----------
+# gh has no --arg, so the title is escaped into the jq program. Without that escaping
+# the program would be malformed and the lookup would silently open a duplicate issue.
+: > "$WORK/gh.log"
+rc=0; STUB_ALERT_TITLE='the "quoted" title' STUB_LIST_RESULT=7 run_notify || rc=$?
+if [ "$rc" -eq 0 ] && grep -q 'issue comment 7' "$WORK/gh.log" && ! grep -q 'issue create' "$WORK/gh.log"; then
+  pass "a title containing a quote still finds the open issue"
+else
+  fail "quoted title" "$(cat "$WORK/gh.log")"
+fi
+if grep -qF 'select(.title == "the \"quoted\" title")' "$WORK/gh.log"; then
+  pass "the title reaches the lookup escaped as a jq string literal"
+else
+  fail "title escaping" "$(grep -- '--jq' "$WORK/gh.log" | head -1)"
 fi
 
 # ------------------------------------------------ a missing label is survived --

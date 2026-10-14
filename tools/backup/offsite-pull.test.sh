@@ -73,7 +73,11 @@ chmod 600 "$KEY"
 BODY="$WORK/body.age"
 { printf 'age-encryption.org/v1\n'; printf 'body\n'; } > "$BODY"
 BODY_BYTES="$(wc -c < "$BODY" | tr -d ' ')"
-BODY_SHA="$(shasum -a 256 "$BODY" | cut -d' ' -f1)"
+if command -v sha256sum >/dev/null 2>&1; then
+  BODY_SHA="$(sha256sum "$BODY" | cut -d' ' -f1)"
+else
+  BODY_SHA="$(shasum -a 256 "$BODY" | cut -d' ' -f1)"
+fi
 
 DEST="$WORK/offsite"
 NEWEST="memes-bot-db-$(date -u +%Y%m%dT%H%M%SZ).sql.gz.age"
@@ -85,6 +89,13 @@ fresh_offsite() {
   printf 'x' > "$DEST/memes-bot-db-20260101T000000Z.sql.gz.age"
   printf 'x' > "$DEST/memes-bot-db-20260102T000000Z.sql.gz.age"
   printf 'x' > "$DEST/memes-bot-db-20260103T000000Z.sql.gz.age"
+  # Rotation picks the newest by mtime (`ls -1t`), and files created within the same
+  # second tie — which made "which two are dropped" depend on the filesystem: the
+  # assertion passed on APFS and failed on overlayfs. Explicit ascending timestamps make
+  # the test assert a decision instead of a coincidence.
+  touch -t 202601010000 "$DEST/memes-bot-db-20260101T000000Z.sql.gz.age"
+  touch -t 202601020000 "$DEST/memes-bot-db-20260102T000000Z.sql.gz.age"
+  touch -t 202601030000 "$DEST/memes-bot-db-20260103T000000Z.sql.gz.age"
   : > "$WORK/ssh.log"
 }
 
@@ -118,6 +129,17 @@ if grep -q "$NEWEST" "$DEST/SHA256SUMS.memes-bot"; then
   pass "the SHA256SUMS manifest is refreshed"
 else
   fail "manifest" "$(cat "$DEST/SHA256SUMS.memes-bot" 2>/dev/null)"
+fi
+if [ -s "$DEST/.last-success" ] && grep -q "artifact=$NEWEST" "$DEST/.last-success"; then
+  pass "a heartbeat records the last successful pull"
+else
+  fail "heartbeat" "$(cat "$DEST/.last-success" 2>/dev/null || echo missing)"
+fi
+if grep -q "$NEWEST" "$DEST/SHA256SUMS.memes-bot" \
+   && ! grep -q 'memes-bot-db-20260101T000000Z' "$DEST/SHA256SUMS.memes-bot"; then
+  pass "the manifest lists only what rotation kept"
+else
+  fail "manifest accuracy" "$(cut -c1-20,67- "$DEST/SHA256SUMS.memes-bot" | tr '\n' ' ')"
 fi
 KEPT="$(count_matching "$DEST" 'memes-bot-db-*.sql.gz.age')"
 if [ "$KEPT" = "2" ]; then pass "rotation keeps OFFSITE_KEEP archives (2)"; else fail "rotation" "kept=${KEPT}"; fi

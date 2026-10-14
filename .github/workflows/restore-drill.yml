@@ -39,6 +39,21 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      - name: Preflight - runner prerequisites
+        # docker for the throwaway instance, gh for the artifact, the gzip tools for the
+        # stream; age is installed by the next step. A missing tool must fail here with a
+        # name, not inside the drill or in the alert step afterwards (TGB-113 review §M1).
+        run: |
+          missing=""
+          for c in ssh gh docker gzip gunzip; do
+            command -v "$c" >/dev/null 2>&1 || missing="$missing $c"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::missing on this runner:$missing"
+            exit 1
+          fi
+          echo "runner prerequisites present"
+
       - name: Install age (idempotent — the runner is a long-lived container)
         # Decryption is the whole point of this job. The runner image ships no `age`,
         # and this runner is Ubuntu 20.04, whose repositories have no such package
@@ -108,6 +123,22 @@ jobs:
           [ -n "$artifact" ] || { echo "::error::the artifact holds no *.sql.gz.age"; exit 1; }
           bash tools/backup/restore-drill.sh "$artifact" "$RUNNER_TEMP/drill-out" \
             | tee "$RUNNER_TEMP/restore-drill-report.txt"
+
+      - name: Drop a leftover drill instance
+        # The script removes its own throwaway container, but a timeout or a SIGKILL (the
+        # job is capped at 25 min) would leave it behind with the restored rows inside.
+        # Nothing else on this engine matches the name, and its PGDATA is a tmpfs, so the
+        # data was never on the runner's disk (TGB-113 review §M2).
+        if: always()
+        run: |
+          set -euo pipefail
+          leftovers="$(docker ps -aq --filter 'name=memes-restore-drill-pg-' || true)"
+          if [ -n "$leftovers" ]; then
+            printf '%s\n' "$leftovers" | xargs -r docker rm -f >/dev/null
+            echo "removed $(printf '%s\n' "$leftovers" | grep -c .) leftover drill instance(s)"
+          else
+            echo "no leftover drill instance"
+          fi
 
       - name: Publish the report
         if: always()

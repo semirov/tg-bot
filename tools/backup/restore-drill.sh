@@ -30,18 +30,32 @@
 #
 # PII: the plaintext dump never reaches a disk (pipes only); every SQL statement is an
 # aggregate (count(*)/pg_tables); the report carries table names, counts and versions.
-# psql stderr is dropped during the restore (it can echo COPY values).
+# psql stderr is dropped during the restore (it can echo COPY values). The restored rows
+# live on a tmpfs (PGDATA is mounted as one), so a killed drill cannot leave decrypted
+# data on the runner's disk either — and the job removes a leftover container
+# unconditionally (.github/workflows/restore-drill.yml, TGB-113 review §M2).
+
+# Floors are the deliberate absolute guard (TGB-113 review §M5): row parity is measured
+# against the dump itself, so only these catch a *wholesale* loss on the source (an
+# empty or half-written database). They are recorded from the production base of
+# 2026-10-14 — 26 tables, 280,860 rows, of which observatory_post_entity alone had
+# 180,323 and user_request_entity 12,068 — and set at roughly a third of it: a drop
+# that large is an incident, not noise. Lower them only as a deliberate decision.
 #
 # Usage: restore-drill.sh <artifact.sql.gz.age> [outDir]
 #        The report is written to [outDir]/restore-drill-report.txt unless DRILL_REPORT says
 #        otherwise; nothing else is written there (the plaintext never reaches a disk).
 # Env: BACKUP_AGE_KEY_FILE (required — the key is never passed in argv)
-#      DRILL_MAX_AGE_HOURS (48), DRILL_EXPECT_TABLES (20), DRILL_MIN_ROWS (1)
+#      DRILL_MAX_AGE_HOURS (48), DRILL_EXPECT_TABLES (20)
+#      DRILL_MIN_ROWS (100000 — see the floors note above)
 #      DRILL_CANARIES ("client_session_entity:1 parser_settings_entity:1
-#                      observatory_post_entity:1")
-#      DRILL_PG_IMAGE (postgres:14-alpine), DRILL_PG_USER/PG_DB (postgress),
-#      DRILL_PG_PASSWORD (change_me), DRILL_HEALTH_TIMEOUT (90)
+#                      user_request_entity:5000 observatory_post_entity:100000")
+#      DRILL_PG_IMAGE (postgres:14-alpine pinned by digest — the verifier image must not
+#                      drift under a green drill), DRILL_PG_USER/PG_DB (postgress),
+#      DRILL_PG_PASSWORD (change_me), DRILL_HEALTH_TIMEOUT (90),
+#      DRILL_EXPECT_PG_MAJOR (14 — the source server's major), DRILL_PGDATA_SIZE (1g)
 #      DRILL_REPORT (path to also write the report to)
+#      DRILL_REPORT_VERBOSE (1 — 0 drops the per-table detail from the report)
 #
 # Test: tools/backup/restore-drill.test.sh.
 set -euo pipefail
@@ -55,13 +69,20 @@ BACKUP_AGE_KEY_FILE="${BACKUP_AGE_KEY_FILE:?BACKUP_AGE_KEY_FILE is not set — n
 
 MAX_AGE_HOURS="${DRILL_MAX_AGE_HOURS:-48}"
 EXPECT_TABLES="${DRILL_EXPECT_TABLES:-20}"
-MIN_ROWS="${DRILL_MIN_ROWS:-1}"
-CANARIES="${DRILL_CANARIES:-client_session_entity:1 parser_settings_entity:1 observatory_post_entity:1}"
-PG_IMAGE="${DRILL_PG_IMAGE:-postgres:14-alpine}"
+MIN_ROWS="${DRILL_MIN_ROWS:-100000}"
+CANARIES="${DRILL_CANARIES:-client_session_entity:1 parser_settings_entity:1 user_request_entity:5000 observatory_post_entity:100000}"
+# Pinned by digest (the manifest list digest of postgres:14-alpine, measured 2026-10-14):
+# a floating tag would let the verifier image move under a drill that stays green.
+PG_IMAGE="${DRILL_PG_IMAGE:-postgres:14-alpine@sha256:4ea9e5ed06591da7ea23eb65465e8d3187fe79f4d5ec3ae976d29a33b013e77a}"
+EXPECT_PG_MAJOR="${DRILL_EXPECT_PG_MAJOR:-14}"
+PGDATA_SIZE="${DRILL_PGDATA_SIZE:-1g}"
 PG_USER="${DRILL_PG_USER:-postgress}"
 PG_DB="${DRILL_PG_DB:-postgress}"
 PG_PASSWORD="${DRILL_PG_PASSWORD:-change_me}"
 HEALTH_TIMEOUT="${DRILL_HEALTH_TIMEOUT:-90}"
+# 1 = per-table detail in the report (the summary and the report artifact are world
+# readable on a public repository); 0 = pass/fail plus totals only.
+VERBOSE="${DRILL_REPORT_VERBOSE:-1}"
 PREFIX="memes-bot-db"
 
 if [ -z "${DRILL_REPORT:-}" ] && [ -n "$OUT_DIR" ]; then
@@ -148,9 +169,11 @@ else
 fi
 
 # --------------------------------------------------------- ephemeral PG -----
-# No `-p`: nothing is published. `--network none`: the instance cannot talk to
-# anything at all — reachable only through `docker exec`.
+# No `-p`: nothing is published. `--network none`: the instance cannot talk to anything
+# at all — reachable only through `docker exec`. PGDATA is a tmpfs: the restored rows
+# never touch the runner's disk (TGB-113 review §M2).
 docker run -d --rm --name "$CONTAINER" --network none \
+  --tmpfs "/var/lib/postgresql/data:rw,noexec,nosuid,size=${PGDATA_SIZE}" \
   -e POSTGRES_USER="$PG_USER" -e POSTGRES_PASSWORD="$PG_PASSWORD" -e POSTGRES_DB="$PG_DB" \
   "$PG_IMAGE" >/dev/null
 
@@ -288,10 +311,12 @@ else
   MISMATCHED=0
   DUMP_TOTAL=0
   RESTORED_TOTAL=0
-  {
-    printf '\n%-34s %10s %10s\n' "table" "dump" "restored"
-    printf '%-34s %10s %10s\n' "----------------------------------" "----------" "----------"
-  } >> "$REPORT_TMP"
+  if [ "$VERBOSE" = "1" ]; then
+    {
+      printf '\n%-34s %10s %10s\n' "table" "dump" "restored"
+      printf '%-34s %10s %10s\n' "----------------------------------" "----------" "----------"
+    } >> "$REPORT_TMP"
+  fi
   while IFS="$(printf '\t')" read -r tbl expected; do
     [ -n "$tbl" ] || continue
     actual="$(awk -F'\t' -v t="$tbl" '$1 == t {print $2}' "$RESTORED_COUNTS" 2>/dev/null || true)"
@@ -299,19 +324,21 @@ else
     if [ "$actual" = "$expected" ]; then MATCHED=$((MATCHED + 1))
     else
       MISMATCHED=$((MISMATCHED + 1))
-      echo "  mismatch: ${tbl} — dump=${expected} restored=${actual}" >> "$REPORT_TMP"
+      [ "$VERBOSE" != "1" ] || echo "  mismatch: ${tbl} — dump=${expected} restored=${actual}" >> "$REPORT_TMP"
     fi
     case "$expected" in ''|*[!0-9]*) expected=0;; esac
     DUMP_TOTAL=$((DUMP_TOTAL + expected))
     case "$actual" in ''|*[!0-9]*) actual=0;; esac
     RESTORED_TOTAL=$((RESTORED_TOTAL + actual))
-    printf '%-34s %10s %10s\n' "$tbl" "$expected" "$actual" >> "$REPORT_TMP"
+    [ "$VERBOSE" != "1" ] || printf '%-34s %10s %10s\n' "$tbl" "$expected" "$actual" >> "$REPORT_TMP"
   done < "$DUMP_COUNTS"
 
+  # MATCHED is counted over the dump's tables and MISMATCHED over everything that did
+  # not match, so the label can fail (review §M6: printing MATCHED/MATCHED could not).
   if [ "$MISMATCHED" -eq 0 ]; then
-    ok "parity_rows: ${MATCHED}/${MATCHED} tables match the dump (dump=${DUMP_TOTAL} rows, restored=${RESTORED_TOTAL} rows)"
+    ok "parity_rows: ${MATCHED}/${DUMP_TABLE_COUNT} tables match the dump (dump=${DUMP_TOTAL} rows, restored=${RESTORED_TOTAL} rows)"
   else
-    bad "parity_rows" "${MISMATCHED} table(s) differ from the dump (details are in the report)"
+    bad "parity_rows" "${MISMATCHED} of ${DUMP_TABLE_COUNT} table(s) differ from the dump (details are in the report)"
   fi
 
   if [ "$DUMP_TOTAL" -ge "$MIN_ROWS" ] && [ "$DUMP_TOTAL" -gt 0 ]; then
@@ -322,6 +349,14 @@ else
 fi
 
 PG_VERSION="$(docker exec "$CONTAINER" postgres --version 2>/dev/null | sed 's/^postgres //' || echo unknown)"
+# The dump comes from a 14.x server on the source; if the verifier image ever moves to
+# another major, the drill must say so instead of quietly proving less (review §M4).
+PG_MAJOR="$(printf '%s' "$PG_VERSION" | grep -oE '[0-9]+\.[0-9]+' | head -1 | cut -d. -f1)"
+if [ "$PG_MAJOR" = "$EXPECT_PG_MAJOR" ]; then
+  ok "pg_verifier: ${PG_VERSION} is ${EXPECT_PG_MAJOR}.x as the source"
+else
+  bad "pg_verifier" "got '${PG_VERSION}' (major '${PG_MAJOR:-unknown}'), expected ${EXPECT_PG_MAJOR}.x — the verifier image moved"
+fi
 
 # ----------------------------------------------------------------- report ---
 DURATION="${SECONDS:-0}"
