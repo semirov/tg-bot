@@ -1,3 +1,10 @@
+## [0.41.5](https://github.com/semirov/tg-bot/compare/v0.41.4...v0.41.5) (2026-10-22)
+
+
+### Bug Fixes
+
+* **ops:** TGB-114 - raise memes-bot mem_limit to 512m (RSS peak 375 MB vs 384m cap) ([#105](https://github.com/semirov/tg-bot/issues/105)) ([6d1e0fb](https://github.com/semirov/tg-bot/commit/6d1e0fb164776d2f7dd740925e89a405c5a04ee8))
+
 ## [0.41.4](https://github.com/semirov/tg-bot/compare/v0.41.3...v0.41.4) (2026-10-13)
 
 
