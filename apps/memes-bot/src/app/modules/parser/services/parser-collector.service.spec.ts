@@ -1,3 +1,4 @@
+import { Logger } from '@nestjs/common';
 import * as bigInt from 'big-integer';
 import { Api } from 'telegram';
 import { ParserCollectorService } from './parser-collector.service';
@@ -41,6 +42,8 @@ const makeRegistry = (overrides: Record<string, unknown> = {}): any => ({
 const makeGuard = (): any => ({
   run: jest.fn(async (_op: string, fn: () => Promise<unknown>) => fn()),
   pace: jest.fn().mockResolvedValue(undefined),
+  isBlocked: jest.fn(() => false),
+  blockedUntil: jest.fn(() => null),
 });
 
 const makeParserClient = (client: Record<string, unknown> = {}): any => ({
@@ -93,6 +96,7 @@ describe('ParserCollectorService', () => {
   let registry: any;
   let discovery: any;
   let parserClient: any;
+  let guard: any;
 
   beforeEach(() => {
     jest.clearAllMocks();
@@ -100,13 +104,14 @@ describe('ParserCollectorService', () => {
     observedRepo = makeObservedRepo();
     registry = makeRegistry();
     discovery = makeDiscovery();
+    guard = makeGuard();
     parserClient = makeParserClient({
       getMessages: jest.fn().mockResolvedValue([]),
     });
     service = new ParserCollectorService(
       observedRepo,
       registry,
-      makeGuard(),
+      guard,
       parserClient,
       discovery,
       makeConfig(),
@@ -284,6 +289,58 @@ describe('ParserCollectorService', () => {
 
       expect(await service.sweepAll()).toBe(0);
       expect(parserClient.client().getMessages).not.toHaveBeenCalled();
+    });
+
+    it('свой канал не читается как источник (ни одного MTProto-запроса)', async () => {
+      registry.listCollectible.mockResolvedValue([
+        source({ chatId: '-1001111111111', username: 'own_channel' }),
+        source({ chatId: '-1008888888888' }),
+      ]);
+      parserClient.client().getMessages.mockResolvedValue([mediaMessage({ id: 12 })]);
+
+      expect(await service.sweepAll()).toBe(1);
+      expect(parserClient.client().getMessages).toHaveBeenCalledTimes(1);
+      expect(guard.run).toHaveBeenCalledWith(
+        'getHistory',
+        expect.any(Function),
+        '-1008888888888'
+      );
+    });
+
+    it('MTProto на паузе (FloodWait) → свип не дёргает Telegram, лог один на дедлайн', async () => {
+      registry.listCollectible.mockResolvedValue([source()]);
+      guard.isBlocked.mockReturnValue(true);
+      guard.blockedUntil.mockReturnValue(1_800_000_000_000);
+      const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+
+      expect(await service.sweepAll()).toBe(0);
+      expect(await service.sweepAll()).toBe(0);
+
+      expect(guard.run).not.toHaveBeenCalled();
+      expect(parserClient.client().getMessages).not.toHaveBeenCalled();
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      expect(String(warnSpy.mock.calls[0][0])).toContain('MTProto на паузе');
+    });
+
+    it('прямой вызов sweepSource со своим каналом → без MTProto', async () => {
+      const own = source({ chatId: '-1001111111111' });
+      const result = await (
+        service as never as {
+          sweepSource: (src: unknown, client: unknown) => Promise<number>;
+        }
+      ).sweepSource(own, parserClient.client());
+
+      expect(result).toBe(0);
+      expect(guard.run).not.toHaveBeenCalled();
+    });
+
+    it('источник без username читается по marked id', async () => {
+      registry.listCollectible.mockResolvedValue([source({ username: null })]);
+      parserClient.client().getMessages.mockResolvedValue([mediaMessage({ id: 12 })]);
+
+      expect(await service.sweepAll()).toBe(1);
+      const peer = parserClient.client().getMessages.mock.calls[0][0];
+      expect(String(peer)).toBe('-1008888888888');
     });
 
     it('альбом: перечитывание вернуло undefined → continue', async () => {

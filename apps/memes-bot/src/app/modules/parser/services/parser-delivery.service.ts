@@ -243,8 +243,10 @@ export class ParserDeliveryService {
     // Для публичных каналов надёжнее username (без кэша диалогов).
     const peer = source.username ?? bigInt(source.chatId);
     const ids = [candidate.sourceMessageId];
-    const messages = await this.guard.run<TotalList<Api.Message>>('getMessages:deliver', () =>
-      client.getMessages(peer, { ids })
+    const messages = await this.guard.run<TotalList<Api.Message>>(
+      'getMessages:deliver',
+      () => client.getMessages(peer, { ids }),
+      source.chatId
     );
     const message = messages?.find((m) => m?.id === candidate.sourceMessageId);
     if (!message) return null;

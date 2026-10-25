@@ -124,15 +124,28 @@ export class ParserCollectorService {
     await this.upsertCandidate(message, source, group.ids, media);
   }
 
+  /** Дедлайн, о котором уже предупредили (лог паузы — раз на дедлайн, не на тик). */
+  private pausedLoggedFor = 0;
+
   /** History sweep: добираем посты за окно по каждому источнику (cron). */
   public async sweepAll(): Promise<number> {
     const client = this.parserClient.client();
     if (!client) return 0;
 
-    const sources = await this.registry.listCollectible();
+    const all = await this.registry.listCollectible();
+    // Свой канал — не источник: ни одного MTProto-запроса на него.
+    const sources = all.filter((source) => !this.registry.isOwnChannel(Number(source.chatId)));
+    if (sources.length !== all.length) {
+      this.logger.debug(`Parser sweep: свои каналы пропущены (${all.length - sources.length})`);
+    }
+
     let collected = 0;
 
     for (const source of sources) {
+      if (this.guard.isBlocked()) {
+        this.logPausedOnce();
+        return collected;
+      }
       try {
         collected += await this.sweepSource(source, client);
       } catch (error) {
@@ -145,18 +158,32 @@ export class ParserCollectorService {
     return collected;
   }
 
+  /** Лог паузы — один раз на дедлайн, а не на каждый cron-тик. */
+  private logPausedOnce(): void {
+    const untilMs = this.guard.blockedUntil();
+    if (untilMs === null || untilMs === this.pausedLoggedFor) return;
+    this.pausedLoggedFor = untilMs;
+    this.logger.warn(
+      `Parser sweep: MTProto на паузе до ${new Date(untilMs).toISOString()} — свип остановлен`
+    );
+  }
+
   private async sweepSource(source: SourceChannelEntity, client: TelegramClient): Promise<number> {
     if (!source.rawChatId && !source.username) {
       this.logger.warn(`Parser sweep: у источника ${source.chatId} нет rawChatId и username — пропуск`);
       return 0;
     }
+    // Защита от строки реестра со своим каналом: читать его незачем.
+    if (this.registry.isOwnChannel(Number(source.chatId))) return 0;
     // Для публичных каналов надёжнее username (не требует кэша диалогов),
     // для приватных — marked id из сессии.
     const peer = source.username ?? bigInt(source.chatId);
     const since = Math.floor((this.clock.now().getTime() - 26 * 3_600_000) / 1000);
 
-    const messages = await this.guard.run<TotalList<Api.Message>>('getHistory', () =>
-      client.getMessages(peer, { limit: 50, offsetDate: since })
+    const messages = await this.guard.run<TotalList<Api.Message>>(
+      'getHistory',
+      () => client.getMessages(peer, { limit: 50, offsetDate: since }),
+      source.chatId
     );
     if (!messages || !messages.length) return 0;
 
@@ -256,8 +283,10 @@ export class ParserCollectorService {
   private async fetchMessage(rawChatId: bigInt.BigInteger, messageId: number): Promise<Api.Message | undefined> {
     const client = this.parserClient.client();
     if (!client) return undefined;
-    const result = await this.guard.run<TotalList<Api.Message>>('getMessages:ids', () =>
-      client.getMessages(rawChatId, { ids: [messageId] })
+    const result = await this.guard.run<TotalList<Api.Message>>(
+      'getMessages:ids',
+      () => client.getMessages(rawChatId, { ids: [messageId] }),
+      rawChatId.toString()
     );
     return result?.find((m) => m?.id === messageId);
   }

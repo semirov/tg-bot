@@ -107,6 +107,8 @@ const makeSourceRepo = (): any => ({
 const makeGuard = (): any => ({
   run: jest.fn(async (_op: string, fn: () => Promise<unknown>) => fn()),
   pace: jest.fn().mockResolvedValue(undefined),
+  isBlocked: jest.fn(() => false),
+  blockedUntil: jest.fn(() => null),
 });
 
 const makeRegistryMock = (): any => ({

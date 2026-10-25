@@ -15,6 +15,7 @@ import { ClientSessionEntity } from '../entities/client-session.entity';
 import { BestMemePostEntity } from '../entities/best-meme-post.entity';
 import { AdDetector, ResolvedChannelEntity } from '../domain/ad-detector';
 import { metrics } from '../../../shared/metrics';
+import { mtprotoFloodGate } from '../../../shared/mtproto-flood-gate';
 
 export type BestMemeContext = {
   byViewPostMemeId?: number;
@@ -46,6 +47,12 @@ export class ClientBaseService implements OnModuleInit {
 
   /** Промис-кэш адресата форварда: личка главного бота. */
   private botForwardTarget?: Promise<string | undefined>;
+
+  /** Свои каналы, по которым уже писали «skip own channel» (анти-спам лога). */
+  private readonly skippedOwnChannels = new Set<string>();
+
+  /** Дедлайн, о котором уже предупредили (лог паузы — раз на дедлайн, не на сообщение). */
+  private floodPausedLoggedFor = 0;
 
   async onModuleInit(): Promise<void> {
     this.waitingClientCommands();
@@ -117,8 +124,34 @@ export class ClientBaseService implements OnModuleInit {
     metrics.mtproto.connected.set(1);
 
     this.telegramClient.addEventHandler(async (event) => {
-      this.onMessageEvent(event);
+      try {
+        await this.onMessageEvent(event);
+      } catch (error) {
+        // Обработчик gramjs не ждёт промис: необработанный reject здесь стал бы
+        // unhandled rejection со стеком (так и утекал шторм FloodWait).
+        Logger.error(`Parser: сбой обработки события юзербота: ${error}`, ClientBaseService.name);
+      }
     }, new NewMessage({}));
+  }
+
+  /**
+   * Единая пауза аккаунта по FloodWait: пока она идёт, юзербот не делает ни
+   * одного MTProto-вызова (ни чтения, ни форварда).
+   *
+   * @param activity что именно пропущено (для лога)
+   * @returns `true`, если работа пропущена из-за паузы
+   */
+  private floodPaused(activity: string): boolean {
+    const untilMs = mtprotoFloodGate.until();
+    if (untilMs === null) return false;
+    if (this.floodPausedLoggedFor !== untilMs) {
+      this.floodPausedLoggedFor = untilMs;
+      Logger.warn(
+        `Parser: MTProto на паузе (FloodWait) до ${new Date(untilMs).toISOString()} — ${activity} пропущено`,
+        ClientBaseService.name
+      );
+    }
+    return true;
   }
 
   private async getPhoneNumber(): Promise<string> {
@@ -266,24 +299,22 @@ export class ClientBaseService implements OnModuleInit {
   private async onMessageEvent(event: NewMessageEvent) {
     if (!event.isChannel) return;
 
+    // Пауза аккаунта (FloodWait) отсекает всё до первого MTProto-вызова:
+    // getEntity/forwardTo/classifyPost здесь не должны запускаться.
+    if (this.floodPaused('сообщение юзербота')) return;
+
+    // Свои каналы отсекаем до любой работы: ни одного MTProto-вызова на
+    // сообщение (бот публикует часто, платить за это незачем).
+    if (this.isOwnChannel(event.chatId)) {
+      this.logOwnChannelSkip(event.chatId);
+      return;
+    }
+
     const hasMedia = !!event.message && this.hasMediaContent(event.message);
     Logger.debug(
       `Parser: channel message chat=${event.chatId} msg=${event.message?.id} media=${hasMedia} grouped=${!!event.message?.groupedId}`,
       ClientBaseService.name
     );
-
-    // Пропускаем сообщения из собственных каналов
-    const ownChannels = [
-      this.baseConfigService.memeChanelId,
-      this.baseConfigService.cringeMemeChannelId,
-      this.baseConfigService.bestMemeChanelId,
-      this.baseConfigService.userRequestMemeChannel,
-    ].map((id) => bigInt(id));
-
-    if (ownChannels.some((channelId) => channelId.equals(event.chatId))) {
-      Logger.debug(`Parser: skip own channel ${event.chatId}`, ClientBaseService.name);
-      return;
-    }
 
     // Парсер интересуют только медиапосты (фото/видео, в т.ч. альбомы).
     if (!hasMedia) return;
@@ -300,6 +331,28 @@ export class ClientBaseService implements OnModuleInit {
     setTimeout(() => this.forwardToBot(event), Math.round(Math.random() * 5 + 5) * 1000);
   }
 
+  /** Пир — один из своих каналов (мемы/кринж/лучшее/предложка). */
+  private isOwnChannel(chatId: unknown): boolean {
+    if (chatId == null) return false;
+    const peer = bigInt(chatId as bigInt.BigInteger);
+    return [
+      this.baseConfigService.memeChanelId,
+      this.baseConfigService.cringeMemeChannelId,
+      this.baseConfigService.bestMemeChanelId,
+      this.baseConfigService.userRequestMemeChannel,
+    ]
+      .map((id) => bigInt(id))
+      .some((channelId) => channelId.equals(peer));
+  }
+
+  /** Лог пропуска своего канала — один раз на канал, а не на каждое сообщение. */
+  private logOwnChannelSkip(chatId: unknown): void {
+    const key = String(chatId);
+    if (this.skippedOwnChannels.has(key)) return;
+    this.skippedOwnChannels.add(key);
+    Logger.debug(`Parser: skip own channel ${key}`, ClientBaseService.name);
+  }
+
   /**
    * Форвардит найденный пост в личку главному боту.
    *
@@ -310,6 +363,8 @@ export class ClientBaseService implements OnModuleInit {
    * вынесем отдельным этапом (TGB-DOC-5).
    */
   private async forwardToBot(event: NewMessageEvent): Promise<void> {
+    // Форвард — write-операция тем же аккаунтом: на паузе не пробуем.
+    if (this.floodPaused('форвард поста')) return;
     try {
       const target = await this.resolveBotForwardTarget();
       if (!target) {
@@ -374,7 +429,7 @@ export class ClientBaseService implements OnModuleInit {
       extractUrls: (messageEvent) => this.extractUrls(messageEvent),
       resolveUrl: (url) => this.resolveUrl(url),
       isSameChannel: (resolved, current) => this.isSameChannel(resolved, current),
-      getCurrentChannel: (chatId) => this.telegramClient.getEntity(chatId),
+      getCurrentChannel: (chatId) => this.currentChannelOf(chatId),
       loggerContext: ClientBaseService.name,
     });
 
@@ -388,9 +443,34 @@ export class ClientBaseService implements OnModuleInit {
     return result.isAd;
   }
 
+  /**
+   * Сущность текущего канала для проверки ссылок.
+   *
+   * Ошибка MTProto (FloodWait/CHANNEL_INVALID и т.п.) не пробрасывается:
+   * «не знаем канал» — это не повод ронять обработчик события.
+   *
+   * @param chatId id текущего канала
+   * @returns сущность канала или `undefined`, если получить не удалось
+   */
+  public async currentChannelOf(
+    chatId: unknown
+  ): Promise<ResolvedChannelEntity | undefined> {
+    try {
+      return (await this.telegramClient.getEntity(chatId)) as ResolvedChannelEntity;
+    } catch (error) {
+      Logger.warn(
+        `Ad check: текущий канал ${String(chatId)} неизвестен: ${error}`,
+        ClientBaseService.name
+      );
+      return undefined;
+    }
+  }
+
   // 21:00 МСК
   @Cron(CronExpression.EVERY_DAY_AT_6PM)
   public async postDailyBestMeme(alternateChatId?: number) {
+    // Ежедневный пост — тоже MTProto тем же аккаунтом: на паузе пропускаем.
+    if (this.floodPaused('ежедневный «лучший мем»')) return;
     const context: BestMemeContext = {};
     try {
       // Получаем сущность канала с мемами

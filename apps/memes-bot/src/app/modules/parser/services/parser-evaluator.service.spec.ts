@@ -1,3 +1,4 @@
+import { Logger } from '@nestjs/common';
 import * as bigInt from 'big-integer';
 import { Api } from 'telegram';
 import { EvalStage, ObservedStatus, QUEUE_EMERGENCY_CAP } from '../constants/parser.constants';
@@ -105,7 +106,11 @@ const makeParserClient = (): any => {
   return { client: jest.fn(() => inner) };
 };
 
-const makeGuard = (): any => ({ run: jest.fn(async (_op: string, fn: () => Promise<unknown>) => fn()) });
+const makeGuard = (): any => ({
+  run: jest.fn(async (_op: string, fn: () => Promise<unknown>) => fn()),
+  isBlocked: jest.fn(() => false),
+  blockedUntil: jest.fn(() => null),
+});
 
 const makeSettings = (overrides: Record<string, unknown> = {}): any => ({
   current: {
@@ -173,6 +178,48 @@ const setup = (overrides: {
 };
 
 describe('ParserEvaluatorService', () => {
+  it('MTProto на паузе (FloodWait) → оценка и актуализация не дёргают Telegram', async () => {
+    const observedRepo = makeObservedRepo();
+    const registry = makeRegistry();
+    const client = makeParserClient();
+    const guard = makeGuard();
+    guard.isBlocked.mockReturnValue(true);
+    guard.blockedUntil.mockReturnValue(1_800_000_000_000);
+    const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    const service = new ParserEvaluatorService(
+      observedRepo,
+      registry,
+      client,
+      guard,
+      makeSettings(),
+      makeAi(),
+      makeClock(),
+      makeRandom()
+    );
+    (service as never as { pace: unknown }).pace = jest.fn().mockResolvedValue(undefined);
+
+    // Дозревший кандидат есть, но пауза — до MTProto не доходим.
+    observedRepo.find
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([candidate({ createdAt: hoursAgo(13) })]);
+    expect(await service.evaluateDue()).toBe(0);
+    expect(client.client().getMessages).not.toHaveBeenCalled();
+
+    // Актуализация пула: источник в пачке есть, MTProto тоже не трогаем.
+    observedRepo.find.mockResolvedValueOnce([
+      candidate({
+        status: ObservedStatus.SCORED,
+        evalStage: EvalStage.FINAL,
+        evaluatedAt: hoursAgo(30),
+      }),
+    ]);
+    expect(await service.refreshScored()).toBe(0);
+    expect(client.client().getMessages).not.toHaveBeenCalled();
+    expect(registry.repository.findOne).not.toHaveBeenCalled();
+    // Лог паузы — один на дедлайн, а не на каждый цикл.
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+  });
+
   it('финальная оценка: пороги пройдены → scored FINAL', async () => {
     const { service, observedRepo, queueFinds } = setup({
       candidate: { createdAt: hoursAgo(13) },

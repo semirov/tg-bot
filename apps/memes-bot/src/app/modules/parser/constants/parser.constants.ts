@@ -130,11 +130,16 @@ export const POOL_TTL_DAYS = 14;
 export const VIDEO_MERGE_SIMILARITY = 0.92;
 export const MAX_VIDEO_BYTES = 45 * 1024 * 1024;
 
-/** Настройки анти-флуда MTProto. */
-export const FLOOD_MAX_ATTEMPTS = 3;
-export const FLOOD_SINGLE_CAP_SEC = 300;
-export const FLOOD_DEADLINE_MS = 10 * 60 * 1000;
-export const FLOOD_CUMULATIVE_CAP_SEC = 600;
+/**
+ * Анти-флуд MTProto: пауза по FloodWait держится дедлайном (а не повтором
+ * внутри вызова), поэтому кумулятивные бюджеты не нужны.
+ */
+/** Добавка к дедлайну FloodWait, мс: разводит одновременные вызовы после паузы. */
+export const FLOOD_JITTER_MS = 1000;
+
+/** Entity-miss (CHANNEL_INVALID / нет input entity): экспоненциальный бэкофф. */
+export const ENTITY_BACKOFF_BASE_MS = 1000;
+export const ENTITY_BACKOFF_CAP_MS = 15 * 60 * 1000;
 
 /** Лимиты discovery за один прогон. */
 export const DISCOVERY_WEB_CHECK_PER_RUN = 10;

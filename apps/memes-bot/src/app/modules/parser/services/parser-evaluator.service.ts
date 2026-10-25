@@ -63,6 +63,9 @@ export class ParserEvaluatorService {
   /** Итоги последнего `evaluateDue()` для строки лога цикла. */
   private lastEvaluateRun = { expired: 0, forced: 0 };
 
+  /** Дедлайн, о котором уже предупредили (лог паузы — раз на дедлайн, не на тик). */
+  private pausedLoggedFor = 0;
+
   constructor(
     @InjectRepository(ObservedPostEntity)
     private readonly observedRepository: Repository<ObservedPostEntity>,
@@ -119,6 +122,10 @@ export class ParserEvaluatorService {
 
     let evaluated = 0;
     for (const candidate of due) {
+      if (this.guard.isBlocked()) {
+        this.logPausedOnce('Parser evaluate');
+        break;
+      }
       const ageMs = now.getTime() - candidate.createdAt.getTime();
       const finalDue = ageMs >= config.evalFinalHours * 3_600_000;
       const preDue = ageMs >= config.evalPreHours * 3_600_000;
@@ -164,8 +171,10 @@ export class ParserEvaluatorService {
     }
 
     const ids = [candidate.sourceMessageId, ...(candidate.groupIds ?? [])];
-    const messages = await this.guard.run<TotalList<Api.Message>>('getMessages:eval', () =>
-      client.getMessages(bigInt(source.chatId), { ids }) // marked id
+    const messages = await this.guard.run<TotalList<Api.Message>>(
+      'getMessages:eval',
+      () => client.getMessages(bigInt(source.chatId), { ids }), // marked id
+      source.chatId
     );
     // Сетевая неудача guard'а — не «пост удалён»: пропускаем, повторим позже.
     if (messages === undefined) return false;
@@ -325,6 +334,10 @@ export class ParserEvaluatorService {
 
     let refreshed = 0;
     for (const [chatId, sourceRows] of bySource) {
+      if (this.guard.isBlocked()) {
+        this.logPausedOnce('Parser refresh');
+        break;
+      }
       const source = await this.registry.repository.findOne({ where: { chatId } });
       if (!source) {
         for (const row of sourceRows) {
@@ -392,8 +405,10 @@ export class ParserEvaluatorService {
 
     for (let offset = 0; offset < ids.length; offset += GET_MESSAGES_ID_CHUNK) {
       const chunk = ids.slice(offset, offset + GET_MESSAGES_ID_CHUNK);
-      const messages = await this.guard.run<TotalList<Api.Message>>('getMessages:refresh', () =>
-        client.getMessages(peer, { ids: chunk })
+      const messages = await this.guard.run<TotalList<Api.Message>>(
+        'getMessages:refresh',
+        () => client.getMessages(peer, { ids: chunk }),
+        source.chatId
       );
       if (messages === undefined) return null;
       for (const message of messages) {
@@ -413,6 +428,16 @@ export class ParserEvaluatorService {
     // Круг «baseline ← оценённые посты ← baseline» разрываем первичным
     // базлайном из истории канала (getHistory, read-only).
     return this.registry.seedBaselineFromHistory(source, client);
+  }
+
+  /** Лог паузы — один раз на дедлайн, а не на каждый cron-тик. */
+  private logPausedOnce(phase: string): void {
+    const untilMs = this.guard.blockedUntil();
+    if (untilMs === null || untilMs === this.pausedLoggedFor) return;
+    this.pausedLoggedFor = untilMs;
+    this.logger.warn(
+      `${phase}: MTProto на паузе до ${new Date(untilMs).toISOString()} — цикл остановлен`
+    );
   }
 
   /** Сколько карточек лежит в предложке (аварийный порог для всех фаз). */

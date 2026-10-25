@@ -72,6 +72,8 @@ const makeParserClient = (client: Record<string, unknown> = {}): any => ({
 const makeGuard = (): any => ({
   run: jest.fn(async (_op: string, fn: () => Promise<unknown>) => fn()),
   pace: jest.fn().mockResolvedValue(undefined),
+  isBlocked: jest.fn(() => false),
+  blockedUntil: jest.fn(() => null),
 });
 
 const makeSettings = (overrides: Record<string, unknown> = {}): any => ({
