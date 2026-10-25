@@ -5,6 +5,12 @@
  */
 import { E2EHarness, createE2EHarness, findCall, waitFor } from './harness';
 import { CronService } from '../../src/app/modules/cron/service/cron.service';
+import { ObservatoryService } from '../../src/app/modules/observatory/services/observatory.service';
+import {
+  PostSchedulerService,
+} from '../../src/app/modules/bot/services/post-scheduler.service';
+import { PublishedPostHashesEntity } from '../../src/app/modules/bot/entities/published-post-hashes.entity';
+import { GrammyError } from 'grammy';
 import { YearResultsService } from '../../src/app/modules/year-results/services/year-results.service';
 import { PublicationModesEnum } from '../../src/app/modules/post-management/constants/publication-modes.enum';
 import { UserEntity } from '../../src/app/modules/bot/entities/user.entity';
@@ -49,6 +55,22 @@ describe('E2E: крон и итоги года', () => {
     } as any);
   }
 
+  /**
+   * Контекст нажатия кнопки публикации без похода в Bot API: владелец, карточка
+   * и ответ на колбэк. Нужен, чтобы дёргать `publishPost` конкурентно.
+   */
+  function makeButtonCtx(cardMessageId: number, moderatorId: number): any {
+    return {
+      config: { isOwner: true },
+      callbackQuery: {
+        message: { message_id: cardMessageId, chat: { id: USER_REQUEST_CHANNEL } },
+        from: { id: moderatorId },
+      },
+      api: { banChatMember: jest.fn() },
+      answerCallbackQuery: jest.fn().mockResolvedValue(undefined),
+    };
+  }
+
   describe('плановая публикация по крону', () => {
     it('публикует пост обсерватории и помечает его опубликованным', async () => {
       const user = await seedUser(77, { username: 'moder' });
@@ -91,6 +113,194 @@ describe('E2E: крон и итоги года', () => {
       const savedObs = await obsRepo.findOne({ where: { requestChannelMessageId: 500 } });
       expect(savedObs?.isApproved).toBe(true);
       expect(savedObs?.publishedMessageId).toBeDefined();
+    });
+
+    it('(TGB-117) claim атомарен: второй вызов по тому же посту возвращает false', async () => {
+      const user = await seedUser(78, { username: 'moder2' });
+      const postRepo = h.dataSource.getRepository(PostSchedulerEntity);
+      const post = await postRepo.save({
+        requestChannelMessageId: 501,
+        processedByModerator: user,
+        publishDate: new Date(Date.now() - 60_000),
+        mode: PublicationModesEnum.NEXT_INTERVAL,
+        isUserPost: false,
+        isPublished: false,
+        hash: 'hash-claim',
+      } as any);
+
+      const scheduler = h.moduleRef.get(PostSchedulerService);
+      await expect(scheduler.claimPostForPublish(post.id)).resolves.toBe(true);
+      await expect(scheduler.claimPostForPublish(post.id)).resolves.toBe(false);
+
+      const saved = await postRepo.findOne({ where: { id: post.id } });
+      expect(saved?.isPublished).toBe(true);
+      await expect(scheduler.isRequestMessagePublished(501)).resolves.toBe(true);
+    });
+
+    it('(TGB-117) два одновременных тика крона отправляют карточку один раз', async () => {
+      const user = await seedUser(79, { username: 'moder3' });
+      await h.dataSource.getRepository(ObservatoryPostEntity).save({
+        requestChannelMessageId: 502,
+        isApproved: null,
+        processedByModerator: user,
+      });
+      const postRepo = h.dataSource.getRepository(PostSchedulerEntity);
+      await postRepo.save({
+        requestChannelMessageId: 502,
+        processedByModerator: user,
+        publishDate: new Date(Date.now() - 60_000),
+        mode: PublicationModesEnum.NEXT_INTERVAL,
+        isUserPost: false,
+        isPublished: false,
+        hash: 'hash-double-tick',
+      } as any);
+
+      h.clearCalls();
+      const cron = h.moduleRef.get(CronService);
+      // Гонка из инцидента: оба тика читают одну и ту же непомеченную строку.
+      await Promise.all([cron.handleNextScheduledPost(), cron.handleNextScheduledPost()]);
+
+      const copies = h.calls.filter(
+        (call) =>
+          call.method === 'copyMessage' &&
+          call.payload.chat_id === MEME_CHANNEL &&
+          call.payload.from_chat_id === USER_REQUEST_CHANNEL
+      );
+      expect(copies).toHaveLength(1);
+
+      const hashes = await h.dataSource
+        .getRepository(PublishedPostHashesEntity)
+        .find({ where: { hash: 'hash-double-tick' } });
+      expect(hashes).toHaveLength(1);
+    });
+
+    it('(TGB-117) ручная публикация съедает ожидающую запись сетки — cron не дублирует', async () => {
+      const user = await seedUser(81, { username: 'moder5' });
+      await h.dataSource.getRepository(ObservatoryPostEntity).save({
+        requestChannelMessageId: 504,
+        isApproved: true,
+        processedByModerator: user,
+      });
+      const postRepo = h.dataSource.getRepository(PostSchedulerEntity);
+      const post = await postRepo.save({
+        requestChannelMessageId: 504,
+        processedByModerator: user,
+        publishDate: new Date(Date.now() - 60_000),
+        mode: PublicationModesEnum.NEXT_MORNING,
+        isUserPost: false,
+        isPublished: false,
+        hash: 'hash-button',
+      } as any);
+
+      h.clearCalls();
+      const observatory = h.moduleRef.get(ObservatoryService);
+      await (observatory as any).publishPost(makeButtonCtx(504, user.id), PublicationModesEnum.NOW_SILENT);
+
+      // Ожидающая запись забрана кнопкой и больше не ждёт cron.
+      const claimed = await postRepo.findOne({ where: { id: post.id } });
+      expect(claimed?.isPublished).toBe(true);
+
+      const cron = h.moduleRef.get(CronService);
+      await cron.handleNextScheduledPost();
+
+      const copies = h.calls.filter(
+        (call) =>
+          call.method === 'copyMessage' &&
+          call.payload.chat_id === MEME_CHANNEL &&
+          call.payload.from_chat_id === USER_REQUEST_CHANNEL
+      );
+      expect(copies).toHaveLength(1);
+    });
+
+    it('(TGB-117) ручная публикация без записи в сетке вставляет claim-строку', async () => {
+      const user = await seedUser(82, { username: 'moder6' });
+      await h.dataSource.getRepository(ObservatoryPostEntity).save({
+        requestChannelMessageId: 505,
+        isApproved: true,
+        processedByModerator: user,
+      });
+      const postRepo = h.dataSource.getRepository(PostSchedulerEntity);
+
+      h.clearCalls();
+      const observatory = h.moduleRef.get(ObservatoryService);
+      await (observatory as any).publishPost(makeButtonCtx(505, user.id), PublicationModesEnum.NOW_SILENT);
+
+      const claims = await postRepo.find({ where: { requestChannelMessageId: 505 } });
+      expect(claims).toHaveLength(1);
+      expect(claims[0].isPublished).toBe(true);
+      expect(claims[0].mode).toBe(PublicationModesEnum.NOW_SILENT);
+      expect(
+        h.calls.filter(
+          (call) =>
+            call.method === 'copyMessage' && call.payload.chat_id === MEME_CHANNEL
+        )
+      ).toHaveLength(1);
+    });
+
+    it('(TGB-117) два одновременных ручных клика по карточке без записи дают одну копию', async () => {
+      const user = await seedUser(83, { username: 'moder7' });
+      await h.dataSource.getRepository(ObservatoryPostEntity).save({
+        requestChannelMessageId: 506,
+        isApproved: true,
+        processedByModerator: user,
+      });
+
+      h.clearCalls();
+      const observatory = h.moduleRef.get(ObservatoryService);
+      await Promise.all([
+        (observatory as any).publishPost(makeButtonCtx(506, user.id), PublicationModesEnum.NOW_SILENT),
+        (observatory as any).publishPost(makeButtonCtx(506, user.id), PublicationModesEnum.NOW_SILENT),
+      ]);
+
+      expect(
+        h.calls.filter(
+          (call) =>
+            call.method === 'copyMessage' &&
+            call.payload.chat_id === MEME_CHANNEL &&
+            call.payload.from_chat_id === USER_REQUEST_CHANNEL
+        )
+      ).toHaveLength(1);
+
+      // Ровно одна claim-строка на карточку: второй клик её не задвоил.
+      const claims = await h.dataSource
+        .getRepository(PostSchedulerEntity)
+        .find({ where: { requestChannelMessageId: 506 } });
+      expect(claims).toHaveLength(1);
+    });
+
+    it('(TGB-117) «message is not modified» на правке клавиатуры не теряет хеш публикации', async () => {
+      const user = await seedUser(80, { username: 'moder4' });
+      await h.dataSource.getRepository(ObservatoryPostEntity).save({
+        requestChannelMessageId: 503,
+        isApproved: null,
+        processedByModerator: user,
+      });
+      // Telegram отвечает 400, когда клавиатура уже целевая — пост при этом уже в канале.
+      jest.spyOn(h.bot.api, 'editMessageReplyMarkup').mockRejectedValue(
+        new GrammyError(
+          "Call to 'editMessageReplyMarkup' failed!",
+          { ok: false, error_code: 400, description: 'Bad Request: message is not modified' },
+          'editMessageReplyMarkup',
+          {}
+        )
+      );
+
+      const observatory = h.moduleRef.get(ObservatoryService);
+      await expect(
+        observatory.onPublishNow({
+          mode: PublicationModesEnum.NEXT_INTERVAL,
+          requestChannelMessageId: 503,
+          processedByModerator: user.id,
+          isUserPost: false,
+          hash: 'hash-noop-edit',
+          source: 'cron',
+        })
+      ).resolves.toBeGreaterThan(0);
+
+      const hashes = await h.dataSource
+        .getRepository(PublishedPostHashesEntity)
+        .find({ where: { hash: 'hash-noop-edit' } });
+      expect(hashes).toHaveLength(1);
     });
   });
 

@@ -33,6 +33,7 @@ import {
 } from './services/duplicate-policy';
 import { PUBLISHED_DUPLICATE_SIMILARITY } from '../../shared/constants/duplicate-similarity';
 import { UserPostFormatter } from './services/user-post-formatter';
+import { isMessageNotModifiedError } from '../../shared/grammy/benign-error';
 
 @Injectable()
 export class UserPostManagementService implements OnModuleInit {
@@ -818,12 +819,16 @@ export class UserPostManagementService implements OnModuleInit {
   private buildModeratedPostMenu() {
     const menu = new Menu<BotContext>(PostModerationMenusEnum.MODERATION, { autoAnswer: false })
       .text(UserPostFormatter.APPROVE_LABEL, async (ctx) => {
+        // TGB-117: отвечаем сразу, чтобы спиннер не висел на действиях ниже.
+        await ctx.answerCallbackQuery();
         if (this.userService.checkPermission(ctx, UserPermissionEnum.IS_BASE_MODERATOR)) {
           await this.onModeratorApprovalActions(ctx);
           ctx.menu.nav(PostModerationMenusEnum.APPROVAL);
         }
       })
       .text(UserPostFormatter.REJECT_LABEL, async (ctx) => {
+        // TGB-117: отвечаем сразу, чтобы спиннер не висел на действиях ниже.
+        await ctx.answerCallbackQuery();
         if (this.userService.checkPermission(ctx, UserPermissionEnum.IS_BASE_MODERATOR)) {
           await this.onModeratorRejectActions(ctx);
           ctx.menu.nav(PostModerationMenusEnum.REJECT);
@@ -1046,21 +1051,50 @@ export class UserPostManagementService implements OnModuleInit {
    */
   public async onPublishActions(ctx: BotContext, mode: PublicationModesEnum) {
     if (!this.userService.checkPermission(ctx, UserPermissionEnum.ALLOW_PUBLISH_TO_CHANNEL)) {
+      await ctx.answerCallbackQuery('Нет прав');
       return;
     }
 
-    await ctx.unpinChatMessage(ctx.callbackQuery.message.message_id);
+    const cardMessageId = ctx.callbackQuery.message.message_id;
+
+    // Повторный клик по уже опубликованной карточке не должен отправить копию
+    // в канал (TGB-117): cron клеймит запись сетки, ручной клик проверяет
+    // статус сам.
+    if (await this.isCardAlreadyPublished(cardMessageId)) {
+      await this.answerAlreadyPublished(ctx, cardMessageId, 'already-published');
+      return;
+    }
+
+    // Немедленную публикацию забираем атомарно: два одновременных клика (или
+    // клик во время cron) не должны отправить две копии.
+    if (mode === PublicationModesEnum.NOW_SILENT) {
+      const claim = await this.postSchedulerService.claimManualPublish(
+        cardMessageId,
+        ctx.callbackQuery.from.id,
+        true
+      );
+      if (claim !== 'claimed') {
+        await this.answerAlreadyPublished(ctx, cardMessageId, claim);
+        return;
+      }
+    }
+
+    // Отвечаем до публикации: спиннер не должен висеть на copyMessage/правках.
+    await ctx.answerCallbackQuery();
+
+    await ctx.unpinChatMessage(cardMessageId);
     const imageHash = await this.deduplicationService.getPostImageHash(
       ctx?.callbackQuery?.message?.photo
     );
 
     const publishContext: ScheduledPostContextInterface = {
       mode,
-      requestChannelMessageId: ctx.callbackQuery.message.message_id,
+      requestChannelMessageId: cardMessageId,
       processedByModerator: ctx.callbackQuery.from.id,
       caption: ctx.callbackQuery?.message?.caption,
       isUserPost: true,
       hash: imageHash,
+      source: 'button',
     };
 
     return runPublicationMode(
@@ -1073,6 +1107,50 @@ export class UserPostManagementService implements OnModuleInit {
       },
       publishContext
     );
+  }
+
+  /**
+   * Отказ на повторную/параллельную публикацию карточки.
+   *
+   * @param ctx контекст нажатия кнопки
+   * @param cardMessageId id карточки в канале предложки
+   * @param outcome результат захвата: `busy` — публикует параллельный клик
+   */
+  private async answerAlreadyPublished(
+    ctx: BotContext,
+    cardMessageId: number,
+    outcome: 'already-published' | 'busy'
+  ): Promise<void> {
+    const busy = outcome === 'busy';
+    await ctx.answerCallbackQuery({
+      text: busy
+        ? UserPostFormatter.ALREADY_PUBLISHING_TEXT
+        : UserPostFormatter.ALREADY_PUBLISHED_TEXT,
+      show_alert: false,
+    });
+    this.logger.log(
+      `publish source=button card=${cardMessageId} claim=already-claimed ` +
+        `outcome=skipped:${busy ? 'busy' : 'already-published'}`
+    );
+  }
+
+  /**
+   * Карточка предложки уже опубликована — повторная публикация не нужна.
+   *
+   * Смотрим запись сетки, забранную cron'ом (`isPublished`), и статус самой
+   * заявки (`isPublished`/`publishedMessageId`).
+   *
+   * @param cardMessageId id сообщения карточки в канале предложки
+   * @returns `true`, если пост уже ушёл в канал
+   */
+  private async isCardAlreadyPublished(cardMessageId: number): Promise<boolean> {
+    const [scheduled, request] = await Promise.all([
+      this.postSchedulerService.isRequestMessagePublished(cardMessageId),
+      this.userRequestService.repository.findOne({
+        where: { userRequestChannelMessageId: cardMessageId },
+      }),
+    ]);
+    return scheduled || request?.isPublished === true || request?.publishedMessageId != null;
   }
 
   private handleAdminUserResponse(): void {
@@ -1128,7 +1206,7 @@ export class UserPostManagementService implements OnModuleInit {
     });
   }
 
-  public async onPublishNow(publishContext: ScheduledPostContextInterface) {
+  public async onPublishNow(publishContext: ScheduledPostContextInterface): Promise<number> {
     const message = await this.userRequestService.repository.findOne({
       relations: { user: true },
       where: {
@@ -1167,6 +1245,14 @@ export class UserPostManagementService implements OnModuleInit {
       }
     );
 
+    // Хеш пишем сразу после появления поста в канале и независимо от
+    // косметики ниже: иначе сбой правки клавиатуры оставлял пост без записи
+    // дедупликации и открывал дорогу повторной публикации (TGB-117).
+    await this.deduplicationService.createPublishedPostHash(
+      publishContext.hash,
+      publishedMessage.message_id
+    );
+
     const channelInfo = await this.bot.api.getChat(this.baseConfigService.memeChanelId);
     await this.bot.api.forwardMessage(message.user.id, channelInfo.id, publishedMessage.message_id);
 
@@ -1188,11 +1274,19 @@ export class UserPostManagementService implements OnModuleInit {
       .url(this.formatter.publishedKeyboardLabel(user.username), url)
       .row();
 
-    await this.bot.api.editMessageReplyMarkup(
-      this.baseConfigService.userRequestMemeChannel,
-      publishContext.requestChannelMessageId,
-      { reply_markup: inlineKeyboard }
-    );
+    try {
+      await this.bot.api.editMessageReplyMarkup(
+        this.baseConfigService.userRequestMemeChannel,
+        publishContext.requestChannelMessageId,
+        { reply_markup: inlineKeyboard }
+      );
+    } catch (error) {
+      // «message is not modified» = клавиатура уже целевая; пост опубликован.
+      // Любая другая ошибка правки остаётся настоящей ошибкой.
+      if (!isMessageNotModifiedError(error)) {
+        throw error;
+      }
+    }
 
     if (publishContext.mode == PublicationModesEnum.NIGHT_CRINGE) {
       await this.cringeManagementService.repository.update(
@@ -1201,10 +1295,13 @@ export class UserPostManagementService implements OnModuleInit {
       );
     }
 
-    await this.deduplicationService.createPublishedPostHash(
-      publishContext.hash,
-      publishedMessage.message_id
+    this.logger.log(
+      `publish source=${publishContext.source ?? 'button'} ` +
+        `card=${publishContext.requestChannelMessageId} claim=claimed ` +
+        `outcome=sent:${publishedMessage.message_id}`
     );
+
+    return publishedMessage.message_id;
   }
 
   /**
@@ -1447,6 +1544,8 @@ export class UserPostManagementService implements OnModuleInit {
       if (!allowed(ctx)) return ctx.answerCallbackQuery('Нет прав');
       const id = Number(ctx.match?.[1]);
       const removed = await this.postSchedulerService.removeByRequestMessageId(id);
+      // Отвечаем до сетевой правки клавиатуры, чтобы спиннер не висел.
+      await ctx.answerCallbackQuery(removed ? 'Снято с публикации' : 'Уже снято');
       if (removed) {
         await this.cringeManagementService.repository
           .delete({ requestChannelMessageId: id })
@@ -1455,7 +1554,6 @@ export class UserPostManagementService implements OnModuleInit {
       await this.bot.api.editMessageReplyMarkup(channel, id, {
         reply_markup: await renderMenu(this.moderatedPostMenu, ctx),
       });
-      await ctx.answerCallbackQuery(removed ? 'Снято с публикации' : 'Уже снято');
     });
   }
 }

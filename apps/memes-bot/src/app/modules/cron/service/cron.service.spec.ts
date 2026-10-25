@@ -15,13 +15,14 @@ jest.mock('axios', () => ({
 }));
 
 import { Logger } from '@nestjs/common';
+import { GrammyError } from 'grammy';
 import { CronService } from './cron.service';
 import { PublicationModesEnum } from '../../post-management/constants/publication-modes.enum';
 
 function createService() {
   const postSchedulerService = {
     nextScheduledPost: jest.fn(),
-    getScheduledPostById: jest.fn().mockResolvedValue({ id: 5, isPublished: false }),
+    claimPostForPublish: jest.fn().mockResolvedValue(true),
     markPostAsPublished: jest.fn().mockResolvedValue(undefined),
     nowIsMode: jest.fn(),
   };
@@ -69,6 +70,7 @@ function makePost(overrides: any = {}): any {
 
 beforeEach(() => {
   jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+  jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
   jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
   jest.spyOn(console, 'error').mockImplementation(() => undefined);
 });
@@ -163,33 +165,25 @@ describe('CronService.handleNextScheduledPost', () => {
 
     await service.handleNextScheduledPost();
 
-    expect(postSchedulerService.markPostAsPublished).not.toHaveBeenCalled();
     expect(postSchedulerService.nextScheduledPost).toHaveBeenCalledTimes(1);
+    expect(postSchedulerService.claimPostForPublish).not.toHaveBeenCalled();
+    expect(postSchedulerService.markPostAsPublished).not.toHaveBeenCalled();
   });
 
-  it('не публикует снятый пост: записи в сетке уже нет', async () => {
+  it('(TGB-117) не публикует пост, который уже забрал другой обработчик', async () => {
     const { service, postSchedulerService, userPostManagementService, observatoryService } =
       createService();
     postSchedulerService.nextScheduledPost.mockResolvedValue(makePost());
-    postSchedulerService.getScheduledPostById.mockResolvedValue(null);
+    postSchedulerService.claimPostForPublish.mockResolvedValue(false);
 
     await service.handleNextScheduledPost();
 
-    expect(postSchedulerService.getScheduledPostById).toHaveBeenCalledWith(5);
+    expect(postSchedulerService.claimPostForPublish).toHaveBeenCalledWith(5);
     expect(userPostManagementService.onPublishNow).not.toHaveBeenCalled();
     expect(observatoryService.onPublishNow).not.toHaveBeenCalled();
-    expect(postSchedulerService.markPostAsPublished).not.toHaveBeenCalled();
-  });
-
-  it('не публикует уже опубликованный пост (isPublished)', async () => {
-    const { service, postSchedulerService, observatoryService } = createService();
-    postSchedulerService.nextScheduledPost.mockResolvedValue(makePost({ isUserPost: false }));
-    postSchedulerService.getScheduledPostById.mockResolvedValue({ id: 5, isPublished: true });
-
-    await service.handleNextScheduledPost();
-
-    expect(observatoryService.onPublishNow).not.toHaveBeenCalled();
-    expect(postSchedulerService.markPostAsPublished).not.toHaveBeenCalled();
+    expect(Logger.prototype.log).toHaveBeenCalledWith(
+      'publish source=cron sched=5 card=10 claim=already-claimed outcome=skipped'
+    );
   });
 
   it('публикует пользовательский пост через UserPostManagementService', async () => {
@@ -200,6 +194,7 @@ describe('CronService.handleNextScheduledPost', () => {
 
     await service.handleNextScheduledPost();
 
+    expect(postSchedulerService.claimPostForPublish).toHaveBeenCalledWith(5);
     expect(userPostManagementService.onPublishNow).toHaveBeenCalledWith({
       mode: PublicationModesEnum.NEXT_MORNING,
       requestChannelMessageId: 10,
@@ -207,9 +202,11 @@ describe('CronService.handleNextScheduledPost', () => {
       caption: 'подпись',
       isUserPost: true,
       hash: 'hash-1',
+      source: 'cron',
     });
     expect(observatoryService.onPublishNow).not.toHaveBeenCalled();
-    expect(postSchedulerService.markPostAsPublished).toHaveBeenCalledWith(5);
+    // Claim и есть отметка о публикации — отдельного markPostAsPublished нет.
+    expect(postSchedulerService.markPostAsPublished).not.toHaveBeenCalled();
   });
 
   it('публикует пост обсерватории, когда isUserPost false', async () => {
@@ -221,19 +218,118 @@ describe('CronService.handleNextScheduledPost', () => {
 
     expect(observatoryService.onPublishNow).toHaveBeenCalledTimes(1);
     expect(userPostManagementService.onPublishNow).not.toHaveBeenCalled();
-    expect(postSchedulerService.markPostAsPublished).toHaveBeenCalledWith(5);
+    expect(postSchedulerService.markPostAsPublished).not.toHaveBeenCalled();
   });
 
-  it('перехватывает ошибку публикации, но всё равно помечает пост опубликованным', async () => {
+  it('(TGB-117) два последовательных тика публикуют карточку ровно один раз', async () => {
+    const { service, postSchedulerService, observatoryService } = createService();
+    // Первый тик получает пост, второй читает ту же (устаревшую) строку —
+    // ровно гонка из инцидента.
+    const post = makePost({ isUserPost: false });
+    postSchedulerService.nextScheduledPost.mockResolvedValue(post);
+    let claimed = false;
+    postSchedulerService.claimPostForPublish.mockImplementation(async () => {
+      if (claimed) {
+        return false;
+      }
+      claimed = true;
+      return true;
+    });
+    observatoryService.onPublishNow.mockResolvedValue(20823);
+
+    await service.handleNextScheduledPost();
+    await service.handleNextScheduledPost();
+
+    expect(postSchedulerService.claimPostForPublish).toHaveBeenCalledTimes(2);
+    // onPublishNow — граница публикации, внутри неё ровно один copyMessage.
+    expect(observatoryService.onPublishNow).toHaveBeenCalledTimes(1);
+  });
+
+  it('ловит ошибку публикации и не снимает claim (fail closed)', async () => {
     const { service, postSchedulerService, userPostManagementService } = createService();
     const failure = new Error('publish failed');
     postSchedulerService.nextScheduledPost.mockResolvedValue(makePost());
     userPostManagementService.onPublishNow.mockRejectedValue(failure);
 
+    await expect(service.handleNextScheduledPost()).resolves.toBeUndefined();
+
+    // warn: claim взят, но отправка упала — оператор должен снять claim вручную.
+    expect(Logger.prototype.warn).toHaveBeenCalledWith(
+      'publish source=cron sched=5 card=10 claim=claimed outcome=error:Error'
+    );
+    expect(Logger.prototype.error).not.toHaveBeenCalled();
+    // Claim не снимаем и повторно не помечаем: дубликат хуже пропуска.
+    expect(postSchedulerService.claimPostForPublish).toHaveBeenCalledTimes(1);
+    expect(postSchedulerService.markPostAsPublished).not.toHaveBeenCalled();
+    expect(console.error).not.toHaveBeenCalled();
+  });
+
+  it('битая запись (нет модератора) не сжигает claim молча: warn со sched', async () => {
+    const { service, postSchedulerService, observatoryService } = createService();
+    postSchedulerService.nextScheduledPost.mockResolvedValue(
+      makePost({ isUserPost: false, processedByModerator: null })
+    );
+
+    await expect(service.handleNextScheduledPost()).resolves.toBeUndefined();
+
+    expect(observatoryService.onPublishNow).not.toHaveBeenCalled();
+    expect(Logger.prototype.warn).toHaveBeenCalledWith(
+      'publish source=cron sched=5 card=10 claim=claimed outcome=error:TypeError'
+    );
+  });
+
+  it('(TGB-117) два одновременных тика публикуют карточку ровно один раз', async () => {
+    const { service, postSchedulerService, observatoryService } = createService();
+    // Гонка из инцидента: оба тика видят одну и ту же непомеченную строку.
+    postSchedulerService.nextScheduledPost.mockResolvedValue(makePost({ isUserPost: false }));
+    const claimedIds = new Set<number>();
+    postSchedulerService.claimPostForPublish.mockImplementation(async (id: number) => {
+      // Уступаем управление — тики чередуются, как два параллельных UPDATE.
+      await Promise.resolve();
+      if (claimedIds.has(id)) {
+        return false;
+      }
+      claimedIds.add(id);
+      return true;
+    });
+    observatoryService.onPublishNow.mockResolvedValue(20823);
+
+    await Promise.all([service.handleNextScheduledPost(), service.handleNextScheduledPost()]);
+
+    expect(postSchedulerService.claimPostForPublish).toHaveBeenCalledTimes(2);
+    expect(observatoryService.onPublishNow).toHaveBeenCalledTimes(1);
+  });
+
+  it('логирует GrammyError с описанием Telegram в лейбле ошибки', async () => {
+    const { service, postSchedulerService, observatoryService } = createService();
+    postSchedulerService.nextScheduledPost.mockResolvedValue(makePost({ isUserPost: false }));
+    observatoryService.onPublishNow.mockRejectedValue(
+      new GrammyError(
+        "Call to 'copyMessage' failed!",
+        { ok: false, error_code: 400, description: 'Bad Request: chat not found' },
+        'copyMessage',
+        {}
+      )
+    );
+
     await service.handleNextScheduledPost();
 
-    expect(console.error).toHaveBeenCalledWith('error while publish scheduled post', failure);
-    expect(postSchedulerService.markPostAsPublished).toHaveBeenCalledWith(5);
+    expect(Logger.prototype.warn).toHaveBeenCalledWith(
+      'publish source=cron sched=5 card=10 claim=claimed ' +
+        'outcome=error:GrammyError:Bad Request: chat not found'
+    );
+  });
+
+  it('на не-Error отказе пишет UnknownError без тела исключения', async () => {
+    const { service, postSchedulerService, observatoryService } = createService();
+    postSchedulerService.nextScheduledPost.mockResolvedValue(makePost({ isUserPost: false }));
+    observatoryService.onPublishNow.mockRejectedValue('boom');
+
+    await service.handleNextScheduledPost();
+
+    expect(Logger.prototype.warn).toHaveBeenCalledWith(
+      'publish source=cron sched=5 card=10 claim=claimed outcome=error:UnknownError'
+    );
   });
 });
 

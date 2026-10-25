@@ -88,6 +88,12 @@ export class UserPostFormatter {
   /** Метка режима «Вечером». */
   public static readonly PUBLISH_EVENING_LABEL = 'Вечером';
 
+  /** Отказ на повторную публикацию уже опубликованной карточки. */
+  public static readonly ALREADY_PUBLISHED_TEXT = 'Уже опубликовано';
+
+  /** Отказ, пока карточку публикует параллельный клик. */
+  public static readonly ALREADY_PUBLISHING_TEXT = 'Уже публикуется';
+
   /**
    * Текст обращения пользователя в канал запросов.
    *

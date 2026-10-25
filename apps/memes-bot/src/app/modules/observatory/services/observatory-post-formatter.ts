@@ -50,6 +50,12 @@ export class ObservatoryPostFormatter {
   /** Метка кнопки возврата (общая с post-management). */
   public static readonly BACK_LABEL = UserPostFormatter.BACK_LABEL;
 
+  /** Отказ на повторную публикацию уже опубликованной карточки (общая с post-management). */
+  public static readonly ALREADY_PUBLISHED_TEXT = UserPostFormatter.ALREADY_PUBLISHED_TEXT;
+
+  /** Отказ, пока карточку публикует параллельный клик (общая с post-management). */
+  public static readonly ALREADY_PUBLISHING_TEXT = UserPostFormatter.ALREADY_PUBLISHING_TEXT;
+
   /** Префикс служебной подписи источника. */
   public static readonly SOURCE_LABEL = '🔎 Источник:';
 

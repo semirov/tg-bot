@@ -5,17 +5,25 @@ const msk = (y: number, mo: number, d: number, h: number, mi = 0) =>
   new Date(Date.UTC(y, mo - 1, d, h - 3, mi));
 
 function setup() {
+  const manager: any = {
+    query: jest.fn().mockResolvedValue([{ locked: true }]),
+    getRepository: jest.fn(),
+  };
   const repo = {
     find: jest.fn().mockResolvedValue([]),
     findOne: jest.fn().mockResolvedValue(null),
     count: jest.fn().mockResolvedValue(0),
     create: jest.fn().mockImplementation((value) => value),
     save: jest.fn().mockResolvedValue(undefined),
+    insert: jest.fn().mockResolvedValue(undefined),
     update: jest.fn().mockResolvedValue({ affected: 1 }),
     delete: jest.fn().mockResolvedValue({ affected: 1 }),
+    manager,
   } as any;
+  manager.transaction = jest.fn(async (callback: any) => callback(manager));
+  manager.getRepository.mockReturnValue(repo);
   const service = new PostSchedulerService(repo);
-  return { service, repo };
+  return { service, repo, manager };
 }
 
 function withNow(date: Date) {
@@ -264,6 +272,152 @@ describe('PostSchedulerService', () => {
 
       await expect(service.markPostAsPublished(8)).resolves.toEqual({ affected: 1 });
       expect(repo.update).toHaveBeenCalledWith({ id: 8 }, { isPublished: true });
+    });
+  });
+
+  describe('claimPostForPublish', () => {
+    it('забирает пост одним условным UPDATE и отдаёт true при affected=1', async () => {
+      const { service, repo } = setup();
+
+      await expect(service.claimPostForPublish(8)).resolves.toBe(true);
+      expect(repo.update).toHaveBeenCalledWith(
+        { id: 8, isPublished: false },
+        { isPublished: true }
+      );
+      // Никакого read-then-write: только один update.
+      expect(repo.findOne).not.toHaveBeenCalled();
+    });
+
+    it('возвращает false, когда запись уже занята (affected=0)', async () => {
+      const { service, repo } = setup();
+      repo.update.mockResolvedValue({ affected: 0 });
+
+      await expect(service.claimPostForPublish(8)).resolves.toBe(false);
+    });
+
+    it('возвращает false, когда драйвер не сообщил affected', async () => {
+      const { service, repo } = setup();
+      repo.update.mockResolvedValue({});
+
+      await expect(service.claimPostForPublish(8)).resolves.toBe(false);
+    });
+  });
+
+  describe('isRequestMessagePublished', () => {
+    it('true, если по карточке есть опубликованная запись сетки', async () => {
+      const { service, repo } = setup();
+      repo.count.mockResolvedValue(1);
+
+      await expect(service.isRequestMessagePublished(220490)).resolves.toBe(true);
+      expect(repo.count).toHaveBeenCalledWith({
+        where: { requestChannelMessageId: 220490, isPublished: true },
+      });
+    });
+
+    it('false, если опубликованных записей по карточке нет', async () => {
+      const { service, repo } = setup();
+      repo.count.mockResolvedValue(0);
+
+      await expect(service.isRequestMessagePublished(220490)).resolves.toBe(false);
+    });
+  });
+
+  describe('claimPostByRequestMessageId', () => {
+    it('забирает ожидающую запись одним условным UPDATE', async () => {
+      const { service, repo } = setup();
+
+      await expect(service.claimPostByRequestMessageId(7)).resolves.toBe(true);
+      expect(repo.update).toHaveBeenCalledWith(
+        { requestChannelMessageId: 7, isPublished: false },
+        { isPublished: true }
+      );
+    });
+
+    it('false, когда запись уже занята (affected=0)', async () => {
+      const { service, repo } = setup();
+      repo.update.mockResolvedValue({ affected: 0 });
+
+      await expect(service.claimPostByRequestMessageId(7)).resolves.toBe(false);
+    });
+  });
+
+  describe('claimManualPublish', () => {
+    it('съедает ожидающую запись сетки и не открывает транзакцию', async () => {
+      const { service, repo, manager } = setup();
+
+      await expect(service.claimManualPublish(7, 9, true)).resolves.toBe('claimed');
+      expect(repo.update).toHaveBeenCalledWith(
+        { requestChannelMessageId: 7, isPublished: false },
+        { isPublished: true }
+      );
+      expect(manager.transaction).not.toHaveBeenCalled();
+    });
+
+    it('отказывает, если запись уже опубликована', async () => {
+      const { service, repo, manager } = setup();
+      repo.update.mockResolvedValue({ affected: 0 });
+      repo.findOne.mockResolvedValue({ id: 1, isPublished: true });
+
+      await expect(service.claimManualPublish(7, 9, false)).resolves.toBe('already-published');
+      expect(manager.query).toHaveBeenCalledWith(expect.stringContaining('pg_try_advisory_xact_lock'), [
+        'publish:card:7',
+      ]);
+      expect(repo.insert).not.toHaveBeenCalled();
+    });
+
+    it('без записи в сетке вставляет claim-строку под advisory-lock', async () => {
+      const { service, repo } = setup();
+      repo.update.mockResolvedValue({ affected: 0 });
+      repo.findOne.mockResolvedValue(null);
+
+      await expect(service.claimManualPublish(7, 9, true)).resolves.toBe('claimed');
+      expect(repo.insert).toHaveBeenCalledWith({
+        requestChannelMessageId: 7,
+        processedByModerator: { id: 9 },
+        publishDate: expect.any(Date),
+        mode: PublicationModesEnum.NOW_SILENT,
+        isPublished: true,
+        isUserPost: true,
+      });
+    });
+
+    it('отказывает «busy», если параллельный клик держит lock', async () => {
+      const { service, repo, manager } = setup();
+      repo.update.mockResolvedValue({ affected: 0 });
+      repo.findOne.mockResolvedValue(null);
+      manager.query.mockResolvedValue([{ locked: false }]);
+
+      await expect(service.claimManualPublish(7, 9, false)).resolves.toBe('busy');
+      expect(repo.insert).not.toHaveBeenCalled();
+    });
+
+    it('два одновременных захвата карточки без записи дают ровно один claimed', async () => {
+      const { service, repo, manager } = setup();
+      repo.update.mockResolvedValue({ affected: 0 });
+      // Эмуляция pg_try_advisory_xact_lock: второй клик лок не получает.
+      let lockTaken = false;
+      manager.query.mockImplementation(async () => {
+        if (lockTaken) {
+          return [{ locked: false }];
+        }
+        lockTaken = true;
+        return [{ locked: true }];
+      });
+      let inserted = false;
+      repo.findOne.mockImplementation(async () => (inserted ? { id: 1, isPublished: true } : null));
+      repo.insert.mockImplementation(async () => {
+        inserted = true;
+      });
+
+      const outcomes = await Promise.all([
+        service.claimManualPublish(7, 9, false),
+        service.claimManualPublish(7, 10, false),
+      ]);
+
+      expect(outcomes.filter((outcome) => outcome === 'claimed')).toHaveLength(1);
+      expect(outcomes.filter((outcome) => outcome !== 'claimed')).toHaveLength(1);
+      expect(repo.insert).toHaveBeenCalledTimes(1);
+      expect(manager.transaction).toHaveBeenCalledTimes(2);
     });
   });
 

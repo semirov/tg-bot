@@ -7,6 +7,9 @@ import { SchedulerCommonService } from '../../common/scheduler-common.service';
 import { add, differenceInMinutes, isAfter, set } from 'date-fns';
 import { utcToZonedTime, zonedTimeToUtc } from 'date-fns-tz';
 
+/** Итог ручного захвата карточки на публикацию (TGB-117). */
+export type ManualPublishClaimOutcome = 'claimed' | 'already-published' | 'busy';
+
 export interface ScheduledPostContextInterface {
   mode: PublicationModesEnum;
   requestChannelMessageId: number;
@@ -14,6 +17,8 @@ export interface ScheduledPostContextInterface {
   caption?: string;
   isUserPost: boolean;
   hash: string;
+  /** Кто инициировал публикацию — только для логов (TGB-117). */
+  source?: 'cron' | 'button';
 }
 
 @Injectable()
@@ -339,6 +344,116 @@ export class PostSchedulerService {
   }
   async markPostAsPublished(id: number): Promise<UpdateResult> {
     return this.postSchedulerEntity.update({ id }, { isPublished: true });
+  }
+
+  /**
+   * Атомарно забирает пост на публикацию: один условный UPDATE.
+   *
+   * `true` получает только тот вызов, чей UPDATE реально перевёл `isPublished`
+   * из `false` в `true`. Повторный или параллельный вызов получает `false` и
+   * не должен публиковать: дубликат в канале хуже пропуска (TGB-117).
+   *
+   * @param id id записи сетки
+   * @returns `true`, если пост забран этим вызовом
+   */
+  public async claimPostForPublish(id: number): Promise<boolean> {
+    const result = await this.postSchedulerEntity.update(
+      { id, isPublished: false },
+      { isPublished: true }
+    );
+    return result.affected === 1;
+  }
+
+  /**
+   * Уже опубликована ли карточка предложки по сетке публикаций.
+   *
+   * Защита от повторного клика по кнопке публикации: cron помечает запись
+   * `isPublished` до отправки в канал, поэтому готовый пост виден здесь же.
+   *
+   * @param requestChannelMessageId id сообщения карточки в канале предложки
+   * @returns `true`, если запись сетки уже опубликована
+   */
+  public async isRequestMessagePublished(requestChannelMessageId: number): Promise<boolean> {
+    const count = await this.postSchedulerEntity.count({
+      where: { requestChannelMessageId, isPublished: true },
+    });
+    return count > 0;
+  }
+
+  /**
+   * Атомарно забирает на публикацию запись сетки по карточке предложки.
+   *
+   * Один условный UPDATE: `true` получает только тот вызов, который реально
+   * перевёл `isPublished` из `false` в `true`. Так ручная публикация «съедает»
+   * ожидающую запись, и cron уже не опубликует карточку повторно (TGB-117).
+   *
+   * @param requestChannelMessageId id сообщения карточки в канале предложки
+   * @returns `true`, если запись забрана этим вызовом
+   */
+  public async claimPostByRequestMessageId(requestChannelMessageId: number): Promise<boolean> {
+    const result = await this.postSchedulerEntity.update(
+      { requestChannelMessageId, isPublished: false },
+      { isPublished: true }
+    );
+    return result.affected === 1;
+  }
+
+  /**
+   * Атомарный захват карточки для ручной публикации.
+   *
+   * 1. Ожидающая запись сетки забирается условным UPDATE (её не заберёт cron);
+   * 2. строки нет (карточку не ставили в расписание) — берём
+   *    transaction-scoped advisory lock по карточке и в той же транзакции
+   *    вставляем claim-запись, чтобы два одновременных клика не опубликовали
+   *    две копии;
+   * 3. запись уже `isPublished=true` — отказ «уже опубликовано».
+   *
+   * Схема не меняется: claim-запись — обычная строка `post_scheduler_entity`.
+   *
+   * @param requestChannelMessageId id сообщения карточки в канале предложки
+   * @param processedByModerator id модератора, нажавшего кнопку
+   * @param isUserPost признак пользовательского поста
+   * @returns `claimed` — публикуем; `already-published` — отказ; `busy` — параллельный клик
+   */
+  public async claimManualPublish(
+    requestChannelMessageId: number,
+    processedByModerator: number,
+    isUserPost: boolean
+  ): Promise<ManualPublishClaimOutcome> {
+    if (await this.claimPostByRequestMessageId(requestChannelMessageId)) {
+      return 'claimed';
+    }
+
+    return this.postSchedulerEntity.manager.transaction(async (manager) => {
+      // Блокировка живёт до конца транзакции; hashtext даёт 32-битный ключ.
+      const lockRows = await manager.query(
+        'SELECT pg_try_advisory_xact_lock(hashtext($1)) AS locked',
+        [`publish:card:${requestChannelMessageId}`]
+      );
+      const repository = manager.getRepository(PostSchedulerEntity);
+      const existing = await repository.findOne({
+        where: { requestChannelMessageId },
+        order: { id: 'DESC' },
+      });
+      if (existing) {
+        // UPDATE выше не прошёл — значит запись уже помечена опубликованной.
+        return 'already-published';
+      }
+      if (lockRows?.[0]?.locked !== true) {
+        return 'busy';
+      }
+      await repository.insert({
+        requestChannelMessageId,
+        processedByModerator: { id: processedByModerator },
+        publishDate: new Date(),
+        // Немедленная публикация: в enum нет значения 'NOW', ближайшее по
+        // смыслу — NOW_SILENT.
+        mode: PublicationModesEnum.NOW_SILENT,
+        isPublished: true,
+        isUserPost,
+      });
+      return 'claimed';
+    });
   }
 
   /**

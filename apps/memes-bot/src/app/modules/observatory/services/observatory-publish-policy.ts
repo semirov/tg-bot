@@ -32,7 +32,7 @@ export class ObservatoryPublishPolicy {
   public run(
     mode: PublicationModesEnum,
     context: ScheduledPostContextInterface
-  ): Promise<void> | void {
+  ): Promise<unknown> | void {
     return runPublicationMode(mode, this.handlers, context);
   }
 }

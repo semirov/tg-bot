@@ -6,6 +6,7 @@ jest.mock('@nestjs/axios', () => ({ HttpService: class HttpService {} }));
 
 import { Logger } from '@nestjs/common';
 import { Menu } from '@grammyjs/menu';
+import { GrammyError } from 'grammy';
 import { ObservatoryService } from './observatory.service';
 import { ObservatoryPostMenusEnum } from '../contsants/observatory-post-menus.enum';
 import { PublicationModesEnum } from '../../post-management/constants/publication-modes.enum';
@@ -47,11 +48,14 @@ function setup() {
     create: jest.fn().mockImplementation((value) => value),
     save: jest.fn().mockResolvedValue(undefined),
     update: jest.fn().mockResolvedValue(undefined),
+    findOne: jest.fn().mockResolvedValue(null),
   };
   const postSchedulerService = {
     addPostToSchedule: jest.fn(),
     findByRequestMessageId: jest.fn().mockResolvedValue(null),
     removeByRequestMessageId: jest.fn().mockResolvedValue(1),
+    isRequestMessagePublished: jest.fn().mockResolvedValue(false),
+    claimManualPublish: jest.fn().mockResolvedValue('claimed'),
   };
   const settingsService = {
     cringeChannelHtmlLink: jest.fn(),
@@ -113,6 +117,7 @@ function makeCtx(overrides: any = {}) {
       from: { id: 5, username: 'moder' },
     },
     menu: { nav: jest.fn() },
+    answerCallbackQuery: jest.fn().mockResolvedValue(undefined),
     editMessageReplyMarkup: jest.fn().mockResolvedValue(undefined),
     deleteMessage: jest.fn().mockResolvedValue(undefined),
     ...overrides,
@@ -124,6 +129,7 @@ describe('ObservatoryService', () => {
 
   beforeEach(() => {
     captured = [];
+    jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
     jest
       .spyOn(Menu.prototype, 'text')
       .mockImplementation(function (this: any, label: any, ...middleware: any[]) {
@@ -399,10 +405,41 @@ describe('ObservatoryService', () => {
       userService.checkPermission.mockReturnValue(false);
       await handlerFor(ObservatoryPostMenusEnum.POST_MENU, 'Отклонить')(ctx);
       expect(rejectSpy).not.toHaveBeenCalled();
+      expect(ctx.answerCallbackQuery).toHaveBeenCalledTimes(1);
+      expect(ctx.answerCallbackQuery).toHaveBeenCalledWith('Нет прав');
 
       userService.checkPermission.mockReturnValue(true);
       await handlerFor(ObservatoryPostMenusEnum.POST_MENU, 'Отклонить')(ctx);
       expect(rejectSpy).toHaveBeenCalledWith(ctx);
+    });
+
+    it('(TGB-117) «Отклонить» отвечает на колбэк ровно один раз', async () => {
+      const { service, userService, observatoryPostRepository } = setup();
+      service.onModuleInit();
+      userService.checkPermission.mockReturnValue(true);
+      const ctx = makeCtx();
+
+      await handlerFor(ObservatoryPostMenusEnum.POST_MENU, 'Отклонить')(ctx);
+
+      expect(ctx.answerCallbackQuery).toHaveBeenCalledTimes(1);
+      expect(observatoryPostRepository.update).toHaveBeenCalledWith(
+        { requestChannelMessageId: 11 },
+        expect.objectContaining({ isApproved: false })
+      );
+    });
+
+    it('(TGB-117) «Отклонить» отвечает один раз, даже если тело упало', async () => {
+      const { service, userService, observatoryPostRepository } = setup();
+      service.onModuleInit();
+      userService.checkPermission.mockReturnValue(true);
+      observatoryPostRepository.update.mockRejectedValue(new Error('db down'));
+      const ctx = makeCtx();
+
+      await expect(
+        handlerFor(ObservatoryPostMenusEnum.POST_MENU, 'Отклонить')(ctx)
+      ).rejects.toThrow('db down');
+
+      expect(ctx.answerCallbackQuery).toHaveBeenCalledTimes(1);
     });
 
     it('кнопки публикации вызывают publishPost с разными режимами', async () => {
@@ -435,17 +472,35 @@ describe('ObservatoryService', () => {
       ]);
       expect(backSpy).toHaveBeenCalledWith(ObservatoryPostMenusEnum.POST_MENU);
     });
+
+    it('(TGB-117) кнопка публикации отвечает на колбэк ровно один раз, даже если публикация упала', async () => {
+      const { service, userService, bot } = setup();
+      service.onModuleInit();
+      userService.checkPermission.mockReturnValue(true);
+      jest.spyOn(bot.api, 'copyMessage').mockRejectedValue(new Error('boom'));
+      const ctx = makeCtx();
+
+      await expect(
+        handlerFor(ObservatoryPostMenusEnum.OBSERVATORY_PUBLICATION, 'Сейчас')(ctx)
+      ).rejects.toThrow('boom');
+
+      expect(ctx.answerCallbackQuery).toHaveBeenCalledTimes(1);
+      expect(ctx.answerCallbackQuery).toHaveBeenCalledWith();
+    });
   });
 
   describe('publishPost', () => {
-    it('не публикует без права на публикацию', async () => {
+    it('не публикует без права на публикацию и отвечает на колбэк', async () => {
       const { service, userService } = setup();
       userService.checkPermission.mockReturnValue(false);
       const publishSpy = jest.spyOn(service as any, 'publishWithContext');
+      const ctx = makeCtx();
 
-      await (service as any).publishPost(makeCtx(), PublicationModesEnum.NOW_SILENT);
+      await (service as any).publishPost(ctx, PublicationModesEnum.NOW_SILENT);
 
       expect(publishSpy).not.toHaveBeenCalled();
+      expect(ctx.answerCallbackQuery).toHaveBeenCalledTimes(1);
+      expect(ctx.answerCallbackQuery).toHaveBeenCalledWith('Нет прав');
     });
 
     it('собирает контекст публикации и делегирует в publishWithContext', async () => {
@@ -468,7 +523,109 @@ describe('ObservatoryService', () => {
         processedByModerator: 5,
         isUserPost: false,
         hash: 'hash',
+        source: 'button',
       });
+      // Ровно один ответ на колбэк, до медленной публикации.
+      expect(ctx.answerCallbackQuery).toHaveBeenCalledTimes(1);
+      expect(ctx.answerCallbackQuery).toHaveBeenCalledWith();
+    });
+
+    it('(TGB-117) отказывает, если запись сетки уже опубликована', async () => {
+      const { service, userService, postSchedulerService } = setup();
+      userService.checkPermission.mockReturnValue(true);
+      postSchedulerService.isRequestMessagePublished.mockResolvedValue(true);
+      const publishSpy = jest.spyOn(service as any, 'publishWithContext');
+      const ctx = makeCtx();
+
+      await (service as any).publishPost(ctx, PublicationModesEnum.NEXT_NIGHT);
+
+      expect(postSchedulerService.isRequestMessagePublished).toHaveBeenCalledWith(11);
+      expect(publishSpy).not.toHaveBeenCalled();
+      expect(ctx.answerCallbackQuery).toHaveBeenCalledTimes(1);
+      expect(ctx.answerCallbackQuery).toHaveBeenCalledWith({
+        text: 'Уже опубликовано',
+        show_alert: false,
+      });
+      expect(Logger.prototype.log).toHaveBeenCalledWith(
+        'publish source=button card=11 claim=already-claimed outcome=skipped:already-published'
+      );
+    });
+
+    it('(TGB-117) «Сейчас»: claim не достался — отказ без copyMessage', async () => {
+      const { service, userService, postSchedulerService } = setup();
+      userService.checkPermission.mockReturnValue(true);
+      postSchedulerService.claimManualPublish.mockResolvedValue('already-published');
+      const publishSpy = jest.spyOn(service as any, 'publishWithContext');
+      const ctx = makeCtx();
+
+      await (service as any).publishPost(ctx, PublicationModesEnum.NOW_SILENT);
+
+      expect(postSchedulerService.claimManualPublish).toHaveBeenCalledWith(11, 5, false);
+      expect(publishSpy).not.toHaveBeenCalled();
+      expect(ctx.answerCallbackQuery).toHaveBeenCalledTimes(1);
+      expect(ctx.answerCallbackQuery).toHaveBeenCalledWith({
+        text: 'Уже опубликовано',
+        show_alert: false,
+      });
+    });
+
+    it('(TGB-117) «Сейчас»: параллельный клик держит claim — «уже публикуется»', async () => {
+      const { service, userService, postSchedulerService } = setup();
+      userService.checkPermission.mockReturnValue(true);
+      postSchedulerService.claimManualPublish.mockResolvedValue('busy');
+      const publishSpy = jest.spyOn(service as any, 'publishWithContext');
+      const ctx = makeCtx();
+
+      await (service as any).publishPost(ctx, PublicationModesEnum.NOW_SILENT);
+
+      expect(publishSpy).not.toHaveBeenCalled();
+      expect(ctx.answerCallbackQuery).toHaveBeenCalledWith({
+        text: 'Уже публикуется',
+        show_alert: false,
+      });
+      expect(Logger.prototype.log).toHaveBeenCalledWith(
+        'publish source=button card=11 claim=already-claimed outcome=skipped:busy'
+      );
+    });
+
+    it('(TGB-117) отказывает, если у карточки уже есть publishedMessageId', async () => {
+      const { service, userService, observatoryPostRepository } = setup();
+      userService.checkPermission.mockReturnValue(true);
+      observatoryPostRepository.findOne.mockResolvedValue({ publishedMessageId: 20823 });
+      const publishSpy = jest.spyOn(service as any, 'publishWithContext');
+      const ctx = makeCtx();
+
+      await (service as any).publishPost(ctx, PublicationModesEnum.NEXT_NIGHT);
+
+      expect(observatoryPostRepository.findOne).toHaveBeenCalledWith({
+        where: { requestChannelMessageId: 11 },
+      });
+      expect(publishSpy).not.toHaveBeenCalled();
+      expect(ctx.answerCallbackQuery).toHaveBeenCalledWith({
+        text: 'Уже опубликовано',
+        show_alert: false,
+      });
+    });
+
+    it('публикует, если карточка ещё не опубликована', async () => {
+      const {
+        service,
+        userService,
+        observatoryPostRepository,
+        deduplicationService,
+        postSchedulerService,
+      } = setup();
+      userService.checkPermission.mockReturnValue(true);
+      observatoryPostRepository.findOne.mockResolvedValue({ publishedMessageId: null });
+      deduplicationService.getPostImageHash.mockResolvedValue('hash');
+      const publishSpy = jest
+        .spyOn(service as any, 'publishWithContext')
+        .mockResolvedValue(20823);
+
+      await (service as any).publishPost(makeCtx(), PublicationModesEnum.NOW_SILENT);
+
+      expect(postSchedulerService.claimManualPublish).toHaveBeenCalledTimes(1);
+      expect(publishSpy).toHaveBeenCalledTimes(1);
     });
 
     it('падает на некорректном callbackQuery без message', async () => {
@@ -563,8 +720,7 @@ describe('ObservatoryService', () => {
       expect(deduplicationService.createPublishedPostHash).toHaveBeenCalledWith('hash', 55);
     });
 
-    it('для ночного кринжа берёт ссылку кринж-канала и обновляет его репозиторий', async () => {
-      const {
+    it('для ночного кринжа берёт ссылку кринж-канала и обновляет его репозиторий', async () => {      const {
         service,
         bot,
         settingsService,
@@ -600,6 +756,109 @@ describe('ObservatoryService', () => {
       expect(observatoryPostRepository.update).toHaveBeenCalledWith(
         { requestChannelMessageId: 11 },
         expect.objectContaining({ publishedMessageId: 66, isApproved: true })
+      );
+    });
+
+    it('(TGB-117) «message is not modified» не валит публикацию, хеш всё равно пишется', async () => {
+      const { service, bot, settingsService, userService, deduplicationService, observatoryPostRepository } =
+        setup();
+      bot.api.copyMessage.mockResolvedValue({ message_id: 55 });
+      settingsService.channelHtmlLinkIfPrivate.mockResolvedValue('<a>канал</a>');
+      settingsService.channelLinkUrl.mockResolvedValue('https://channel');
+      userService.repository.findOne.mockResolvedValue({ username: 'moder' });
+      bot.api.editMessageReplyMarkup.mockRejectedValue(
+        new GrammyError(
+          "Call to 'editMessageReplyMarkup' failed!",
+          { ok: false, error_code: 400, description: 'Bad Request: message is not modified: specified new message content and reply markup are exactly the same' },
+          'editMessageReplyMarkup',
+          {}
+        )
+      );
+
+      await expect(
+        service.onPublishNow({
+          mode: PublicationModesEnum.NOW_SILENT,
+          requestChannelMessageId: 11,
+          processedByModerator: 5,
+          isUserPost: false,
+          hash: 'hash',
+        })
+      ).resolves.toBe(55);
+
+      expect(observatoryPostRepository.update).toHaveBeenCalledWith(
+        { requestChannelMessageId: 11 },
+        expect.objectContaining({ publishedMessageId: 55 })
+      );
+      expect(deduplicationService.createPublishedPostHash).toHaveBeenCalledWith('hash', 55);
+      expect(bot.api.editMessageReplyMarkup).toHaveBeenCalledTimes(1);
+    });
+
+    it('(TGB-117) прочие ошибки правки клавиатуры пробрасываются, хеш уже записан', async () => {
+      const { service, bot, settingsService, userService, deduplicationService } = setup();
+      bot.api.copyMessage.mockResolvedValue({ message_id: 55 });
+      settingsService.channelHtmlLinkIfPrivate.mockResolvedValue('<a>канал</a>');
+      settingsService.channelLinkUrl.mockResolvedValue('https://channel');
+      userService.repository.findOne.mockResolvedValue({ username: 'moder' });
+      bot.api.editMessageReplyMarkup.mockRejectedValue(
+        new GrammyError(
+          "Call to 'editMessageReplyMarkup' failed!",
+          { ok: false, error_code: 400, description: 'Bad Request: message to edit not found' },
+          'editMessageReplyMarkup',
+          {}
+        )
+      );
+
+      await expect(
+        service.onPublishNow({
+          mode: PublicationModesEnum.NOW_SILENT,
+          requestChannelMessageId: 11,
+          processedByModerator: 5,
+          isUserPost: false,
+          hash: 'hash',
+        })
+      ).rejects.toThrow(GrammyError);
+
+      expect(deduplicationService.createPublishedPostHash).toHaveBeenCalledWith('hash', 55);
+    });
+
+    it('пишет одну строку лога на попытку публикации (source/card/claim/outcome)', async () => {
+      const { service, bot, settingsService, userService } = setup();
+      bot.api.copyMessage.mockResolvedValue({ message_id: 20823 });
+      settingsService.channelHtmlLinkIfPrivate.mockResolvedValue('<a>канал</a>');
+      settingsService.channelLinkUrl.mockResolvedValue('https://channel');
+      userService.repository.findOne.mockResolvedValue({ username: 'moder' });
+
+      await service.onPublishNow({
+        mode: PublicationModesEnum.NOW_SILENT,
+        requestChannelMessageId: 220490,
+        processedByModerator: 5,
+        isUserPost: false,
+        hash: 'hash',
+        source: 'cron',
+      });
+
+      expect(Logger.prototype.log).toHaveBeenCalledWith(
+        'publish source=cron card=220490 claim=claimed outcome=sent:20823'
+      );
+    });
+
+    it('для ручной публикации пишет source=button и claim=claimed', async () => {
+      const { service, bot, settingsService, userService } = setup();
+      bot.api.copyMessage.mockResolvedValue({ message_id: 20824 });
+      settingsService.channelHtmlLinkIfPrivate.mockResolvedValue('<a>канал</a>');
+      settingsService.channelLinkUrl.mockResolvedValue('https://channel');
+      userService.repository.findOne.mockResolvedValue({ username: 'moder' });
+
+      await service.onPublishNow({
+        mode: PublicationModesEnum.NOW_SILENT,
+        requestChannelMessageId: 220491,
+        processedByModerator: 5,
+        isUserPost: false,
+        hash: 'hash',
+      });
+
+      expect(Logger.prototype.log).toHaveBeenCalledWith(
+        'publish source=button card=220491 claim=claimed outcome=sent:20824'
       );
     });
   });

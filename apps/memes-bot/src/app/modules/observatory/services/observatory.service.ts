@@ -30,6 +30,7 @@ import { hasSimilarDistance } from '../../post-management/services/duplicate-pol
 import { PUBLISHED_DUPLICATE_SIMILARITY } from '../../../shared/constants/duplicate-similarity';
 import { ObservatoryPostFormatter } from './observatory-post-formatter';
 import { ObservatoryPublishPolicy } from './observatory-publish-policy';
+import { isMessageNotModifiedError } from '../../../shared/grammy/benign-error';
 
 @Injectable()
 export class ObservatoryService implements OnModuleInit {
@@ -210,9 +211,11 @@ export class ObservatoryService implements OnModuleInit {
         }
       })
       .text(ObservatoryPostFormatter.REJECT_LABEL, async (ctx) => {
-        if (this.userService.checkPermission(ctx, UserPermissionEnum.IS_BASE_MODERATOR)) {
-          await this.rejectObserverPost(ctx);
+        if (!this.userService.checkPermission(ctx, UserPermissionEnum.IS_BASE_MODERATOR)) {
+          await ctx.answerCallbackQuery('Нет прав');
+          return;
         }
+        await this.rejectObserverPost(ctx);
       })
       .row();
 
@@ -254,8 +257,38 @@ export class ObservatoryService implements OnModuleInit {
 
   private async publishPost(ctx: BotContext, mode: PublicationModesEnum): Promise<void> {
     if (!this.userService.checkPermission(ctx, UserPermissionEnum.ALLOW_PUBLISH_TO_CHANNEL)) {
+      await ctx.answerCallbackQuery('Нет прав');
       return;
     }
+
+    // Если `callbackQuery.message` в апдейте нет — это битый апдейт, и он
+    // должен падать так же, как падал до появления защиты от повтора.
+    const cardMessageId = ctx.callbackQuery.message.message_id;
+
+    // Повторный клик по уже опубликованной карточке не должен отправить копию
+    // в канал (TGB-117): cron клеймит запись сетки, ручной клик проверяет
+    // статус сам.
+    if (await this.isCardAlreadyPublished(cardMessageId)) {
+      await this.answerAlreadyPublished(ctx, cardMessageId, 'already-published');
+      return;
+    }
+
+    // Немедленную публикацию забираем атомарно: два одновременных клика (или
+    // клик во время cron) не должны отправить две копии.
+    if (mode === PublicationModesEnum.NOW_SILENT) {
+      const claim = await this.postSchedulerService.claimManualPublish(
+        cardMessageId,
+        ctx.callbackQuery.from.id,
+        false
+      );
+      if (claim !== 'claimed') {
+        await this.answerAlreadyPublished(ctx, cardMessageId, claim);
+        return;
+      }
+    }
+
+    // Отвечаем до публикации: спиннер не должен висеть на copyMessage/правках.
+    await ctx.answerCallbackQuery();
 
     const imageHash = await this.deduplicationService.getPostImageHash(
       ctx?.callbackQuery?.message?.photo
@@ -264,12 +297,58 @@ export class ObservatoryService implements OnModuleInit {
     // он не переносится (к публикуемому посту добавляется только ссылка на канал).
     const publishContext: ScheduledPostContextInterface = {
       mode,
-      requestChannelMessageId: ctx.callbackQuery.message.message_id,
+      requestChannelMessageId: cardMessageId,
       processedByModerator: ctx.callbackQuery.from.id,
       isUserPost: false,
       hash: imageHash,
+      source: 'button',
     };
-    return this.publishWithContext(mode, publishContext);
+    await this.publishWithContext(mode, publishContext);
+  }
+
+  /**
+   * Отказ на повторную/параллельную публикацию карточки.
+   *
+   * @param ctx контекст нажатия кнопки
+   * @param cardMessageId id карточки в канале предложки
+   * @param outcome результат захвата: `busy` — публикует параллельный клик
+   */
+  private async answerAlreadyPublished(
+    ctx: BotContext,
+    cardMessageId: number,
+    outcome: 'already-published' | 'busy'
+  ): Promise<void> {
+    const busy = outcome === 'busy';
+    await ctx.answerCallbackQuery({
+      text: busy
+        ? ObservatoryPostFormatter.ALREADY_PUBLISHING_TEXT
+        : ObservatoryPostFormatter.ALREADY_PUBLISHED_TEXT,
+      show_alert: false,
+    });
+    this.logger.log(
+      `publish source=button card=${cardMessageId} claim=already-claimed ` +
+        `outcome=skipped:${busy ? 'busy' : 'already-published'}`
+    );
+  }
+
+  /**
+   * Карточка предложки уже опубликована — повторная публикация не нужна.
+   *
+   * Смотрим два независимых признака: запись сетки, забранную cron'ом
+   * (`isPublished`), и `publishedMessageId` самой карточки (проставляется
+   * сразу после `copyMessage`).
+   *
+   * @param cardMessageId id сообщения карточки в канале предложки
+   * @returns `true`, если пост уже ушёл в канал
+   */
+  private async isCardAlreadyPublished(cardMessageId: number): Promise<boolean> {
+    const [scheduled, post] = await Promise.all([
+      this.postSchedulerService.isRequestMessagePublished(cardMessageId),
+      this.observatoryPostRepository.findOne({
+        where: { requestChannelMessageId: cardMessageId },
+      }),
+    ]);
+    return scheduled || post?.publishedMessageId != null;
   }
 
   /**
@@ -282,7 +361,7 @@ export class ObservatoryService implements OnModuleInit {
     return this.publishPolicy.run(mode, publishContext);
   }
 
-  public async onPublishNow(publishContext: ScheduledPostContextInterface): Promise<void> {
+  public async onPublishNow(publishContext: ScheduledPostContextInterface): Promise<number> {
     const channelHtmlLink =
       publishContext.mode === PublicationModesEnum.NIGHT_CRINGE
         ? await this.settingsService.cringeChannelHtmlLink()
@@ -310,6 +389,14 @@ export class ObservatoryService implements OnModuleInit {
     );
     metrics.observatory.published.inc({ mode: publishContext.mode });
 
+    // Хеш пишем сразу после появления поста в канале и независимо от
+    // косметики ниже: иначе сбой правки клавиатуры оставлял пост без записи
+    // дедупликации и открывал дорогу повторной публикации (TGB-117).
+    await this.deduplicationService.createPublishedPostHash(
+      publishContext.hash,
+      publishedMessage.message_id
+    );
+
     const user = await this.userService.repository.findOne({
       where: { id: publishContext.processedByModerator },
     });
@@ -317,11 +404,19 @@ export class ObservatoryService implements OnModuleInit {
     const url = await this.settingsService.channelLinkUrl();
     const inlineKeyboard = this.formatter.publishedKeyboard(user.username, url);
 
-    await this.bot.api.editMessageReplyMarkup(
-      this.baseConfigService.userRequestMemeChannel,
-      publishContext.requestChannelMessageId,
-      { reply_markup: inlineKeyboard }
-    );
+    try {
+      await this.bot.api.editMessageReplyMarkup(
+        this.baseConfigService.userRequestMemeChannel,
+        publishContext.requestChannelMessageId,
+        { reply_markup: inlineKeyboard }
+      );
+    } catch (error) {
+      // «message is not modified» = клавиатура уже целевая; пост опубликован.
+      // Любая другая ошибка правки остаётся настоящей ошибкой.
+      if (!isMessageNotModifiedError(error)) {
+        throw error;
+      }
+    }
 
     if (publishContext.mode == PublicationModesEnum.NIGHT_CRINGE) {
       await this.cringeManagementService.repository.update(
@@ -330,10 +425,13 @@ export class ObservatoryService implements OnModuleInit {
       );
     }
 
-    await this.deduplicationService.createPublishedPostHash(
-      publishContext.hash,
-      publishedMessage.message_id
+    this.logger.log(
+      `publish source=${publishContext.source ?? 'button'} ` +
+        `card=${publishContext.requestChannelMessageId} claim=claimed ` +
+        `outcome=sent:${publishedMessage.message_id}`
     );
+
+    return publishedMessage.message_id;
   }
 
   /**
@@ -417,6 +515,8 @@ export class ObservatoryService implements OnModuleInit {
   }
 
   private async rejectObserverPost(ctx: BotContext): Promise<void> {
+    // Отвечаем первым действием: спиннер не должен ждать правок и БД.
+    await ctx.answerCallbackQuery('Отклоняю');
     metrics.observatory.rejected.inc();
     await this.observatoryPostRepository.update(
       { requestChannelMessageId: ctx.callbackQuery.message.message_id },
@@ -496,6 +596,8 @@ export class ObservatoryService implements OnModuleInit {
       if (!allowed(ctx)) return ctx.answerCallbackQuery('Нет прав');
       const id = Number(ctx.match?.[1]);
       const removed = await this.postSchedulerService.removeByRequestMessageId(id);
+      // Отвечаем до сетевой правки клавиатуры, чтобы спиннер не висел.
+      await ctx.answerCallbackQuery(removed ? 'Снято с публикации' : 'Уже снято');
       if (removed) {
         await this.cringeManagementService.repository
           .delete({ requestChannelMessageId: id })
@@ -504,7 +606,6 @@ export class ObservatoryService implements OnModuleInit {
       await this.bot.api.editMessageReplyMarkup(channel, id, {
         reply_markup: await renderMenu(this.observatoryPostMenu, ctx),
       });
-      await ctx.answerCallbackQuery(removed ? 'Снято с публикации' : 'Уже снято');
     });
   }
 }

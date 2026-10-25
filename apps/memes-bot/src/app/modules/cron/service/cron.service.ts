@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron, Interval } from '@nestjs/schedule';
+import { GrammyError } from 'grammy';
 import {
   PostSchedulerService,
   ScheduledPostContextInterface,
@@ -69,32 +70,64 @@ export class CronService {
     if (!post) {
       return;
     }
-    // Пост могли снять, пока шла выборка — не публикуем «отменённое».
-    const stillScheduled = await this.postSchedulerService.getScheduledPostById(post.id);
-    if (!stillScheduled || stillScheduled.isPublished) {
+
+    // Атомарный claim вместо «read → publish → mark»: только один обработчик
+    // переводит пост в `isPublished`, остальные видят `false` и не публикуют.
+    // Fail closed: claim не снимается, если публикация упала — дубликат в
+    // канале хуже пропущенного поста (TGB-117).
+    const claimed = await this.postSchedulerService.claimPostForPublish(post.id);
+    if (!claimed) {
+      this.logger.log(
+        `publish source=cron sched=${post.id} card=${post.requestChannelMessageId} claim=already-claimed outcome=skipped`
+      );
       return;
     }
 
-    const publishContext: ScheduledPostContextInterface = {
-      mode: post.mode,
-      requestChannelMessageId: post.requestChannelMessageId,
-      processedByModerator: post.processedByModerator.id,
-      caption: post.caption,
-      isUserPost: post.isUserPost,
-      hash: post.hash,
-    };
-
     try {
+      // Контекст собираем внутри try: битая запись (нет модератора) не должна
+      // сжечь claim без следа в логе.
+      const publishContext: ScheduledPostContextInterface = {
+        mode: post.mode,
+        requestChannelMessageId: post.requestChannelMessageId,
+        processedByModerator: post.processedByModerator.id,
+        caption: post.caption,
+        isUserPost: post.isUserPost,
+        hash: post.hash,
+        source: 'cron',
+      };
+
       if (post.isUserPost) {
         await this.userPostManagementService.onPublishNow(publishContext);
       } else {
         await this.observatoryService.onPublishNow(publishContext);
       }
     } catch (e) {
-      console.error('error while publish scheduled post', e);
+      // Claim намеренно не снимаем: повторная публикация того же поста хуже
+      // пропуска. warn — оператору нужно найти и снять claim вручную
+      // (TGB-117: UPDATE post_scheduler SET isPublished=false WHERE
+      // requestChannelMessageId=<card>). В лог — только класс/описание ошибки.
+      this.logger.warn(
+        `publish source=cron sched=${post.id} card=${post.requestChannelMessageId} claim=claimed ` +
+          `outcome=error:${CronService.errorLabel(e)}`
+      );
     }
+  }
 
-    await this.postSchedulerService.markPostAsPublished(post.id);
+  /**
+   * Короткая метка ошибки публикации для лога.
+   *
+   * Для `GrammyError` берём только `description` от Telegram (без подписей и
+   * тел постов), для остальных — имя класса: сообщения БД могут содержать
+   * параметры запроса.
+   *
+   * @param error пойманная ошибка публикации
+   * @returns метка класса/описания ошибки
+   */
+  private static errorLabel(error: unknown): string {
+    if (error instanceof GrammyError) {
+      return `${error.name}:${error.description}`;
+    }
+    return error instanceof Error ? error.name : 'UnknownError';
   }
 
   /**

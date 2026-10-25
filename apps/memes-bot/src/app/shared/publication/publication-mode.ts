@@ -25,9 +25,12 @@ export type PublicationModeSlot = 'now' | 'scheduled' | 'nightCringe';
 /**
  * Обработчик публикации для конкретного слота.
  *
+ * Возвращаемое значение не фиксируется: слот `now` отдаёт id сообщения в
+ * канале (для логов/дедупликации), слоты расписания — ничего.
+ *
  * @typeParam Context контекст публикации (например `ScheduledPostContextInterface`)
  */
-export type PublicationModeHandler<Context> = (context: Context) => Promise<void> | void;
+export type PublicationModeHandler<Context> = (context: Context) => Promise<unknown> | void;
 
 /**
  * Набор обработчиков публикации по слотам.
@@ -89,7 +92,7 @@ export function runPublicationMode<Context>(
   mode: PublicationModesEnum,
   handlers: PublicationModeHandlers<Context>,
   context: Context
-): Promise<void> | void {
+): Promise<unknown> | void {
   switch (resolvePublicationModeSlot(mode)) {
     case 'now':
       return handlers.now(context);

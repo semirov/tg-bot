@@ -9,6 +9,7 @@ jest.mock('axios', () => ({
 
 import { Logger } from '@nestjs/common';
 import { Menu } from '@grammyjs/menu';
+import { GrammyError } from 'grammy';
 import { UserPostManagementService } from './user-post-management.service';
 import { PublicationModesEnum } from './constants/publication-modes.enum';
 import { PostModerationMenusEnum } from './constants/post-moderation-menus.enum';
@@ -99,6 +100,8 @@ function createHarness() {
     addPostToSchedule: jest.fn().mockResolvedValue(new Date('2026-01-01T10:00:00Z')),
     findByRequestMessageId: jest.fn().mockResolvedValue(null),
     removeByRequestMessageId: jest.fn().mockResolvedValue(1),
+    isRequestMessagePublished: jest.fn().mockResolvedValue(false),
+    claimManualPublish: jest.fn().mockResolvedValue('claimed'),
   };
   const settingsService: any = {
     channelBestLinkUrl: jest.fn().mockResolvedValue('https://best'),
@@ -1246,6 +1249,7 @@ describe('UserPostManagementService', () => {
         expect.objectContaining({ isApproved: true, processedByModerator: { id: 7 } })
       );
       expect(ctx.menu.nav).toHaveBeenCalledWith(PostModerationMenusEnum.APPROVAL);
+      expect(ctx.answerCallbackQuery).toHaveBeenCalledTimes(1);
     });
 
     it('«Одобрить» без прав ничего не делает', async () => {
@@ -1279,6 +1283,7 @@ describe('UserPostManagementService', () => {
         'Мы не можем такое опубликовать, твой пост отклонен'
       );
       expect(ctx.menu.nav).toHaveBeenCalledWith(PostModerationMenusEnum.REJECT);
+      expect(ctx.answerCallbackQuery).toHaveBeenCalledTimes(1);
     });
 
     it('«Отклонить» без фото не пишет fileUniqueId', async () => {
@@ -1552,7 +1557,7 @@ describe('UserPostManagementService', () => {
   });
 
   describe('onPublishActions / публикация', () => {
-    it('без права публикации сразу выходит', async () => {
+    it('без права публикации сразу выходит и отвечает на колбэк', async () => {
       const h = createHarness();
       h.userService.checkPermission.mockReturnValue(false);
       const ctx = makeCtx();
@@ -1560,6 +1565,105 @@ describe('UserPostManagementService', () => {
       await h.service.onPublishActions(ctx, PublicationModesEnum.NOW_SILENT);
 
       expect(ctx.unpinChatMessage).not.toHaveBeenCalled();
+      expect(ctx.answerCallbackQuery).toHaveBeenCalledWith('Нет прав');
+    });
+
+    it('(TGB-117) отказывает, если запись сетки уже опубликована', async () => {
+      const h = createHarness();
+      h.postSchedulerService.isRequestMessagePublished.mockResolvedValue(true);
+      const ctx = makeCtx();
+
+      await h.service.onPublishActions(ctx, PublicationModesEnum.NEXT_MORNING);
+
+      expect(h.postSchedulerService.isRequestMessagePublished).toHaveBeenCalledWith(100);
+      expect(h.bot.api.copyMessage).not.toHaveBeenCalled();
+      expect(h.postSchedulerService.addPostToSchedule).not.toHaveBeenCalled();
+      expect(ctx.unpinChatMessage).not.toHaveBeenCalled();
+      expect(ctx.answerCallbackQuery).toHaveBeenCalledTimes(1);
+      expect(ctx.answerCallbackQuery).toHaveBeenCalledWith({
+        text: 'Уже опубликовано',
+        show_alert: false,
+      });
+      expect(Logger.prototype.log).toHaveBeenCalledWith(
+        'publish source=button card=100 claim=already-claimed outcome=skipped:already-published'
+      );
+    });
+
+    it('(TGB-117) «Сейчас»: claim не достался — отказ без copyMessage', async () => {
+      const h = createHarness();
+      h.postSchedulerService.claimManualPublish.mockResolvedValue('already-published');
+      const ctx = makeCtx();
+
+      await h.service.onPublishActions(ctx, PublicationModesEnum.NOW_SILENT);
+
+      expect(h.postSchedulerService.claimManualPublish).toHaveBeenCalledWith(100, 7, true);
+      expect(h.bot.api.copyMessage).not.toHaveBeenCalled();
+      expect(ctx.answerCallbackQuery).toHaveBeenCalledWith({
+        text: 'Уже опубликовано',
+        show_alert: false,
+      });
+    });
+
+    it('(TGB-117) «Сейчас»: параллельный клик держит claim — «уже публикуется»', async () => {
+      const h = createHarness();
+      h.postSchedulerService.claimManualPublish.mockResolvedValue('busy');
+      const ctx = makeCtx();
+
+      await h.service.onPublishActions(ctx, PublicationModesEnum.NOW_SILENT);
+
+      expect(h.bot.api.copyMessage).not.toHaveBeenCalled();
+      expect(ctx.answerCallbackQuery).toHaveBeenCalledWith({
+        text: 'Уже публикуется',
+        show_alert: false,
+      });
+      expect(Logger.prototype.log).toHaveBeenCalledWith(
+        'publish source=button card=100 claim=already-claimed outcome=skipped:busy'
+      );
+    });
+
+    it('(TGB-117) отказывает, если заявка уже помечена опубликованной', async () => {
+      const h = createHarness();
+      h.userRequestRepo.findOne.mockResolvedValue({ id: 5, isPublished: true });
+      const ctx = makeCtx();
+
+      await h.service.onPublishActions(ctx, PublicationModesEnum.NOW_SILENT);
+
+      expect(h.userRequestRepo.findOne).toHaveBeenCalledWith({
+        where: { userRequestChannelMessageId: 100 },
+      });
+      expect(h.bot.api.copyMessage).not.toHaveBeenCalled();
+      expect(ctx.answerCallbackQuery).toHaveBeenCalledWith({
+        text: 'Уже опубликовано',
+        show_alert: false,
+      });
+    });
+
+    it('(TGB-117) отказывает, если у заявки уже есть publishedMessageId', async () => {
+      const h = createHarness();
+      h.userRequestRepo.findOne.mockResolvedValue({ id: 5, publishedMessageId: 20823 });
+      const ctx = makeCtx();
+
+      await h.service.onPublishActions(ctx, PublicationModesEnum.NOW_SILENT);
+
+      expect(h.bot.api.copyMessage).not.toHaveBeenCalled();
+      expect(ctx.answerCallbackQuery).toHaveBeenCalledWith({
+        text: 'Уже опубликовано',
+        show_alert: false,
+      });
+    });
+
+    it('(TGB-117) два одновременных клика публикуют карточку ровно один раз', async () => {
+      const h = createHarness();
+      h.userRequestRepo.findOne.mockResolvedValue({ id: 5, user: { id: 42 } });
+      const outcomes = ['claimed', 'already-published'];
+      h.postSchedulerService.claimManualPublish.mockImplementation(async () => outcomes.shift());
+
+      await Promise.all([
+        h.service.onPublishActions(makeCtx(), PublicationModesEnum.NOW_SILENT),
+        h.service.onPublishActions(makeCtx(), PublicationModesEnum.NOW_SILENT),
+      ]);
+
+      expect(h.bot.api.copyMessage).toHaveBeenCalledTimes(1);
     });
 
     it('NOW_SILENT публикует немедленно', async () => {
@@ -1733,8 +1837,7 @@ describe('UserPostManagementService', () => {
       expect(h.deduplicationService.createPublishedPostHash).toHaveBeenCalledWith('hash', 3);
     });
 
-    it('publishNightCringeScheduled вставляет запись и делегирует в расписание', async () => {
-      const h = createHarness();
+    it('publishNightCringeScheduled вставляет запись и делегирует в расписание', async () => {      const h = createHarness();
       h.userRequestRepo.findOne.mockResolvedValue({
         id: 5,
         user: { id: 42 },
@@ -1747,6 +1850,65 @@ describe('UserPostManagementService', () => {
 
       expect(h.cringeManagementService.repository.insert).toHaveBeenCalled();
       expect(h.postSchedulerService.addPostToSchedule).toHaveBeenCalled();
+    });
+
+    it('(TGB-117) «message is not modified» не валит публикацию, хеш всё равно пишется', async () => {
+      const h = createHarness();
+      h.userRequestRepo.findOne.mockResolvedValue({ id: 5, user: { id: 42 } });
+      h.bot.api.editMessageReplyMarkup.mockRejectedValue(
+        new GrammyError(
+          "Call to 'editMessageReplyMarkup' failed!",
+          {
+            ok: false,
+            error_code: 400,
+            description: 'Bad Request: message is not modified',
+          },
+          'editMessageReplyMarkup',
+          {}
+        )
+      );
+
+      await expect(
+        h.service.onPublishNow(publishContext(PublicationModesEnum.NOW_SILENT))
+      ).resolves.toBe(3);
+
+      expect(h.deduplicationService.createPublishedPostHash).toHaveBeenCalledWith('hash', 3);
+      expect(h.userRequestRepo.update).toHaveBeenCalledWith(
+        { id: 5 },
+        expect.objectContaining({ isPublished: true, publishedMessageId: 3 })
+      );
+    });
+
+    it('(TGB-117) прочие ошибки правки клавиатуры пробрасываются, хеш уже записан', async () => {
+      const h = createHarness();
+      h.userRequestRepo.findOne.mockResolvedValue({ id: 5, user: { id: 42 } });
+      h.bot.api.editMessageReplyMarkup.mockRejectedValue(
+        new GrammyError(
+          "Call to 'editMessageReplyMarkup' failed!",
+          { ok: false, error_code: 400, description: 'Bad Request: message to edit not found' },
+          'editMessageReplyMarkup',
+          {}
+        )
+      );
+
+      await expect(
+        h.service.onPublishNow(publishContext(PublicationModesEnum.NOW_SILENT))
+      ).rejects.toThrow(GrammyError);
+
+      expect(h.deduplicationService.createPublishedPostHash).toHaveBeenCalledWith('hash', 3);
+    });
+
+    it('пишет одну строку лога на попытку публикации (source/card/claim/outcome)', async () => {
+      const h = createHarness();
+      h.userRequestRepo.findOne.mockResolvedValue({ id: 5, user: { id: 42 } });
+
+      await h.service.onPublishNow(
+        publishContext(PublicationModesEnum.NOW_SILENT, { source: 'cron' })
+      );
+
+      expect(Logger.prototype.log).toHaveBeenCalledWith(
+        'publish source=cron card=100 claim=claimed outcome=sent:3'
+      );
     });
   });
 
