@@ -14,6 +14,11 @@ import { UserPostManagementService } from './user-post-management.service';
 import { PublicationModesEnum } from './constants/publication-modes.enum';
 import { PostModerationMenusEnum } from './constants/post-moderation-menus.enum';
 import { UserPermissionEnum } from '../bot/constants/user-permission.enum';
+import {
+  isPublishInFlight,
+  publishActivityState,
+  resetPublishActivity,
+} from '../../shared/publication/publish-activity';
 
 const REQUEST_CHANNEL = -1001;
 const MEME_CHANNEL = -1002;
@@ -1909,6 +1914,44 @@ describe('UserPostManagementService', () => {
       expect(Logger.prototype.log).toHaveBeenCalledWith(
         'publish source=cron card=100 claim=claimed outcome=sent:3'
       );
+    });
+
+    it('(TGB-121) cron-публикация помечена «в полёте» и снята после успеха', async () => {
+      resetPublishActivity();
+      const h = createHarness();
+      h.userRequestRepo.findOne.mockResolvedValue({ id: 5, user: { id: 42 } });
+      let release: (value: { message_id: number }) => void = () => undefined;
+      h.bot.api.copyMessage.mockReturnValue(
+        new Promise((resolve) => {
+          release = resolve;
+        })
+      );
+
+      const promise = h.service.onPublishNow(
+        publishContext(PublicationModesEnum.NOW_SILENT, { source: 'cron' })
+      );
+
+      expect(isPublishInFlight()).toBe(true);
+      expect(publishActivityState().card).toBe(100);
+
+      release({ message_id: 3 });
+      await expect(promise).resolves.toBe(3);
+      expect(isPublishInFlight()).toBe(false);
+      expect(publishActivityState().lastOutcome).toBe('ok');
+    });
+
+    it('(TGB-121) снимает маркер «в полёте» и при ошибке публикации', async () => {
+      resetPublishActivity();
+      const h = createHarness();
+      h.userRequestRepo.findOne.mockResolvedValue({ id: 5, user: { id: 42 } });
+      h.bot.api.copyMessage.mockRejectedValue(new Error('tg down'));
+
+      await expect(
+        h.service.onPublishNow(publishContext(PublicationModesEnum.NOW_SILENT, { source: 'cron' }))
+      ).rejects.toThrow('tg down');
+
+      expect(isPublishInFlight()).toBe(false);
+      expect(publishActivityState().lastOutcome).toBe('error');
     });
   });
 

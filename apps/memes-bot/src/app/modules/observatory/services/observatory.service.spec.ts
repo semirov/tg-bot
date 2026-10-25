@@ -11,6 +11,11 @@ import { ObservatoryService } from './observatory.service';
 import { ObservatoryPostMenusEnum } from '../contsants/observatory-post-menus.enum';
 import { PublicationModesEnum } from '../../post-management/constants/publication-modes.enum';
 import { UserPermissionEnum } from '../../bot/constants/user-permission.enum';
+import {
+  isPublishInFlight,
+  publishActivityState,
+  resetPublishActivity,
+} from '../../../shared/publication/publish-activity';
 
 const flush = async () => {
   for (let index = 0; index < 25; index += 1) {
@@ -674,6 +679,38 @@ describe('ObservatoryService', () => {
   });
 
   describe('onPublishNow', () => {
+    it('(TGB-121) помечает публикацию «в полёте» на время отправки и снимает после', async () => {
+      resetPublishActivity();
+      const { service, bot, settingsService, userService, deduplicationService } = setup();
+      let release: (value: { message_id: number }) => void = () => undefined;
+      bot.api.copyMessage.mockReturnValue(
+        new Promise((resolve) => {
+          release = resolve;
+        })
+      );
+      settingsService.channelHtmlLinkIfPrivate.mockResolvedValue('<a>канал</a>');
+      settingsService.channelLinkUrl.mockResolvedValue('https://channel');
+      userService.repository.findOne.mockResolvedValue({ username: 'moder' });
+      deduplicationService.createPublishedPostHash.mockResolvedValue(undefined);
+
+      const promise = service.onPublishNow({
+        mode: PublicationModesEnum.NOW_SILENT,
+        requestChannelMessageId: 11,
+        processedByModerator: 5,
+        caption: 'текст',
+        isUserPost: false,
+        hash: 'hash',
+      });
+
+      expect(isPublishInFlight()).toBe(true);
+      expect(publishActivityState().card).toBe(11);
+
+      release({ message_id: 55 });
+      await expect(promise).resolves.toBe(55);
+      expect(isPublishInFlight()).toBe(false);
+      expect(publishActivityState().lastOutcome).toBe('ok');
+    });
+
     it('публикует сейчас с обычной ссылкой на канал', async () => {
       const {
         service,

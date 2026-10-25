@@ -26,6 +26,7 @@ import { buildTelegramFileUrl, extractTelegramFileId } from '../../../shared/pub
 import { renderMenu } from '../../../shared/grammy/render-menu';
 import { buildPostUrl, TelegramPostSource } from '../../../shared/publication/telegram-link';
 import { sendPostToMattermost } from '../../../shared/publication/mattermost-post';
+import { trackPublishActivity } from '../../../shared/publication/publish-activity';
 import { hasSimilarDistance } from '../../post-management/services/duplicate-policy';
 import { PUBLISHED_DUPLICATE_SIMILARITY } from '../../../shared/constants/duplicate-similarity';
 import { ObservatoryPostFormatter } from './observatory-post-formatter';
@@ -361,7 +362,21 @@ export class ObservatoryService implements OnModuleInit {
     return this.publishPolicy.run(mode, publishContext);
   }
 
-  public async onPublishNow(publishContext: ScheduledPostContextInterface): Promise<number> {
+  /**
+   * Публикует пост предложки в канал — общий вход для кнопки и cron (TGB-121).
+   *
+   * Пока идёт отправка, публикация помечена как «в полёте»: memory-watchdog
+   * пишет это в строку своего exit'а и откладывает RSS-exit до
+   * `WATCHDOG_PUBLISH_GRACE_MS`, чтобы не бросить claim без отправленного поста.
+   * Маркер снимается в `finally` (успех и ошибка).
+   */
+  public onPublishNow(publishContext: ScheduledPostContextInterface): Promise<number> {
+    return trackPublishActivity(publishContext.requestChannelMessageId, () =>
+      this.publishNow(publishContext)
+    );
+  }
+
+  private async publishNow(publishContext: ScheduledPostContextInterface): Promise<number> {
     const channelHtmlLink =
       publishContext.mode === PublicationModesEnum.NIGHT_CRINGE
         ? await this.settingsService.cringeChannelHtmlLink()

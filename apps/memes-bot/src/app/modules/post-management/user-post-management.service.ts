@@ -24,6 +24,7 @@ import { resolveAdminReply } from './utils/admin-reply';
 import { buildTelegramFileUrl, extractTelegramFileId } from '../../shared/publication/media-url';
 import { renderMenu } from '../../shared/grammy/render-menu';
 import { sendPostToMattermost } from '../../shared/publication/mattermost-post';
+import { trackPublishActivity } from '../../shared/publication/publish-activity';
 import { runPublicationMode } from '../../shared/publication/publication-mode';
 import {
   DuplicatePolicy,
@@ -1206,7 +1207,21 @@ export class UserPostManagementService implements OnModuleInit {
     });
   }
 
-  public async onPublishNow(publishContext: ScheduledPostContextInterface): Promise<number> {
+  /**
+   * Публикует карточку в канал — общий вход для кнопки и cron (TGB-121).
+   *
+   * Пока идёт отправка, публикация помечена как «в полёте»: memory-watchdog
+   * пишет это в строку своего exit'а и откладывает RSS-exit до
+   * `WATCHDOG_PUBLISH_GRACE_MS`, чтобы не бросить claim без отправленного поста.
+   * Маркер снимается в `finally` (успех и ошибка).
+   */
+  public onPublishNow(publishContext: ScheduledPostContextInterface): Promise<number> {
+    return trackPublishActivity(publishContext.requestChannelMessageId, () =>
+      this.publishNow(publishContext)
+    );
+  }
+
+  private async publishNow(publishContext: ScheduledPostContextInterface): Promise<number> {
     const message = await this.userRequestService.repository.findOne({
       relations: { user: true },
       where: {

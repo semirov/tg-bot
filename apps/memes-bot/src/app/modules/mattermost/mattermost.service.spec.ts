@@ -126,6 +126,18 @@ describe('MattermostService', () => {
       );
     });
 
+    it('не копирует уже-Buffer ответ (off-heap, TGB-121)', async () => {
+      const payload = Buffer.from('raw-bytes');
+      mockGet.mockResolvedValueOnce({ data: payload, headers: { 'content-type': 'image/png' } });
+      mockPost.mockResolvedValueOnce({ data: {} }).mockResolvedValueOnce({ data: {} });
+      const service = makeService();
+
+      await service.sendPostWithFile({ message: 'мем', fileUrl: 'https://tg/file', fileName: 'x' });
+
+      const filesAppend = appendSpy.mock.calls.find((call) => call[0] === 'files')!;
+      expect(filesAppend[1]).toBe(payload);
+    });
+
     it('отсутствие file_infos в ответе загрузки даёт пустой файловый список', async () => {
       mockGet.mockResolvedValueOnce({
         data: Buffer.from('x'),

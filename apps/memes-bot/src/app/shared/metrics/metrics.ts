@@ -38,6 +38,20 @@ function counter(name: string, help: string, labelNames: string[]): Counter<stri
   return new Counter({ name: `memes_bot_${name}`, help, labelNames, registers: [registry] });
 }
 
+/**
+ * Counter with an explicit full name (no `memes_bot_` prefix). Used only where
+ * the metric name is an external contract: the memory-watchdog alert rules
+ * (TGB-121) reference `bot_memory_*`, so those names must stay stable.
+ */
+function namedCounter(name: string, help: string, labelNames: string[]): Counter<string> {
+  return new Counter({ name, help, labelNames, registers: [registry] });
+}
+
+/** Gauge with an explicit full name (no `memes_bot_` prefix) — see {@link namedCounter}. */
+function namedGauge(name: string, help: string): Gauge<string> {
+  return new Gauge({ name, help, registers: [registry] });
+}
+
 function gauge(name: string, help: string, labelNames: string[]): Gauge<string> {
   return new Gauge({ name: `memes_bot_${name}`, help, labelNames, registers: [registry] });
 }
@@ -187,6 +201,29 @@ export const metrics = {
   users: {
     total: gauge('users_total', 'Пользователи бота (из БД).', []),
   },
+
+  /**
+   * Состояние memory-watchdog (TGB-121). Имена без префикса `memes_bot_` —
+   * осознанный контракт: по ним строятся алерты само-рестартов.
+   *
+   * ВАЖНО: `bot_memory_watchdog_exits_total` **не наблюдаем через scrape**:
+   * инкремент идёт в том же тике, что `process.exit()`, реестр умирает вместе с
+   * процессом, и после рестарта счётчик снова 0. Алертить нужно по счётчику
+   * рестартов контейнера или по строке лога `mem watchdog exit reason=...`;
+   * счётчик оставлен для локальной симметрии и для путей без exit.
+   */
+  watchdog: {
+    rssBytes: namedGauge('bot_memory_rss_bytes', 'RSS процесса, байты (watchdog, TGB-121).'),
+    limitBytes: namedGauge(
+      'bot_memory_limit_bytes',
+      'Лимит памяти контейнера (cgroup v2/v1, MEM_LIMIT_MB), байты.'
+    ),
+    exits: namedCounter(
+      'bot_memory_watchdog_exits_total',
+      'Самозавершения процесса watchdog-ом по причине (stall|rss).',
+      ['reason']
+    ),
+  },
 };
 
 /**
@@ -201,21 +238,24 @@ export function setGaugeCollector(
 }
 
 /**
- * Человекочитаемая метка источника без кардинального взрыва: username, иначе
- * название, иначе id канала. В метках не бывает секретов и message id.
+ * Метка источника без кардинального взрыва.
+ *
+ * Метка — только `@username` канала из БД либо константа `source`. Название
+ * канала и числовой chat id намеренно НЕ используются (TGB-121): название
+ * меняется владельцем канала, а id появляется у любого разового чата — каждая
+ * такая величина создаёт новую серию Prometheus, которая живёт до рестарта.
+ * Метка `source` агрегирует источники без username и остаётся ограниченной.
  */
 export function sourceLabel(source: {
   username?: string | null;
+  /** Принимается для совместимости с сущностью источника и игнорируется. */
   title?: string | null;
+  /** Принимается для совместимости с сущностью источника и игнорируется. */
   chatId?: string | number | null;
 }): string {
   const username = source.username?.trim();
   if (username) {
     return `@${username.replace(/^@/, '')}`;
   }
-  const title = source.title?.trim();
-  if (title) {
-    return title;
-  }
-  return source.chatId != null ? String(source.chatId) : 'unknown';
+  return 'source';
 }

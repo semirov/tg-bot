@@ -6,13 +6,26 @@ describe('metrics core', () => {
     jest.restoreAllMocks();
   });
 
-  it('sourceLabel: username, title, chatId, unknown', () => {
+  it('sourceLabel: только username либо константа source', () => {
     expect(sourceLabel({ username: 'memes', title: 'Title', chatId: '-100' })).toBe('@memes');
     expect(sourceLabel({ username: '@memes' })).toBe('@memes');
-    expect(sourceLabel({ username: '  ' , title: 'Title' })).toBe('Title');
-    expect(sourceLabel({ chatId: 123 })).toBe('123');
-    expect(sourceLabel({})).toBe('unknown');
-    expect(sourceLabel({ username: null, title: null, chatId: null })).toBe('unknown');
+    // Название канала и chat id — не метки: иначе каждая правка названия/новый
+    // чат создаёт новую серию Prometheus (TGB-121).
+    expect(sourceLabel({ username: '  ', title: 'Title' })).toBe('source');
+    expect(sourceLabel({ chatId: 123 })).toBe('source');
+    expect(sourceLabel({})).toBe('source');
+    expect(sourceLabel({ username: null, title: null, chatId: null })).toBe('source');
+  });
+
+  it('sourceLabel не плодит серии по chat id и названию', () => {
+    const labels = new Set<string>();
+    for (let index = 0; index < 100; index += 1) {
+      labels.add(
+        sourceLabel({ username: null, title: `Канал ${index}`, chatId: -1000000000000 - index })
+      );
+    }
+    expect(labels.size).toBe(1);
+    expect([...labels]).toEqual(['source']);
   });
 
   it('initMetrics идемпотентен и добавляет default-метрики и info', async () => {

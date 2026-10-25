@@ -510,6 +510,20 @@ describe('ClientBaseService', () => {
       expect(skips).toHaveLength(1);
     });
 
+    it('анти-спам множество «своих каналов» ограничено (TGB-121)', () => {
+      const { service } = setup();
+      jest.spyOn(Logger, 'debug').mockImplementation(() => undefined);
+
+      for (let index = 0; index < 150; index += 1) {
+        (service as any).logOwnChannelSkip(-1000000000000 - index);
+      }
+
+      const skipped = (service as any).skippedOwnChannels as Set<string>;
+      expect(skipped.size).toBeLessThanOrEqual(100);
+      expect(skipped.has(String(-1000000000000))).toBe(false); // старые вытеснены
+      expect(skipped.has(String(-1000000000000 - 149))).toBe(true);
+    });
+
     it('свой канал не требует MTProto: getEntity не вызывается даже для не-медиа', async () => {
       const { service, config } = setup();
       const getEntity = jest.fn();

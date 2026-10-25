@@ -67,7 +67,12 @@ export class MattermostService {
         responseType: 'arraybuffer',
       });
 
-      const buffer = Buffer.from(fileResponse.data);
+      // Не копируем Buffer повторно (TGB-121): axios с `responseType: 'arraybuffer'`
+      // в Node и так отдаёт Buffer, а лишняя копия — это второй полный размер
+      // файла в off-heap на каждую загрузку в Mattermost.
+      const buffer = Buffer.isBuffer(fileResponse.data)
+        ? fileResponse.data
+        : Buffer.from(fileResponse.data);
       const contentType = fileResponse.headers['content-type'] || 'application/octet-stream';
 
       // Определяем расширение из URL или content-type

@@ -24,6 +24,12 @@ export type BestMemeContext = {
   byLikePostBestMemeId?: number;
 };
 
+/**
+ * Верхняя граница множества «уже залогированных своих каналов»: ключи — chat id,
+ * поэтому множество не должно расти без предела (TGB-121).
+ */
+const SKIPPED_OWN_CHANNELS_LIMIT = 100;
+
 @Injectable()
 export class ClientBaseService implements OnModuleInit {
   constructor(
@@ -48,7 +54,12 @@ export class ClientBaseService implements OnModuleInit {
   /** Промис-кэш адресата форварда: личка главного бота. */
   private botForwardTarget?: Promise<string | undefined>;
 
-  /** Свои каналы, по которым уже писали «skip own channel» (анти-спам лога). */
+  /**
+   * Свои каналы, по которым уже писали «skip own channel» (анти-спам лога).
+   * Размер ограничен (TGB-121): ключ — chat id, и хотя сейчас множество
+   * заведомо ограничено конфигом, ключи с id не должны копиться бесконечно,
+   * если набор каналов когда-нибудь станет динамическим.
+   */
   private readonly skippedOwnChannels = new Set<string>();
 
   /** Дедлайн, о котором уже предупредили (лог паузы — раз на дедлайн, не на сообщение). */
@@ -349,6 +360,13 @@ export class ClientBaseService implements OnModuleInit {
   private logOwnChannelSkip(chatId: unknown): void {
     const key = String(chatId);
     if (this.skippedOwnChannels.has(key)) return;
+    // FIFO-вытеснение: множество ключей по chat id не должно расти без границы.
+    if (this.skippedOwnChannels.size >= SKIPPED_OWN_CHANNELS_LIMIT) {
+      const oldest = this.skippedOwnChannels.values().next().value;
+      if (oldest !== undefined) {
+        this.skippedOwnChannels.delete(oldest);
+      }
+    }
     this.skippedOwnChannels.add(key);
     Logger.debug(`Parser: skip own channel ${key}`, ClientBaseService.name);
   }
