@@ -307,5 +307,34 @@ describe('AdDetector', () => {
         foreignLinks: ['https://t.me/b'],
       });
     });
+
+    it('ошибка getCurrentChannel (FloodWait) → current-channel-unknown, без reject', async () => {
+      const loggerSpy = jest.spyOn(Logger, 'warn').mockImplementation(() => undefined);
+      const ports = makePorts({
+        getCurrentChannel: jest
+          .fn()
+          .mockRejectedValue(new Error('A wait of 50000 seconds is required')),
+      });
+
+      await expect(detector.classifyPost(event, ports)).resolves.toMatchObject({
+        isAd: false,
+        reason: 'current-channel-unknown',
+        foreignLinks: [],
+      });
+      expect(loggerSpy).toHaveBeenCalledWith(
+        expect.stringContaining('текущий канал неизвестен'),
+        AdDetector.name
+      );
+    });
+
+    it('getCurrentChannel вернул undefined → current-channel-unknown', async () => {
+      const ports = makePorts({ getCurrentChannel: jest.fn().mockResolvedValue(undefined) });
+
+      await expect(detector.classifyPost(event, ports)).resolves.toMatchObject({
+        isAd: false,
+        reason: 'current-channel-unknown',
+      });
+      expect(ports.isSameChannel).not.toHaveBeenCalled();
+    });
   });
 });

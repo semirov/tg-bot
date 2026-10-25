@@ -1,6 +1,7 @@
 import { Logger } from '@nestjs/common';
 import * as bigInt from 'big-integer';
 import { Api, TelegramClient } from 'telegram';
+import { mtprotoFloodGate } from '../../../shared/mtproto-flood-gate';
 import { ClientBaseService } from './client-base.service';
 
 const flush = async () => {
@@ -95,7 +96,13 @@ function mediaDocument(mimeType: string) {
 }
 
 describe('ClientBaseService', () => {
+  beforeEach(() => {
+    // Пауза FloodWait — процессный singleton: каждый тест начинает без неё.
+    mtprotoFloodGate.reset();
+  });
+
   afterEach(() => {
+    mtprotoFloodGate.reset();
     jest.restoreAllMocks();
     jest.useRealTimers();
   });
@@ -484,14 +491,47 @@ describe('ClientBaseService', () => {
       expect(handleSpy).not.toHaveBeenCalled();
     });
 
-    it('игнорирует собственные каналы', async () => {
+    it('игнорирует собственные каналы до любой работы и логирует пропуск один раз', async () => {
       const { service, config } = setup();
       const handleSpy = jest.spyOn(service as any, 'handleAlbum');
+      const mediaSpy = jest.spyOn(service as any, 'hasMediaContent');
+      const adSpy = jest.spyOn(service as any, 'isAdPost');
+      const debugSpy = jest.spyOn(Logger, 'debug').mockImplementation(() => undefined);
+      const event = { isChannel: true, chatId: bigInt(config.memeChanelId), message: { photo: {} } };
+
+      await (service as any).onMessageEvent(event);
+      await (service as any).onMessageEvent(event);
+
+      expect(handleSpy).not.toHaveBeenCalled();
+      expect(mediaSpy).not.toHaveBeenCalled();
+      expect(adSpy).not.toHaveBeenCalled();
+      // Один лог на канал, а не строка на каждое сообщение своего канала.
+      const skips = debugSpy.mock.calls.filter(([line]) => String(line).includes('skip own channel'));
+      expect(skips).toHaveLength(1);
+    });
+
+    it('свой канал не требует MTProto: getEntity не вызывается даже для не-медиа', async () => {
+      const { service, config } = setup();
+      const getEntity = jest.fn();
+      (service as any).telegramClient = { getEntity };
+
       await (service as any).onMessageEvent({
         isChannel: true,
-        chatId: bigInt(config.memeChanelId),
+        chatId: bigInt(config.bestMemeChanelId),
+        message: { photo: {} },
       });
-      expect(handleSpy).not.toHaveBeenCalled();
+
+      expect(getEntity).not.toHaveBeenCalled();
+    });
+
+    it('событие без chatId не падает и не уходит в MTProto', async () => {
+      const { service } = setup();
+      const getEntity = jest.fn();
+      (service as any).telegramClient = { getEntity };
+
+      await (service as any).onMessageEvent({ isChannel: true });
+
+      expect(getEntity).not.toHaveBeenCalled();
     });
 
     it('пересылает одиночное сообщение с медиа боту с задержкой, если это не реклама', async () => {
@@ -557,6 +597,106 @@ describe('ClientBaseService', () => {
       await (service as any).onMessageEvent(event);
 
       expect(isAdSpy).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('пауза MTProto (FloodWait)', () => {
+    const event = (chatId = bigInt(-1009999999999)): any => ({
+      isChannel: true,
+      chatId,
+      message: { photo: [{ file_id: 'p' }], message: 'see t.me/x' },
+    });
+
+    it('на паузе сообщение не обрабатывается: ни getEntity, ни форварда', async () => {
+      jest.useFakeTimers();
+      jest.setSystemTime(new Date('2026-10-25T00:00:00Z'));
+      const { service } = setup();
+      const getEntity = jest.fn();
+      const forwardTo = jest.fn();
+      (service as any).telegramClient = { getEntity };
+      const handleAlbum = jest.spyOn(service as any, 'handleAlbum');
+      const isAdPost = jest.spyOn(service as any, 'isAdPost');
+      const warnSpy = jest.spyOn(Logger, 'warn').mockImplementation(() => undefined);
+      mtprotoFloodGate.block(50_000);
+
+      await (service as any).onMessageEvent({ ...event(), message: { ...event().message, forwardTo } });
+      await (service as any).onMessageEvent(event());
+
+      expect(handleAlbum).not.toHaveBeenCalled();
+      expect(isAdPost).not.toHaveBeenCalled();
+      expect(getEntity).not.toHaveBeenCalled();
+      expect(forwardTo).not.toHaveBeenCalled();
+      // Один warn на дедлайн, а не строка на сообщение.
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      expect(String(warnSpy.mock.calls[0][0])).toContain('FloodWait');
+    });
+
+    it('после паузы обычная обработка возвращается', async () => {
+      jest.useFakeTimers();
+      jest.setSystemTime(new Date('2026-10-25T00:00:00Z'));
+      const { service } = setup();
+      jest.spyOn(service as any, 'handleAlbum').mockResolvedValue(false);
+      jest.spyOn(service as any, 'isAdPost').mockResolvedValue(false);
+      jest.spyOn(Math, 'random').mockReturnValue(0);
+      const forwardTo = jest.fn().mockResolvedValue(undefined);
+      mtprotoFloodGate.block(10);
+
+      await (service as any).onMessageEvent({ ...event(), message: { ...event().message, forwardTo } });
+      expect(forwardTo).not.toHaveBeenCalled();
+
+      jest.advanceTimersByTime(10_001);
+      await (service as any).onMessageEvent({ ...event(), message: { ...event().message, forwardTo } });
+      jest.advanceTimersByTime(5_000);
+      await flush();
+
+      expect(forwardTo).toHaveBeenCalledTimes(1);
+    });
+
+    it('форвард не уходит на паузе, даже если событие уже в работе', async () => {
+      const { service } = setup();
+      const forwardTo = jest.fn();
+      mtprotoFloodGate.block(100);
+
+      await (service as any).forwardToBot({ message: { forwardTo } });
+
+      expect(forwardTo).not.toHaveBeenCalled();
+      expect((service as any).botForwardTarget).toBeUndefined();
+    });
+
+    it('ежедневный «лучший мем» на паузе не трогает MTProto', async () => {
+      const { service, bot } = setup();
+      const getEntity = jest.fn();
+      const getMessages = jest.fn();
+      (service as any).telegramClient = { getEntity, getMessages };
+      mtprotoFloodGate.block(100);
+
+      await service.postDailyBestMeme();
+
+      expect(getEntity).not.toHaveBeenCalled();
+      expect(getMessages).not.toHaveBeenCalled();
+      expect(bot.api.copyMessage).not.toHaveBeenCalled();
+    });
+
+    it('обработчик события не оставляет unhandled rejection при сбое', async () => {
+      const { service, repo } = setup();
+      repo.findOne.mockResolvedValue({ session: validSessionString(), isActive: false });
+      jest.spyOn(TelegramClient.prototype, 'start').mockResolvedValue(undefined as any);
+      const addSpy = jest
+        .spyOn(TelegramClient.prototype, 'addEventHandler')
+        .mockImplementation((() => undefined) as any);
+      const errorSpy = jest.spyOn(Logger, 'error').mockImplementation(() => undefined);
+
+      await (service as any).startChannelObserver();
+      await flush();
+
+      jest.spyOn(service as any, 'onMessageEvent').mockRejectedValue(new Error('flood storm'));
+      const eventHandler = addSpy.mock.calls[0][0] as any;
+
+      await expect(eventHandler({ isChannel: true })).resolves.toBeUndefined();
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining('сбой обработки события юзербота'),
+        ClientBaseService.name
+      );
     });
   });
 
@@ -647,6 +787,28 @@ describe('ClientBaseService', () => {
       const event = { message: { message: 'see t.me/x', entities: [urlEntity(0, 3)] } };
 
       await expect((service as any).isAdPost(event)).resolves.toBe(true);
+    });
+
+    it('неизвестный текущий канал (FloodWait/CHANNEL_INVALID) → не реклама, без reject', async () => {
+      const { service } = setup();
+      jest.spyOn(Logger, 'warn').mockImplementation(() => undefined);
+      jest.spyOn(service as any, 'isPostWithLinks').mockResolvedValue(true);
+      (service as any).telegramClient = {
+        getEntity: jest.fn().mockRejectedValue(new Error('A wait of 50000 seconds is required')),
+      };
+      const event = { message: { message: 'see t.me/x', entities: [urlEntity(0, 3)] } };
+
+      await expect((service as any).isAdPost(event)).resolves.toBe(false);
+    });
+
+    it('currentChannelOf отдаёт undefined при ошибке MTProto', async () => {
+      const { service } = setup();
+      jest.spyOn(Logger, 'warn').mockImplementation(() => undefined);
+      (service as any).telegramClient = {
+        getEntity: jest.fn().mockRejectedValue(new Error('CHANNEL_INVALID')),
+      };
+
+      await expect(service.currentChannelOf(bigInt(-1001))).resolves.toBeUndefined();
     });
   });
 

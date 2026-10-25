@@ -151,7 +151,11 @@ export class ParserDiscoveryService {
       await this.candidateRepository.save(candidate);
       return candidate;
     }
-    const full = await this.guard.run('getFullChannel', () => this.invokeGetFullChannel(username));
+    const full = await this.guard.run(
+      'getFullChannel',
+      () => this.invokeGetFullChannel(username),
+      username
+    );
     // Инфраструктурная неудача — не вердикт: остаём в PENDING до следующего прогона
     // (с капом повторных проверок).
     if (full == null) {
@@ -258,7 +262,11 @@ export class ParserDiscoveryService {
     const client = this.parserClient.client();
     let rawChatId: number | null = candidate.chatId ? Number(candidate.chatId) : null;
     if (rawChatId == null && client) {
-      const entity = await this.guard.run('getEntity', () => client.getEntity(candidate.username as string));
+      const entity = await this.guard.run(
+        'getEntity',
+        () => client.getEntity(candidate.username as string),
+        candidate.username ?? undefined
+      );
       const channelId = (entity as { id?: { toString(): string } })?.id;
       rawChatId = channelId ? normalizeChatId(Number(channelId.toString())) : null;
     }
@@ -349,7 +357,11 @@ export class ParserDiscoveryService {
     if (candidate.chatId == null) return null;
     const client = this.parserClient.client();
     if (!client) return null;
-    const entity = await this.guard.run('getEntity', () => client.getEntity(bigInt(candidate.chatId)));
+    const entity = await this.guard.run(
+      'getEntity',
+      () => client.getEntity(bigInt(candidate.chatId)),
+      candidate.chatId ?? undefined
+    );
     const username = (entity as { username?: string })?.username;
     return username ?? null;
   }

@@ -31,6 +31,8 @@ const makeConfig = (): any => ({
 const makeGuard = (): any => ({
   run: jest.fn(async (_op: string, fn: () => Promise<unknown>) => fn()),
   pace: jest.fn().mockResolvedValue(undefined),
+  isBlocked: jest.fn(() => false),
+  blockedUntil: jest.fn(() => null),
 });
 
 const makeParserClient = (client: unknown = {}): any => ({ client: jest.fn(() => client) });
@@ -285,6 +287,12 @@ describe('ParserRegistryService', () => {
   });
 
   describe('addSource', () => {
+    it('свой канал источником не становится → null, без записи', async () => {
+      expect(await service.addSource({ chatId: -1001111111111 })).toBeNull();
+      expect(sourceRepo.findOne).not.toHaveBeenCalled();
+      expect(sourceRepo.save).not.toHaveBeenCalled();
+    });
+
     it('создаёт источник и не дублирует', async () => {
       const created = await service.addSource({ chatId: -100555, username: 'new' });
       expect(created).toMatchObject({ chatId: '-100555', status: SourceStatus.ACTIVE });

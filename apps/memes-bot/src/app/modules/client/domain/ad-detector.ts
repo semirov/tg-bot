@@ -64,8 +64,8 @@ export interface AdDetectionPorts {
   resolveUrl(url: string): ResolvedChannelEntity | Promise<ResolvedChannelEntity>;
   /** Сравнивает разрешённую ссылку с текущим каналом. */
   isSameChannel(resolved: ResolvedChannelEntity, current: ResolvedChannelEntity): boolean;
-  /** Возвращает сущность текущего канала по его id. */
-  getCurrentChannel(chatId: bigInt.BigInteger): Promise<ResolvedChannelEntity>;
+  /** Возвращает сущность текущего канала; `undefined` — канал не удалось получить. */
+  getCurrentChannel(chatId: bigInt.BigInteger): Promise<ResolvedChannelEntity | undefined>;
   /** Контекст для `Logger.error` (по умолчанию имя класса). */
   loggerContext?: string;
 }
@@ -260,7 +260,13 @@ export class AdDetector {
     }
     links.push(...urls);
 
-    const currentChannel = await ports.getCurrentChannel(event.chatId);
+    const currentChannel = await this.currentChannel(event, ports);
+    if (!currentChannel) {
+      // Базу сравнения не получили (MTProto отказал) — не приписываем посту
+      // чужие ссылки: «неизвестно» = не реклама, пусть уходит как обычно.
+      return { isAd: false, reason: 'current-channel-unknown', links, foreignLinks: [] };
+    }
+
     const foreignLinks: string[] = [];
 
     for (const url of urls) {
@@ -283,6 +289,31 @@ export class AdDetector {
     }
 
     return { isAd: false, reason: 'own-links-only', links, foreignLinks };
+  }
+
+  /**
+   * Текущий канал для сравнения ссылок.
+   *
+   * Отказ MTProto (FloodWait, CHANNEL_INVALID, сеть) не должен превращаться в
+   * unhandled rejection у обработчика событий: считаем канал неизвестным.
+   *
+   * @param event событие нового сообщения
+   * @param ports коллабораторы окружения
+   * @returns сущность канала или `undefined`, если её не удалось получить
+   */
+  private async currentChannel(
+    event: NewMessageEvent,
+    ports: AdDetectionPorts
+  ): Promise<ResolvedChannelEntity | undefined> {
+    try {
+      return (await ports.getCurrentChannel(event.chatId)) ?? undefined;
+    } catch (error) {
+      Logger.warn(
+        `Ad check: текущий канал неизвестен: ${error}`,
+        ports.loggerContext ?? AdDetector.name
+      );
+      return undefined;
+    }
   }
 
   /**
@@ -383,7 +414,12 @@ export class AdDetector {
 }
 
 /** Причина, по которой пост признан рекламой или разрешён к репосту. */
-export type LinkPolicyReason = 'no-links' | 'no-text' | 'own-links-only' | 'foreign-link';
+export type LinkPolicyReason =
+  | 'no-links'
+  | 'no-text'
+  | 'own-links-only'
+  | 'foreign-link'
+  | 'current-channel-unknown';
 
 /** Результат политики ссылок. */
 export interface LinkPolicyResult {

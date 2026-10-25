@@ -144,6 +144,11 @@ export class ParserRegistryService {
     category?: SourceCategory;
   }): Promise<SourceChannelEntity | null> {
     const chatId = String(params.chatId);
+    // Свои каналы источниками не бывают: история бота не его добыча.
+    if (this.isOwnChannel(params.chatId)) {
+      this.logger.debug(`Parser: свой канал ${chatId} не добавляется в источники`);
+      return null;
+    }
     const exists = await this.sourceRepository.findOne({ where: { chatId } });
     if (exists) {
       if (exists.excluded) {
@@ -370,8 +375,10 @@ export class ParserRegistryService {
     if (stale) {
       const peer = source.username ?? bigInt(source.chatId); // marked id
       if (peer != null) {
-        const full = await this.guard.run('getFullChannel', () =>
-          client.invoke(new Api.channels.GetFullChannel({ channel: peer as never }))
+        const full = await this.guard.run(
+          'getFullChannel',
+          () => client.invoke(new Api.channels.GetFullChannel({ channel: peer as never })),
+          source.chatId
         );
         const participants = Number((full as { fullChat?: { participantsCount?: number } })?.fullChat
           ?.participantsCount ?? 0);
@@ -400,8 +407,10 @@ export class ParserRegistryService {
     // Новый источник смотрим не глубже SCAN_WINDOW_HOURS.
     const since = Math.floor((this.clock.now().getTime() - SCAN_WINDOW_HOURS * 3_600_000) / 1000);
 
-    const messages = await this.guard.run<TotalList<Api.Message>>('getHistory:seed', () =>
-      client.getMessages(peer, { limit: 100, offsetDate: since })
+    const messages = await this.guard.run<TotalList<Api.Message>>(
+      'getHistory:seed',
+      () => client.getMessages(peer, { limit: 100, offsetDate: since }),
+      source.chatId
     );
     if (!messages?.length) return null;
 
