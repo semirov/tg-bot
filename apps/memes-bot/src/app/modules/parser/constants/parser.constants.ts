@@ -141,6 +141,29 @@ export const FLOOD_JITTER_MS = 1000;
 export const ENTITY_BACKOFF_BASE_MS = 1000;
 export const ENTITY_BACKOFF_CAP_MS = 15 * 60 * 1000;
 
+/**
+ * Восстановление стора сущностей gramjs после промаха пира: `getDialogs`
+ * возвращает `chats`/`users` с access hash-ами, и gramjs кладёт их и в
+ * `_entityCache`, и в строки сессии. Лимит ограничивает цену вызова.
+ */
+export const ENTITY_REFRESH_DIALOG_LIMIT = 200;
+
+/**
+ * Не чаще одного refresh-а стора сущностей за окно, мс: промахи приходят
+ * пачкой (по всем источникам), а `getDialogs` — дорогой вызов.
+ */
+export const ENTITY_REFRESH_COOLDOWN_MS = 5 * 60 * 1000;
+
+/**
+ * Пауза свипа для «мёртвого» пира (промах → успешный refresh → промах), мс.
+ * Свип идёт раз в 30 минут, а шаг бэкоффа доходит до 15 минут — без этой паузы
+ * пир дёргался бы на каждом свипе. Ставится только когда refresh реально
+ * сходил: пропущенный/упавший refresh паркует пир лишь до следующего окна
+ * (`ENTITY_REFRESH_COOLDOWN_MS`). Пир возвращается сам: после горизонта один
+ * пробный вызов, успех снимает паузу.
+ */
+export const ENTITY_BROKEN_RETRY_MS = 60 * 60 * 1000;
+
 /** Лимиты discovery за один прогон. */
 export const DISCOVERY_WEB_CHECK_PER_RUN = 10;
 export const DISCOVERY_CROSS_LIMIT_PER_RUN = 10;

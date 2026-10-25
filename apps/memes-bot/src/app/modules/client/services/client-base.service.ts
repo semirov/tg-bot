@@ -126,10 +126,20 @@ export class ClientBaseService implements OnModuleInit {
         },
         onError: (err) => Logger.error(err, ClientBaseService.name),
       })
-      .then(() => {
-        const session = loadedOrEmptySession.save();
-        this.saveSession(session);
-        Logger.log('Observer station started', ClientBaseService.name);
+      .then(async () => {
+        // Сбой записи сессии не должен становиться unhandled rejection
+        // (грам ошибки БД не логируем: рядом лежит auth key).
+        try {
+          await this.saveSession(loadedOrEmptySession.save());
+          Logger.log('Observer station started', ClientBaseService.name);
+        } catch (error) {
+          Logger.warn(
+            `Cannot save MTProto session after start: ${
+              error instanceof Error ? error.message : 'unknown error'
+            }`,
+            ClientBaseService.name
+          );
+        }
       });
     await this.changeObserverState(true);
     metrics.mtproto.connected.set(1);

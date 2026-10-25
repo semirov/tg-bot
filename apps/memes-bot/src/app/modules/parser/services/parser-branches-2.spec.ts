@@ -109,6 +109,7 @@ const makeGuard = (): any => ({
   pace: jest.fn().mockResolvedValue(undefined),
   isBlocked: jest.fn(() => false),
   blockedUntil: jest.fn(() => null),
+  isPeerBroken: jest.fn(() => false),
 });
 
 const makeRegistryMock = (): any => ({

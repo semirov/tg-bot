@@ -253,6 +253,50 @@ describe('ClientBaseService', () => {
       expect(startSpy).toHaveBeenCalled();
       expect(repo.update).toHaveBeenCalledWith({ station: 'main' }, { session: '' });
     });
+
+    it('сбой записи сессии после старта: warn без payload, без unhandled rejection', async () => {
+      const { service, repo } = setup();
+      repo.findOne.mockResolvedValue(null);
+      jest.spyOn(TelegramClient.prototype, 'start').mockResolvedValue(undefined as any);
+      jest
+        .spyOn(TelegramClient.prototype, 'addEventHandler')
+        .mockImplementation((() => undefined) as any);
+      repo.update.mockImplementation((_where: unknown, patch: { session?: string }) =>
+        patch?.session === undefined
+          ? Promise.resolve({ affected: 1 })
+          : Promise.reject(new Error('db down'))
+      );
+      const warnSpy = jest.spyOn(Logger, 'warn').mockImplementation(() => undefined);
+
+      await (service as any).startChannelObserver();
+      await flush();
+
+      expect(warnSpy).toHaveBeenCalledWith(
+        'Cannot save MTProto session after start: db down',
+        'ClientBaseService'
+      );
+    });
+
+    it('сбой записи сессии не-Error тоже не роняет старт', async () => {
+      const { service, repo } = setup();
+      repo.findOne.mockResolvedValue(null);
+      jest.spyOn(TelegramClient.prototype, 'start').mockResolvedValue(undefined as any);
+      jest
+        .spyOn(TelegramClient.prototype, 'addEventHandler')
+        .mockImplementation((() => undefined) as any);
+      repo.update.mockImplementation((_where: unknown, patch: { session?: string }) =>
+        patch?.session === undefined ? Promise.resolve({ affected: 1 }) : Promise.reject('boom')
+      );
+      const warnSpy = jest.spyOn(Logger, 'warn').mockImplementation(() => undefined);
+
+      await (service as any).startChannelObserver();
+      await flush();
+
+      expect(warnSpy).toHaveBeenCalledWith(
+        'Cannot save MTProto session after start: unknown error',
+        'ClientBaseService'
+      );
+    });
   });
 
   describe('getPhoneNumber / getPassword / getPhoneCode', () => {

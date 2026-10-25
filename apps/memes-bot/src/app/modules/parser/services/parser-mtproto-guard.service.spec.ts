@@ -4,7 +4,11 @@ import {
   TerminalMtprotoError,
   entityBackoffMs,
 } from './parser-mtproto-guard.service';
-import { ENTITY_BACKOFF_CAP_MS } from '../constants/parser.constants';
+import {
+  ENTITY_BACKOFF_CAP_MS,
+  ENTITY_BROKEN_RETRY_MS,
+  ENTITY_REFRESH_COOLDOWN_MS,
+} from '../constants/parser.constants';
 import { mtprotoFloodGate } from '../../../shared/mtproto-flood-gate';
 
 const NOW = new Date('2026-10-25T00:00:00Z').getTime();
@@ -43,7 +47,15 @@ const inputEntityMiss = (): Error => new Error('Could not find the input entity 
 const makeEntityClient = (chatId: string): any => {
   const cacheMap = new Map<string, unknown>([[chatId, { className: 'InputPeerChannel' }]]);
   const entities = new Set<unknown[]>([[chatId, 'hash', 'chan', null, 'Chan']]);
-  return { client: jest.fn(() => ({ _entityCache: { cacheMap }, session: { _entities: entities } })) };
+  const getDialogs = jest.fn().mockResolvedValue([]);
+  return {
+    getDialogs,
+    client: () => ({
+      _entityCache: { cacheMap },
+      session: { _entities: entities },
+      getDialogs,
+    }),
+  };
 };
 
 describe('ParserMtprotoGuard', () => {
@@ -218,9 +230,10 @@ describe('ParserMtprotoGuard', () => {
   describe('промах сущности (CHANNEL_INVALID → input entity)', () => {
     const chatId = '-1007770000001';
 
-    it('первый промах: кэш пира сброшен и сделан один перерезолв', async () => {
+    it('регресс TGB-118: первый промах НЕ удаляет строки сессии, кэш в памяти сброшен', async () => {
       const parserClient = makeEntityClient(chatId);
       guard = new ParserMtprotoGuard(bot, makeConfig(), makeRandom(), parserClient);
+      const client = parserClient.client();
 
       const fn = jest
         .fn()
@@ -229,10 +242,217 @@ describe('ParserMtprotoGuard', () => {
 
       await expect(guard.run('getMessages:eval', fn, chatId)).resolves.toBe('resolved');
       expect(fn).toHaveBeenCalledTimes(2);
-      // Кэш gramjs (в памяти и строки сессии) очищен — следующий вызов резолвит заново.
-      expect(parserClient.client()._entityCache.cacheMap.size).toBe(0);
-      expect(parserClient.client().session._entities.size).toBe(0);
+      // In-memory кэш пира сброшен — следующий вызов резолвит заново.
+      expect(client._entityCache.cacheMap.size).toBe(0);
+      // Строки `session._entities` НЕ удаляются: их вычистка и была регрессией
+      // (пир переставал резолвиться до рестарта).
+      expect(client.session._entities.size).toBe(1);
+      // Стор перезаполнен документированным путём.
+      expect(parserClient.getDialogs).toHaveBeenCalledWith({ limit: 200 });
+      expect(parserClient.getDialogs).toHaveBeenCalledTimes(1);
       expect(warnSpy).not.toHaveBeenCalled();
+    });
+
+    it('refresh стора: один getDialogs на окно, второй промах внутри окна его не повторяет', async () => {
+      const parserClient = makeEntityClient(chatId);
+      guard = new ParserMtprotoGuard(bot, makeConfig(), makeRandom(), parserClient);
+
+      const first = jest.fn().mockRejectedValueOnce(channelInvalid()).mockResolvedValueOnce('ok');
+      await expect(guard.run('getHistory', first, chatId)).resolves.toBe('ok');
+      expect(parserClient.getDialogs).toHaveBeenCalledTimes(1);
+
+      // Другой пир промахнулся сразу же: refresh-окно ещё не истекло.
+      const other = '-1007770000099';
+      const second = jest.fn().mockRejectedValueOnce(channelInvalid()).mockResolvedValueOnce('ok');
+      await expect(guard.run('getHistory', second, other)).resolves.toBe('ok');
+      expect(parserClient.getDialogs).toHaveBeenCalledTimes(1);
+
+      // Окно (5 минут) истекло — следующий промах снова обновляет стор.
+      jest.advanceTimersByTime(ENTITY_REFRESH_COOLDOWN_MS + 1);
+      const third = jest.fn().mockRejectedValueOnce(channelInvalid()).mockResolvedValueOnce('ok');
+      await expect(guard.run('getHistory', third, other)).resolves.toBe('ok');
+      expect(parserClient.getDialogs).toHaveBeenCalledTimes(2);
+    });
+
+    it('параллельные промахи разных пиров ждут один и тот же refresh (single flight)', async () => {
+      const parserClient = makeEntityClient(chatId);
+      let release: (value: unknown) => void = () => undefined;
+      parserClient.getDialogs.mockImplementation(
+        () => new Promise((resolve) => (release = resolve))
+      );
+      guard = new ParserMtprotoGuard(bot, makeConfig(), makeRandom(), parserClient);
+
+      const first = jest.fn().mockRejectedValueOnce(channelInvalid()).mockResolvedValueOnce('a');
+      const second = jest.fn().mockRejectedValueOnce(channelInvalid()).mockResolvedValueOnce('b');
+      const a = guard.run('getHistory', first, chatId);
+      const b = guard.run('getHistory', second, '-1007770000199');
+      await flush();
+      expect(parserClient.getDialogs).toHaveBeenCalledTimes(1);
+
+      release([]);
+      await expect(a).resolves.toBe('a');
+      await expect(b).resolves.toBe('b');
+      expect(parserClient.getDialogs).toHaveBeenCalledTimes(1);
+    });
+
+    it('упавший refresh не паркует пир на час: только до следующего окна', async () => {
+      const parserClient = makeEntityClient(chatId);
+      parserClient.getDialogs.mockRejectedValue(new Error('dialogs down'));
+      guard = new ParserMtprotoGuard(bot, makeConfig(), makeRandom(), parserClient);
+
+      const fn = jest.fn().mockRejectedValue(channelInvalid());
+      await guard.run('getHistory', fn, chatId);
+
+      expect(fn).toHaveBeenCalledTimes(2); // вызов + один повтор после refresh
+      // Один транзиентный сбой getDialogs не выключает источник на час:
+      // пауза — только до следующего окна refresh-а.
+      expect(guard.isPeerBroken(chatId)).toBe(true);
+      jest.advanceTimersByTime(ENTITY_REFRESH_COOLDOWN_MS + 1);
+      expect(guard.isPeerBroken(chatId)).toBe(false);
+      const probe = jest.fn().mockResolvedValue('ok');
+      await expect(guard.run('getHistory', probe, chatId)).resolves.toBe('ok');
+      expect(probe).toHaveBeenCalledTimes(1);
+
+      const lines = warnSpy.mock.calls.map(([line]) => String(line));
+      expect(lines[0]).toContain('перезаполнение стора сущностей не удалось');
+      expect(String(lines[1])).toContain('refresh не удался');
+      expect(String(lines[1])).toContain('свип-пауза');
+      expect(String(lines[1])).not.toContain(`свип-пауза ${ENTITY_BROKEN_RETRY_MS}ms`);
+      for (const line of lines) expect(String(line)).not.toContain('\n');
+    });
+
+    it('пропущенный refresh тоже не паркует на час: пауза до окна', async () => {
+      const parserClient = makeEntityClient(chatId);
+      guard = new ParserMtprotoGuard(bot, makeConfig(), makeRandom(), parserClient);
+
+      // Первый промах занимает refresh-окно…
+      const warm = jest.fn().mockRejectedValueOnce(channelInvalid()).mockResolvedValueOnce('ok');
+      await expect(guard.run('getHistory', warm, chatId)).resolves.toBe('ok');
+
+      // …второй пир промахивается внутри окна: refresh пропущен.
+      const other = '-1007770000077';
+      const miss = jest.fn().mockRejectedValue(channelInvalid());
+      await guard.run('getHistory', miss, other);
+
+      const line = String(warnSpy.mock.calls[0][0]);
+      expect(line).toContain('refresh пропущен');
+      expect(line).not.toContain(`свип-пауза ${ENTITY_BROKEN_RETRY_MS}ms`);
+      // Через окно пир снова доступен и оживает без часового простоя.
+      jest.advanceTimersByTime(ENTITY_REFRESH_COOLDOWN_MS + 1);
+      expect(guard.isPeerBroken(other)).toBe(false);
+      const probe = jest.fn().mockResolvedValue('ok');
+      await expect(guard.run('getHistory', probe, other)).resolves.toBe('ok');
+      expect(probe).toHaveBeenCalledTimes(1);
+    });
+
+    it('FLOOD_WAIT от getDialogs закрывает гейт: повтор после промаха не идёт', async () => {
+      const parserClient = makeEntityClient(chatId);
+      parserClient.getDialogs.mockRejectedValue(floodWaitText(77));
+      guard = new ParserMtprotoGuard(bot, makeConfig(), makeRandom(), parserClient);
+
+      const fn = jest.fn().mockRejectedValue(channelInvalid());
+      await guard.run('getHistory', fn, chatId);
+
+      expect(fn).toHaveBeenCalledTimes(1); // второго вызова нет: MTProto на паузе
+      expect(guard.blockedUntil()).toBe(NOW + 77_000);
+      const lines = warnSpy.mock.calls.map(([line]) => String(line));
+      expect(lines).toHaveLength(1);
+      expect(lines[0]).toContain('FLOOD_WAIT 77s');
+    });
+
+    it('пауза, включённая параллельным вызовом, отменяет refresh и повтор', async () => {
+      const parserClient = makeEntityClient(chatId);
+      guard = new ParserMtprotoGuard(bot, makeConfig(), makeRandom(), parserClient);
+
+      const fn = jest.fn(async () => {
+        // Другой MTProto-вызов поймал FLOOD_WAIT, пока этот шёл.
+        mtprotoFloodGate.block(30, 0);
+        throw channelInvalid();
+      });
+
+      await expect(guard.run('getHistory', fn, chatId)).resolves.toBeUndefined();
+      expect(fn).toHaveBeenCalledTimes(1); // повтора нет: гейт закрыт
+      expect(parserClient.getDialogs).not.toHaveBeenCalled();
+      expect(guard.isBlocked()).toBe(true);
+    });
+
+    it('свежий access hash выигрывает у устаревшего: дубли строк пира схлопываются', async () => {
+      const stale = [chatId, 'stale-hash', 'chan', null, 'Chan'];
+      const mid = [chatId, 'mid-hash', 'chan', null, 'Chan'];
+      const foreign = ['-100999', 'other-hash', 'other', null, 'Other'];
+      const fresh = [chatId, 'fresh-hash', 'chan', null, 'Chan'];
+      const rows = new Set<unknown[]>([stale, foreign, mid]);
+      const cacheMap = new Map<string, unknown>();
+      const getDialogs = jest.fn(async () => {
+        // gramjs добавляет строку из ответа `chats`, не заменяя старые.
+        rows.add(fresh);
+        cacheMap.set(chatId, { className: 'InputPeerChannel' });
+        return [];
+      });
+      guard = new ParserMtprotoGuard(bot, makeConfig(), makeRandom(), {
+        client: () => ({ _entityCache: { cacheMap }, session: { _entities: rows }, getDialogs }),
+      } as never);
+
+      const fn = jest.fn().mockRejectedValueOnce(channelInvalid()).mockResolvedValueOnce('ok');
+      await expect(guard.run('getHistory', fn, chatId)).resolves.toBe('ok');
+
+      const remaining = Array.from(rows);
+      expect(remaining.map((row) => row[1])).toEqual(['other-hash', 'fresh-hash']);
+      // gramjs берёт первую строку пира — она должна быть свежей.
+      expect(remaining.find((row) => row[0] === chatId)?.[1]).toBe('fresh-hash');
+    });
+
+    it('refresh без строк сессии не падает (свежий hash брать неоткуда)', async () => {
+      const getDialogs = jest.fn().mockResolvedValue([]);
+      guard = new ParserMtprotoGuard(bot, makeConfig(), makeRandom(), {
+        client: () => ({ getDialogs }),
+      } as never);
+
+      const fn = jest.fn().mockRejectedValueOnce(channelInvalid()).mockResolvedValueOnce('ok');
+      await expect(guard.run('getHistory', fn, chatId)).resolves.toBe('ok');
+      expect(getDialogs).toHaveBeenCalledTimes(1);
+    });
+
+    it('пира нет в диалогах — чужие строки сессии не трогаем', async () => {
+      const rows = new Set<unknown[]>([
+        ['-100999', 'a', 'aaa', null, 'A'],
+        ['-100998', 'b', 'bbb', null, 'B'],
+      ]);
+      const getDialogs = jest.fn().mockResolvedValue([]);
+      guard = new ParserMtprotoGuard(bot, makeConfig(), makeRandom(), {
+        client: () => ({ session: { _entities: rows }, getDialogs }),
+      } as never);
+
+      const fn = jest.fn().mockRejectedValueOnce(channelInvalid()).mockResolvedValueOnce('ok');
+      await expect(guard.run('getHistory', fn, chatId)).resolves.toBe('ok');
+      expect(rows.size).toBe(2);
+    });
+
+    it('одна мёртвая сущность — один ключ: raw id и marked id не расходятся', async () => {
+      guard = new ParserMtprotoGuard(bot, makeConfig(), makeRandom(), makeEntityClient(chatId));
+
+      const raw = '7770000001';
+      const history = jest.fn().mockRejectedValue(channelInvalid());
+      await guard.run('getHistory', history, raw);
+
+      // Тот же канал в marked-форме другой операцией: ключ тот же, вызова нет.
+      const evaluate = jest.fn().mockResolvedValue('ok');
+      await guard.run('getMessages:eval', evaluate, chatId);
+      expect(evaluate).not.toHaveBeenCalled();
+      expect(guard.isPeerBroken(chatId)).toBe(true);
+      expect(guard.isPeerBroken(raw)).toBe(true);
+    });
+
+    it('состояние по пирам ограничено: username-флуд не растит карты без границы', async () => {
+      guard = new ParserMtprotoGuard(bot, makeConfig(), makeRandom());
+
+      const fn = jest.fn().mockRejectedValue(channelInvalid());
+      for (let id = 0; id < 5001; id += 1) {
+        await guard.run('getHistory', fn, `-10090000${String(id).padStart(5, '0')}`);
+      }
+
+      const state = (guard as never as { entityBackoff: Map<string, unknown> }).entityBackoff;
+      expect(state.size).toBe(5000);
     });
 
     it('повторные промахи: бэкофф 1s→2s→4s, перерезолв на каждой попытке, одна строка на шаг', async () => {
@@ -353,7 +573,7 @@ describe('ParserMtprotoGuard', () => {
       await expect(guard.run('getHistory', fn3, '-1007770000004')).resolves.toBe('ok');
     });
 
-    it('промах сущности: чужие строки кэша не трогаем, username ищется без регистра', async () => {
+    it('промах сущности: чужие записи кэша не трогаем, строки сессии не удаляем', async () => {
       const cacheMap = new Map<string, unknown>([['-100999', { peer: 1 }]]);
       const rows = new Set<unknown[]>([['-100999', 'hash', 'other', null, 'Other']]);
       const parserClient: any = {
@@ -364,16 +584,17 @@ describe('ParserMtprotoGuard', () => {
       const miss = jest.fn().mockRejectedValueOnce(channelInvalid()).mockResolvedValueOnce('ok');
       await expect(guard.run('getEntity', miss, 'SomeChannel')).resolves.toBe('ok');
       expect(cacheMap.size).toBe(1);
+      // Строки сессии живут только в персистентном сторе: не удаляем даже свои.
       expect(rows.size).toBe(1);
 
-      // Совпадение по username (регистр не важен) — строка кэша снимается.
+      // Кэша в памяти нет вообще — падений нет, строки сессии тоже целы.
       const rows2 = new Set<unknown[]>([['-100998', 'hash', 'somechannel', null, 'Some']]);
       guard = new ParserMtprotoGuard(bot, makeConfig(), makeRandom(), {
         client: () => ({ session: { _entities: rows2 } }),
       } as never);
       const miss2 = jest.fn().mockRejectedValueOnce(channelInvalid()).mockResolvedValueOnce('ok');
       await expect(guard.run('getEntity', miss2, 'SomeChannel')).resolves.toBe('ok');
-      expect(rows2.size).toBe(0);
+      expect(rows2.size).toBe(1);
     });
 
     it('в строке бэкоффа нет username — только маска', async () => {
@@ -394,6 +615,55 @@ describe('ParserMtprotoGuard', () => {
       const miss = jest.fn().mockRejectedValueOnce(channelInvalid()).mockResolvedValueOnce('ok');
       await expect(guard.run('getHistory', miss, '7770000005')).resolves.toBe('ok');
       expect(cacheMap.size).toBe(0);
+    });
+
+    it('мёртвый пир: на свип-паузе пропускается (свип не дёргает MTProto), соседние пиры работают', async () => {
+      guard = new ParserMtprotoGuard(bot, makeConfig(), makeRandom(), makeEntityClient(chatId));
+
+      const dead = jest.fn().mockRejectedValue(channelInvalid());
+      await guard.run('getHistory', dead, chatId);
+      expect(dead).toHaveBeenCalledTimes(2); // вызов + один повтор после refresh
+      expect(guard.isPeerBroken(chatId)).toBe(true);
+
+      // Свип через 30 минут спрашивает isPeerBroken и пир не трогает
+      // (проверка самого свипа — в parser-collector.service.spec.ts).
+      jest.advanceTimersByTime(30 * 60 * 1000);
+      expect(guard.isPeerBroken(chatId)).toBe(true);
+
+      // Остальные источники свипа не задеты.
+      const healthy = jest.fn().mockResolvedValue('ok');
+      await expect(guard.run('getHistory', healthy, '-1007770000088')).resolves.toBe('ok');
+      expect(healthy).toHaveBeenCalledTimes(1);
+
+      // Горизонт истёк — один пробный вызов, успех снимает паузу.
+      jest.advanceTimersByTime(ENTITY_BROKEN_RETRY_MS);
+      expect(guard.isPeerBroken(chatId)).toBe(false);
+      const probe = jest.fn().mockResolvedValue('ok');
+      await expect(guard.run('getHistory', probe, chatId)).resolves.toBe('ok');
+      expect(probe).toHaveBeenCalledTimes(1);
+      expect(guard.isPeerBroken(chatId)).toBe(false);
+
+      // Одна строка на шаг бэкоффа, не на попытку.
+      const lines = warnSpy.mock.calls.map(([line]) => String(line));
+      expect(lines).toHaveLength(1);
+      expect(lines[0]).toContain('бэкофф 1000ms');
+    });
+
+    it('промах пира блокирует все операции по нему (одна мёртвая сущность — один бэкофф)', async () => {
+      guard = new ParserMtprotoGuard(bot, makeConfig(), makeRandom(), makeEntityClient(chatId));
+
+      const history = jest.fn().mockRejectedValue(channelInvalid());
+      await guard.run('getHistory', history, chatId);
+
+      // Оценщик идёт по тому же источнику другой операцией: бэкофф общий по пиру.
+      const evaluate = jest.fn().mockResolvedValue('ok');
+      await guard.run('getMessages:eval', evaluate, chatId);
+      expect(evaluate).not.toHaveBeenCalled();
+
+      // Курсор бэкоффа истёк — операция снова разрешена (пир оживает сам).
+      jest.advanceTimersByTime(1_001);
+      await expect(guard.run('getMessages:eval', evaluate, chatId)).resolves.toBe('ok');
+      expect(guard.isPeerBroken(chatId)).toBe(false);
     });
   });
 

@@ -44,6 +44,7 @@ const makeGuard = (): any => ({
   pace: jest.fn().mockResolvedValue(undefined),
   isBlocked: jest.fn(() => false),
   blockedUntil: jest.fn(() => null),
+  isPeerBroken: jest.fn(() => false),
 });
 
 const makeParserClient = (client: Record<string, unknown> = {}): any => ({
@@ -320,6 +321,28 @@ describe('ParserCollectorService', () => {
       expect(parserClient.client().getMessages).not.toHaveBeenCalled();
       expect(warnSpy).toHaveBeenCalledTimes(1);
       expect(String(warnSpy.mock.calls[0][0])).toContain('MTProto на паузе');
+    });
+
+    it('мёртвый пир пропускается, остальные источники свипа собираются', async () => {
+      registry.listCollectible.mockResolvedValue([
+        source({ chatId: '-1008888888888' }),
+        source({ id: 2, chatId: '-1008888888899', rawChatId: '8888888899', username: 'dead' }),
+      ]);
+      guard.isPeerBroken.mockImplementation(
+        (chatId: string | number) => String(chatId) === '-1008888888899'
+      );
+      parserClient.client().getMessages.mockResolvedValue([mediaMessage({ id: 12 })]);
+      const debugSpy = jest.spyOn(Logger.prototype, 'debug').mockImplementation(() => undefined);
+
+      expect(await service.sweepAll()).toBe(1);
+
+      const calledPeers = (guard.run as jest.Mock).mock.calls.map(([, , entity]) => String(entity));
+      expect(calledPeers).toEqual(['-1008888888888']);
+      expect(parserClient.client().getMessages).toHaveBeenCalledTimes(1);
+      // В логе пропуска нет сырого chat id.
+      const skipped = debugSpy.mock.calls.map(([line]) => String(line));
+      expect(skipped.some((line) => line.includes('в бэкоффе'))).toBe(true);
+      for (const line of skipped) expect(line).not.toContain('8888888899');
     });
 
     it('прямой вызов sweepSource со своим каналом → без MTProto', async () => {

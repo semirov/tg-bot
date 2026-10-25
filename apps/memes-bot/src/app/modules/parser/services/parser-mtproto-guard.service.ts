@@ -7,10 +7,14 @@ import { RANDOM, Random } from '../../../shared/random';
 import {
   ENTITY_BACKOFF_BASE_MS,
   ENTITY_BACKOFF_CAP_MS,
+  ENTITY_BROKEN_RETRY_MS,
+  ENTITY_REFRESH_COOLDOWN_MS,
+  ENTITY_REFRESH_DIALOG_LIMIT,
   FLOOD_JITTER_MS,
 } from '../constants/parser.constants';
 import { mtprotoFloodGate } from '../../../shared/mtproto-flood-gate';
 import { ParserClientService } from './parser-client.service';
+import { canonicalPeerKey, peerCacheKeys, peerLabel } from '../domain/parser-peer-key';
 
 /** Терминальные ошибки MTProto: ретраить бессмысленно, аккаунт в опасности. */
 export class TerminalMtprotoError extends Error {
@@ -18,6 +22,20 @@ export class TerminalMtprotoError extends Error {
     super(`Terminal MTProto error: ${code}`);
   }
 }
+
+/**
+ * Итог попытки восстановить стор сущностей:
+ * - `refreshed` — `getDialogs` сходил успешно;
+ * - `failed` — вызов был и упал (транзиентная ошибка/флуд);
+ * - `skipped` — вызова не было (окно кулдауна, single flight, пауза, нет клиента).
+ */
+export type EntityRefreshOutcome = 'refreshed' | 'failed' | 'skipped';
+
+/** Потолок состояния по пирам: username-флуд не должен растить карты без границы. */
+const PEER_STATE_LIMIT = 5000;
+
+/** Простой записи пира, после которого её можно выбросить (счётчик шагов неактуален). */
+const PEER_STATE_TTL_MS = 60 * 60 * 1000;
 
 /** Сырой текст ошибки: message, errorMessage и (для не-Error) сам объект. */
 const rawText = (error: unknown): string => {
@@ -62,38 +80,42 @@ const terminalCode = (error: unknown): string | null => {
 export const entityBackoffMs = (fails: number): number =>
   Math.min(ENTITY_BACKOFF_BASE_MS * 2 ** Math.max(0, fails - 1), ENTITY_BACKOFF_CAP_MS);
 
-/** Подпись сущности для лога: только числовой id, username наружу не пишем. */
-const entityLabel = (entity: string | number | undefined): string => {
-  if (entity == null) return '-';
-  const key = String(entity);
-  return /^-?\d+$/.test(key) ? key : '<username>';
-};
+/**
+ * Ключ бэкоффа промахов. С пиром — канонический пир (`canonicalPeerKey`):
+ * промах на одном вызове (`getHistory`, `getMessages:ids`, `getFullChannel`)
+ * означает, что пир не резолвится вообще, и остальные вызовы по нему
+ * (в т.ч. по другой форме id) тоже бессмысленны. Без пира — операция:
+ * перерезолвить нечего, но и повторять её незачем.
+ */
+const peerKey = (entity: string | number): string => `peer:${canonicalPeerKey(entity)}`;
 
-/** Ключ бэкоффа: сырой пир (id/username в нижнем регистре), без маски из лога. */
-const scopeKey = (entity: string | number | undefined): string =>
-  String(entity ?? '-').toLowerCase();
-
-/** Ключи кэша для сущности: marked id канала и «сырой» id. */
-const entityKeys = (entity: string | number): string[] => {
-  const key = String(entity);
-  if (!/^-?\d+$/.test(key)) return [key.toLowerCase()];
-  const marked = key.startsWith('-100') ? key : `-100${key.replace(/^-/, '')}`;
-  const raw = marked.replace(/^-100/, '');
-  return [key, marked, raw].filter((value, index, all) => all.indexOf(value) === index);
-};
+const backoffKey = (operation: string, entity?: string | number): string =>
+  entity === undefined ? `op:${operation}` : peerKey(entity);
 
 /**
  * Обёртка MTProto-вызовов парсера: глобальная пауза по FloodWait (дедлайн,
- * переживает cron/ретраи), бэкофф промахов сущности с перерезолвом кэша,
- * jitter-паузы и stop-and-alert для терминальных ошибок аккаунта.
+ * переживает cron/ретраи), бэкофф промахов сущности с восстановлением стора
+ * через `getDialogs`, jitter-паузы и stop-and-alert для терминальных ошибок.
  */
 @Injectable()
 export class ParserMtprotoGuard {
   private readonly logger = new Logger(ParserMtprotoGuard.name);
   private alerted = false;
 
-  /** Промахи сущности: scope → {подряд промахов, до какого момента молчим}. */
-  private readonly entityBackoff = new Map<string, { fails: number; untilMs: number }>();
+  /** Промахи: ключ (пир или операция) → {подряд промахов, до какого момента молчим, когда трогали}. */
+  private readonly entityBackoff = new Map<
+    string,
+    { fails: number; untilMs: number; touchedAtMs: number }
+  >();
+
+  /** Мёртвые пиры (refresh реально сходил и не помог) → до какого момента свип не трогает. */
+  private readonly brokenPeers = new Map<string, { untilMs: number; touchedAtMs: number }>();
+
+  /** Когда последний раз пробовали перезаполнить стор сущностей, epoch ms. */
+  private lastEntityRefreshAt = 0;
+
+  /** Перезаполнение стора в полёте: параллельные промахи ждут один вызов. */
+  private entityRefreshInFlight?: Promise<EntityRefreshOutcome>;
 
   constructor(
     @Inject(BOT) private readonly bot: Bot<BotContext>,
@@ -119,29 +141,34 @@ export class ParserMtprotoGuard {
    *
    * @param operation имя операции для лога
    * @param fn сам вызов
-   * @param entity пир вызова (marked id/username): по нему сбрасывается кэш
-   *   сущности при промахе и ведётся бэкофф
+   * @param entity пир вызова (marked id/username): по нему восстанавливается
+   *   стор сущностей при промахе и ведётся бэкофф
    */
   async run<T>(
     operation: string,
     fn: () => Promise<T>,
     entity?: string | number
   ): Promise<T | undefined> {
-    const scope = `${operation}:${scopeKey(entity)}`;
+    const key = backoffKey(operation, entity);
+    this.prunePeerState();
     if (this.isBlocked()) return undefined;
 
-    // Промах сущности уже в бэкоффе — не дёргаем Telegram до его конца.
-    const backoff = this.entityBackoff.get(scope);
-    if (backoff && backoff.untilMs > Date.now()) return undefined;
+    // Пир уже в бэкоффе — не дёргаем Telegram до конца шага (лог шага был один).
+    if (this.isBackedOff(key)) return undefined;
 
     // Перерезолв делается заново на каждой разрешённой попытке (не «навсегда»
     // после первого промаха): кэш мог снова протухнуть.
     let reran = false;
+    let refreshOutcome: EntityRefreshOutcome | undefined;
 
     for (;;) {
+      // Пауза могла включиться внутри refresh-а (FLOOD_WAIT от getDialogs):
+      // повтор после промаха уже не должен трогать Telegram.
+      if (this.isBlocked()) return undefined;
       try {
         const result = await fn();
-        this.entityBackoff.delete(scope);
+        this.entityBackoff.delete(key);
+        this.brokenPeers.delete(key);
         return result;
       } catch (error) {
         const terminal = terminalCode(error);
@@ -158,12 +185,19 @@ export class ParserMtprotoGuard {
 
         if (isEntityMiss(error)) {
           if (!reran && entity !== undefined) {
-            // Первый промах эпизода: сбрасываем кэш и перерезолвляем один раз.
+            // Первый промах эпизода: сбрасываем ТОЛЬКО in-memory кэш пира,
+            // перезаполняем стор через getDialogs и повторяем один раз.
             reran = true;
-            this.invalidateEntity(entity);
+            this.dropCachedPeer(entity);
+            refreshOutcome = await this.refreshEntityStore(operation);
+            if (refreshOutcome === 'refreshed') {
+              // gramjs берёт ПЕРВУЮ строку пира: свежий access hash должен
+              // оказаться единственным, иначе устаревший выигрывает навсегда.
+              this.dropStalePeerRows(entity);
+            }
             continue;
           }
-          this.scheduleEntityBackoff(operation, scope, entity);
+          this.scheduleEntityBackoff(operation, key, entity, refreshOutcome);
           return undefined;
         }
 
@@ -171,6 +205,18 @@ export class ParserMtprotoGuard {
         return undefined;
       }
     }
+  }
+
+  /**
+   * Пир признан мёртвым: refresh **реально сходил** и не помог, либо пир ждёт
+   * следующего окна refresh-а. Свип не дёргает такой пир до горизонта; один
+   * мёртвый пир не останавливает свип остальных источников.
+   */
+  public isPeerBroken(entity: string | number): boolean {
+    const now = Date.now();
+    this.prunePeerState();
+    const state = this.brokenPeers.get(peerKey(entity));
+    return state !== undefined && state.untilMs > now;
   }
 
   /** Пауза с jitterом между MTProto-вызовами (анти-«поезд»). */
@@ -193,43 +239,203 @@ export class ParserMtprotoGuard {
     );
   }
 
-  /** Бэкофф промаха сущности: шаг экспоненциальный, лог — одна строка на шаг. */
-  private scheduleEntityBackoff(operation: string, scope: string, entity?: string | number): void {
-    const fails = (this.entityBackoff.get(scope)?.fails ?? 0) + 1;
+  /**
+   * Бэкофф промаха сущности: шаг экспоненциальный, лог — одна строка на шаг.
+   *
+   * Пауза свипа (горизонт «мёртвого» пира) аргументируется итогом refresh-а:
+   * часовой горизонт — только когда `getDialogs` реально сходил и пир всё равно
+   * не поднялся. Пропущенный (окно/single flight) или упавший refresh не
+   * приговор: ждём до следующего окна, иначе один транзиентный сбой `getDialogs`
+   * выключил бы все затронутые источники на час (симптом инцидента).
+   */
+  private scheduleEntityBackoff(
+    operation: string,
+    key: string,
+    entity: string | number | undefined,
+    outcome: EntityRefreshOutcome | undefined
+  ): void {
+    const now = Date.now();
+    const fails = (this.entityBackoff.get(key)?.fails ?? 0) + 1;
     const delayMs = entityBackoffMs(fails);
-    this.entityBackoff.set(scope, { fails, untilMs: Date.now() + delayMs });
+    this.setPeerState(this.entityBackoff, key, {
+      fails,
+      untilMs: now + delayMs,
+      touchedAtMs: now,
+    });
+
+    let parkMs = 0;
+    let reason = 'без пира';
+    if (entity !== undefined) {
+      if (outcome === 'refreshed') {
+        parkMs = ENTITY_BROKEN_RETRY_MS;
+        reason = 'refresh не помог';
+      } else {
+        parkMs = this.cooldownLeftMs(now);
+        reason = outcome === 'failed' ? 'refresh не удался' : 'refresh пропущен';
+      }
+      if (parkMs > 0) {
+        this.setPeerState(this.brokenPeers, key, { untilMs: now + parkMs, touchedAtMs: now });
+      } else {
+        this.brokenPeers.delete(key);
+      }
+    }
+
     this.logger.warn(
-      `Parser MTProto ${operation}: пир ${entityLabel(entity)} не резолвится (CHANNEL_INVALID/input entity), бэкофф ${delayMs}ms (подряд ${fails})`
+      `Parser MTProto ${operation}: пир ${peerLabel(entity)} не резолвится (CHANNEL_INVALID/input entity), бэкофф ${delayMs}ms, свип-пауза ${parkMs}ms (${reason}, подряд ${fails})`
     );
   }
 
-  /**
-   * Сбрасывает закэшированный пир в gramjs (in-memory entity cache и строки
-   * сессии), чтобы следующий вызов перерезолвил его через Telegram.
-   */
-  private invalidateEntity(entity: string | number): void {
-    const client = this.parserClient?.client() as unknown as
-      | {
-          _entityCache?: { cacheMap?: Map<string, unknown> };
-          session?: { _entities?: Set<unknown[]> };
-        }
-      | undefined;
-    if (!client) return;
+  /** Ключ в бэкоффе и шаг ещё не истёк. */
+  private isBackedOff(key: string): boolean {
+    const state = this.entityBackoff.get(key);
+    return state !== undefined && state.untilMs > Date.now();
+  }
 
-    const keys = entityKeys(entity);
-    for (const key of keys) {
-      client._entityCache?.cacheMap?.delete(key);
+  /** Сколько осталось до следующего разрешённого refresh-а, мс. */
+  private cooldownLeftMs(now: number): number {
+    return Math.max(0, this.lastEntityRefreshAt + ENTITY_REFRESH_COOLDOWN_MS - now);
+  }
+
+  /** Чистит протухшие записи: состояние по пирам не должно течь. */
+  private prunePeerState(): void {
+    const now = Date.now();
+    for (const [key, state] of this.entityBackoff) {
+      if (now - state.touchedAtMs > PEER_STATE_TTL_MS) this.entityBackoff.delete(key);
     }
+    for (const [key, state] of this.brokenPeers) {
+      if (now - state.touchedAtMs > PEER_STATE_TTL_MS) this.brokenPeers.delete(key);
+    }
+  }
 
-    const rows = client.session?._entities;
-    if (rows && typeof rows.delete === 'function') {
-      for (const row of Array.from(rows)) {
-        // Строка сессии MemorySession: [markedId, hash, username, phone, name].
-        if (keys.includes(String(row[0])) || keys.includes(String(row[2]))) {
-          rows.delete(row);
-        }
+  /** Запись в карту с потолком: самые старые ключи вытесняются (FIFO). */
+  private setPeerState<V>(map: Map<string, V>, key: string, value: V): void {
+    map.delete(key);
+    map.set(key, value);
+    while (map.size > PEER_STATE_LIMIT) {
+      for (const oldest of map.keys()) {
+        map.delete(oldest);
+        break;
       }
     }
+  }
+
+  /**
+   * Сбрасывает ТОЛЬКО in-memory кэш пира (`_entityCache.cacheMap`).
+   *
+   * Строки `session._entities` (`MemorySession`) не трогаем: их удаление —
+   * регрессия TGB-118 (пир переставал резолвиться до рестарта). Строки не
+   * сериализуются в `StringSession`, поэтому рестарт их не восстанавливает —
+   * после рестарта пир возвращает только новый резолв (`getDialogs` /
+   * `ResolveUsername`), см. `refreshEntityStore`.
+   */
+  private dropCachedPeer(entity: string | number): void {
+    const cacheMap = this.entityCacheMap();
+    if (!cacheMap) return;
+    for (const key of peerCacheKeys(entity)) cacheMap.delete(key);
+  }
+
+  /**
+   * Убирает УСТАРЕВШИЕ дубли строк пира, оставляя самую свежую.
+   *
+   * gramjs ищет пир по `session._entities` в порядке вставки и берёт первую
+   * строку, поэтому после успешного refresh-а старый access hash побеждал бы
+   * новый и пир не выздоравливал бы никогда. Удаляем только дубли этого пира.
+   */
+  private dropStalePeerRows(entity: string | number): void {
+    const rows = this.sessionEntityRows();
+    if (!rows || rows.size < 2) return;
+    const keys = new Set(peerCacheKeys(entity));
+
+    let newest: unknown[] | undefined;
+    for (const row of rows) {
+      if (this.rowMatchesPeer(row, keys)) newest = row;
+    }
+    if (!newest) return;
+
+    for (const row of Array.from(rows)) {
+      if (row !== newest && this.rowMatchesPeer(row, keys)) rows.delete(row);
+    }
+  }
+
+  /** Строка сессии MemorySession: [id, hash, username, phone, name]. */
+  private rowMatchesPeer(row: unknown, keys: Set<string>): boolean {
+    if (!Array.isArray(row)) return false;
+    const id = row[0] == null ? '' : String(row[0]).toLowerCase();
+    const username = row[2] == null ? '' : String(row[2]).toLowerCase();
+    return (id !== '' && keys.has(id)) || (username !== '' && keys.has(username));
+  }
+
+  /**
+   * Перезаполняет стор сущностей gramjs: `messages.GetDialogs` возвращает
+   * `chats`/`users` с access hash-ами, и gramjs кладёт их и в `_entityCache`,
+   * и в строки сессии (`_call` → `session.processEntities` + `_entityCache.add`).
+   * Это документированный путь, которым пир возвращается в резолв без рестарта.
+   *
+   * `limit: 200` — два запроса gramjs (чанк по 100), осознанно: один запрос
+   * покрыл бы лишь первую сотню подписок, а refresh нужен всем источникам.
+   * Вызов не чаще раза в `ENTITY_REFRESH_COOLDOWN_MS`, single-flight: пачка
+   * промахов по всем источникам даёт один refresh, а не по одному на пир.
+   */
+  private async refreshEntityStore(operation: string): Promise<EntityRefreshOutcome> {
+    if (this.entityRefreshInFlight) return this.entityRefreshInFlight;
+    if (this.isBlocked()) return 'skipped';
+    if (Date.now() - this.lastEntityRefreshAt < ENTITY_REFRESH_COOLDOWN_MS) return 'skipped';
+
+    const client = this.parserClient?.client() as unknown as
+      | { getDialogs?: (params: { limit: number }) => Promise<unknown> }
+      | undefined;
+    if (typeof client?.getDialogs !== 'function') return 'skipped';
+
+    this.lastEntityRefreshAt = Date.now();
+    this.entityRefreshInFlight = this.runEntityRefresh(operation, {
+      getDialogs: client.getDialogs.bind(client),
+    });
+
+    try {
+      return await this.entityRefreshInFlight;
+    } finally {
+      this.entityRefreshInFlight = undefined;
+    }
+  }
+
+  private async runEntityRefresh(
+    operation: string,
+    client: { getDialogs: (params: { limit: number }) => Promise<unknown> }
+  ): Promise<EntityRefreshOutcome> {
+    try {
+      await client.getDialogs({ limit: ENTITY_REFRESH_DIALOG_LIMIT });
+    } catch (error) {
+      const floodSec = isFloodWait(error);
+      if (floodSec !== null) {
+        this.enterFloodWait('getDialogs', floodSec);
+        return 'failed';
+      }
+      this.logger.warn(
+        `Parser MTProto ${operation}: перезаполнение стора сущностей не удалось: ${describe(error)}`
+      );
+      return 'failed';
+    }
+
+    this.logger.log(
+      `Parser MTProto ${operation}: стор сущностей перезаполнен (getDialogs, limit=${ENTITY_REFRESH_DIALOG_LIMIT})`
+    );
+    return 'refreshed';
+  }
+
+  /** In-memory кэш сущностей gramjs (внутренний, но стабильный в 2.x). */
+  private entityCacheMap(): Map<string, unknown> | undefined {
+    const cache = this.parserClient?.client() as unknown as
+      | { _entityCache?: { cacheMap?: Map<string, unknown> } }
+      | undefined;
+    return cache?._entityCache?.cacheMap;
+  }
+
+  /** Строки сессии gramjs: `Set<[id, hash, username, phone, name]>`. */
+  private sessionEntityRows(): Set<unknown[]> | undefined {
+    const client = this.parserClient?.client() as unknown as
+      | { session?: { _entities?: Set<unknown[]> } }
+      | undefined;
+    return client?.session?._entities;
   }
 
   private async alertOwner(code: string): Promise<void> {

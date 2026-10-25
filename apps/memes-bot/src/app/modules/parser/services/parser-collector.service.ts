@@ -18,6 +18,7 @@ import { ParserClientService } from './parser-client.service';
 import { ParserDiscoveryService } from './parser-discovery.service';
 import { collectPostCrossLinks, normalizeChatId } from '../domain/parser-cross-links';
 import { extractMediaInfo, rawIdOf } from '../domain/parser-media';
+import { canonicalPeerKey } from '../domain/parser-peer-key';
 
 interface AlbumGroup {
   timer: NodeJS.Timeout;
@@ -145,6 +146,13 @@ export class ParserCollectorService {
       if (this.guard.isBlocked()) {
         this.logPausedOnce();
         return collected;
+      }
+      // Пир в бэкоффе промахов: refresh + resolve уже не помогли. Шаг
+      // бэкоффа отлогирован guard-ом один раз (с маской пира), свип пир не
+      // дёргает — но остальные источники собираются как обычно.
+      if (this.guard.isPeerBroken(canonicalPeerKey(source.chatId))) {
+        this.logger.debug('Parser sweep: пир в бэкоффе промахов — пропуск');
+        continue;
       }
       try {
         collected += await this.sweepSource(source, client);
@@ -286,7 +294,7 @@ export class ParserCollectorService {
     const result = await this.guard.run<TotalList<Api.Message>>(
       'getMessages:ids',
       () => client.getMessages(rawChatId, { ids: [messageId] }),
-      rawChatId.toString()
+      canonicalPeerKey(rawChatId.toString())
     );
     return result?.find((m) => m?.id === messageId);
   }
