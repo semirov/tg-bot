@@ -1,3 +1,10 @@
+## [0.42.2](https://github.com/semirov/tg-bot/compare/v0.42.1...v0.42.2) (2026-10-25)
+
+
+### Bug Fixes
+
+* **parser:** TGB-124 - bounded forced-delivery attempts, file-reference refresh, no head-of-line block ([b2bfe84](https://github.com/semirov/tg-bot/commit/b2bfe841aa41e897f0a764de2e6249ef1119f249))
+
 ## [0.42.1](https://github.com/semirov/tg-bot/compare/v0.42.0...v0.42.1) (2026-10-25)
 
 
