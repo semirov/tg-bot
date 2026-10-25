@@ -1,3 +1,11 @@
+## [0.41.6](https://github.com/semirov/tg-bot/compare/v0.41.5...v0.41.6) (2026-10-25)
+
+
+### Bug Fixes
+
+* **parser:** TGB-118 - honour MTProto FLOOD_WAIT, entity backoff, own-channel skip ([69d7b00](https://github.com/semirov/tg-bot/commit/69d7b0040116ea3bf268df665196f7db5facba33))
+* **publish:** TGB-117 - atomic publish claim, idempotent manual publish, answered callbacks ([0b2bf8f](https://github.com/semirov/tg-bot/commit/0b2bf8fdb242fdab7967fe9a6e864acdfce16f78))
+
 ## [0.41.5](https://github.com/semirov/tg-bot/compare/v0.41.4...v0.41.5) (2026-10-22)
 
 
