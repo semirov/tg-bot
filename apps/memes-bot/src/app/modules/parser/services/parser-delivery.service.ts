@@ -3,7 +3,6 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { IsNull, Not, Repository } from 'typeorm';
 import * as bigInt from 'big-integer';
 import { Api, TelegramClient } from 'telegram';
-import { TotalList } from 'telegram/Helpers';
 import { Bot } from 'grammy';
 import { InlineKeyboard, InputFile } from 'grammy';
 import * as imghash from 'imghash';
@@ -21,6 +20,22 @@ import { ParserMtprotoGuard } from './parser-mtproto-guard.service';
 import { ParserClientService } from './parser-client.service';
 import { ParserRegistryService } from './parser-registry.service';
 import { formatViews } from '../domain/parser-scoring';
+import { mediaFailureReason } from '../domain/parser-delivery-attempts';
+
+/** Итог доставки: `reason` — класс сбоя для селектора (bounded attempts). */
+export interface DeliveryResult {
+  ok: boolean;
+  status: ObservedStatus;
+  reason?: string;
+}
+
+/** Медиа поста, полученное юзерботом; `error` — причина сбоя (см. `mediaFailureReason`). */
+interface MediaPayload {
+  photoBuffer?: Buffer;
+  videoBuffer?: Buffer;
+  thumbBuffer?: Buffer;
+  error?: string;
+}
 
 /**
  * Доставка отобранных кандидатов в предложку: юзербот отдаёт байты медиа,
@@ -43,17 +58,13 @@ export class ParserDeliveryService {
   ) {}
 
   /** Полный цикл доставки одного кандидата. */
-  public async deliver(candidate: ObservedPostEntity): Promise<{ ok: boolean; status: ObservedStatus }> {
+  public async deliver(candidate: ObservedPostEntity): Promise<DeliveryResult> {
     const source = await this.registry.repository.findOne({ where: { chatId: candidate.sourceChatId } });
     if (!source) {
       return this.fail(candidate, 'source-missing');
     }
 
-    const mtproto = await this.fetchMessageBytes(candidate, source);
-    if (!mtproto) {
-      return this.fail(candidate, 'media-fetch-failed');
-    }
-
+    const mtproto = await this.fetchMedia(candidate, source);
     if (mtproto.error) {
       return this.fail(candidate, mtproto.error);
     }
@@ -114,6 +125,8 @@ export class ParserDeliveryService {
     candidate.requestChannelMessageId = messageId;
     candidate.imageHash = imageHash;
     candidate.perceptualHash = perceptualHash;
+    // Успех закрывает историю сбоев: строка ушла из пула, счётчик не копится.
+    candidate.deliveryAttempts = 0;
     await this.observedRepository.save(candidate);
 
     source.selectedTotal += 1;
@@ -232,28 +245,49 @@ export class ParserDeliveryService {
     }
   }
 
-  /** Скачивает медиа через юзербот (read-only). */
-  private async fetchMessageBytes(
+  /**
+   * Медиа кандидата через юзербот (read-only). Битый `file_reference`
+   * (`FILE_REFERENCE_EXPIRED`) даёт `media-fetch-failed`: перечитываем сообщение
+   * ОДИН раз — `getMessages` отдаёт свежую ссылку — и повторяем скачивание.
+   * Попытку доставки селектор считает уже после этого повтора. Пока MTProto на
+   * флуд-паузе, повторного вызова нет (и попытка не тратится).
+   */
+  private async fetchMedia(
     candidate: ObservedPostEntity,
     source: SourceChannelEntity
-  ): Promise<{ photoBuffer?: Buffer; videoBuffer?: Buffer; thumbBuffer?: Buffer; error?: string } | null> {
+  ): Promise<MediaPayload> {
+    const first = await this.readMedia(candidate, source);
+    if (first.error !== 'media-fetch-failed') return first;
+    if (this.guard.isBlocked()) return { error: 'mtproto-blocked' };
+    return this.readMedia(candidate, source);
+  }
+
+  /** Одно чтение сообщения и скачивание медиа; сбои — классами доставки. */
+  private async readMedia(
+    candidate: ObservedPostEntity,
+    source: SourceChannelEntity
+  ): Promise<MediaPayload> {
     const client = await this.activeClient();
-    if (!client) return null;
+    if (!client) return { error: 'no-client' };
+    if (this.guard.isBlocked()) return { error: 'mtproto-blocked' };
 
     // Для публичных каналов надёжнее username (без кэша диалогов).
     const peer = source.username ?? bigInt(source.chatId);
     const ids = [candidate.sourceMessageId];
-    const messages = await this.guard.run<TotalList<Api.Message>>(
+    const read = await this.guarded(
       'getMessages:deliver',
       () => client.getMessages(peer, { ids }),
       source.chatId
     );
-    const message = messages?.find((m) => m?.id === candidate.sourceMessageId);
-    if (!message) return null;
+    if (read.error) return { error: read.error };
+    const message = read.value?.find((m) => m?.id === candidate.sourceMessageId);
+    if (!message) return { error: 'media-fetch-failed' };
 
     const kind = candidate.mediaKind === 'video' || message.video ? 'video' : 'photo';
-    const buffer = await this.guard.run('downloadMedia', () => client.downloadMedia(message));
-    if (!buffer || !(buffer instanceof Buffer) || buffer.length === 0) {
+    const download = await this.guarded('downloadMedia', () => client.downloadMedia(message));
+    if (download.error) return { error: download.error };
+    const buffer = download.value;
+    if (!(buffer instanceof Buffer) || buffer.length === 0) {
       return { error: 'media-download-empty' };
     }
 
@@ -270,6 +304,37 @@ export class ParserDeliveryService {
       return thumbBuffer ? { videoBuffer: buffer, thumbBuffer } : { videoBuffer: buffer };
     }
     return { photoBuffer: buffer };
+  }
+
+  /**
+   * MTProto-вызов через guard с сохранением сырой ошибки: guard гасит сбой в
+   * `undefined`, а класс сбоя (сеть/флуд/медиа) нужен, чтобы не тратить попытку
+   * доставки и не приговаривать здоровый пост.
+   */
+  private async guarded<T>(
+    operation: string,
+    fn: () => Promise<T>,
+    entity?: string | number
+  ): Promise<{ value?: T; error?: string }> {
+    let called = false;
+    let failed: unknown = null;
+    const value = await this.guard.run<T>(
+      operation,
+      async () => {
+        called = true;
+        try {
+          return await fn();
+        } catch (error) {
+          failed = error;
+          throw error;
+        }
+      },
+      entity
+    );
+    // fn не вызывался — guard на паузе/в бэкоффе пира: вызова не было, попытку не тратим.
+    if (!called) return { error: 'mtproto-blocked' };
+    if (failed != null) return { error: mediaFailureReason(failed) };
+    return { value };
   }
 
   /** Скачивает обложку видео (крупнейший размер), если она есть. */
@@ -458,16 +523,13 @@ export class ParserDeliveryService {
       .text('↩️ Отмена', `${CARD_CB_PREFIX}:exclno:${candidateId}`);
   }
 
-  private async fail(
-    candidate: ObservedPostEntity,
-    reason: string
-  ): Promise<{ ok: boolean; status: ObservedStatus }> {
+  private async fail(candidate: ObservedPostEntity, reason: string): Promise<DeliveryResult> {
     candidate.status = ObservedStatus.FAILED;
     candidate.rejectReason = reason;
     await this.observedRepository.save(candidate);
     metrics.parser.deliveryFailures.inc({ reason });
     this.logger.warn(`Parser delivery: кандидат ${candidate.id} не доставлен (${reason})`);
-    return { ok: false, status: ObservedStatus.FAILED };
+    return { ok: false, status: ObservedStatus.FAILED, reason };
   }
 
   private async activeClient(): Promise<TelegramClient | undefined> {

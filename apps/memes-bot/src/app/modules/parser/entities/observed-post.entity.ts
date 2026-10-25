@@ -92,6 +92,14 @@ export class ObservedPostEntity {
   @Column('timestamp', { nullable: true })
   deliveredAt: Date | null;
 
+  /** Сколько подряд попыток доставки провалились на медиа (предел — DELIVERY_ATTEMPT_LIMIT). */
+  @Column('int', { nullable: true })
+  deliveryAttempts: number | null;
+
+  /** Когда последняя попытка доставки провалилась: окно бэкоффа выдачи. */
+  @Column('timestamp', { nullable: true })
+  lastDeliveryFailureAt: Date | null;
+
   /** message_id карточки в предложке (USER_REQUEST_CHANNEL). */
   @Column('bigint', { nullable: true })
   requestChannelMessageId: number;

@@ -44,6 +44,14 @@ describe('ObservedPostEntity', () => {
     expect(column('forced')?.options).toMatchObject({ default: false });
   });
 
+  it('попытки доставки: счётчик и время последнего провала', () => {
+    expect(column('deliveryAttempts')?.options).toMatchObject({ type: 'int', nullable: true });
+    expect(column('lastDeliveryFailureAt')?.options).toMatchObject({
+      type: 'timestamp',
+      nullable: true,
+    });
+  });
+
   it('актуализация пула: refreshedAt/refreshCount и индекс (status, evaluatedAt)', () => {
     expect(column('refreshedAt')?.options).toMatchObject({ type: 'timestamp', nullable: true });
     expect(column('refreshCount')?.options).toMatchObject({ type: 'int', default: 0 });

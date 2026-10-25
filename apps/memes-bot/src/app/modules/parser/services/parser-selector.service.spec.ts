@@ -1,6 +1,8 @@
 import {
   AUTO_DELIVER_PER_CYCLE,
   BACKLOG_TTL_DAYS,
+  DELIVERY_ATTEMPT_LIMIT,
+  DELIVERY_RETRY_BACKOFF_MS,
   DUMP_COOLDOWN_MINUTES,
   DUMP_PER_SOURCE_CAP,
   FORCE_PER_CYCLE_CAP,
@@ -103,6 +105,21 @@ const makeBot = (): any => ({
 
 let clockNow = NOW;
 const makeClock = (): any => ({ now: jest.fn(() => clockNow) });
+
+const FORCE_BACKOFF_MS = DELIVERY_RETRY_BACKOFF_MS;
+
+/**
+ * Форс-пул так, как его отдаёт запрос: без строк, проваливавшихся внутри
+ * окна бэкоффа (проверяем поведение выборки на «живом» наборе строк).
+ */
+const forcedPool = (rows: any[]): any[] =>
+  rows.filter(
+    (row) =>
+      row.status === ObservedStatus.SCORED &&
+      row.forced &&
+      (row.lastDeliveryFailureAt == null ||
+        clockNow.getTime() - new Date(row.lastDeliveryFailureAt).getTime() >= FORCE_BACKOFF_MS)
+  );
 
 const setup = (overrides: { settings?: Record<string, unknown> } = {}) => {
   const observedRepo = makeObservedRepo();
@@ -255,7 +272,7 @@ describe('ParserSelectorService', () => {
     it('форс-пост не блокирует обычную выдачу (нет force-only очереди)', async () => {
       const { service, observedRepo, delivery } = setup();
       observedRepo.find.mockImplementation(async ({ where }: any) =>
-        where.forced === true
+        (Array.isArray(where) ? where.some((item: any) => item.forced) : where.forced) === true
           ? [scoredRow({ id: 1, forced: true, mediaUniqueId: 'f-1' })]
           : [scoredRow({ id: 2, mediaUniqueId: 'n-1' })]
       );
@@ -265,6 +282,119 @@ describe('ParserSelectorService', () => {
       expect(await service.deliverDue()).toBe(1);
       expect(delivery.deliver).toHaveBeenCalledTimes(2);
       expect(delivery.deliver).toHaveBeenLastCalledWith(expect.objectContaining({ id: 2 }));
+    });
+
+    it('выборка отсекает падавшие за последний час строки прямо в запросе', async () => {
+      const { service, observedRepo } = setup();
+
+      await service.deliverForced();
+
+      const options = observedRepo.find.mock.calls[0][0];
+      expect(options.take).toBe(FORCE_PER_CYCLE_CAP * 5);
+      expect(options.order).toEqual({ createdAt: 'ASC' });
+      expect(Array.isArray(options.where)).toBe(true);
+      expect(options.where[0]).toMatchObject({ status: ObservedStatus.SCORED, forced: true });
+      expect(options.where[0].lastDeliveryFailureAt).toMatchObject({ _type: 'isNull' });
+      expect(options.where[1]).toMatchObject({ status: ObservedStatus.SCORED, forced: true });
+      expect(options.where[1].lastDeliveryFailureAt).toMatchObject({ _type: 'lessThan' });
+    });
+
+    it('голова очереди в бэкоффе не запирает остальные строки в том же цикле', async () => {
+      const { service, observedRepo, registry, delivery } = setup();
+      const chatIds = Array.from({ length: 7 }, (_, i) => `-1000${i}`);
+      const rows = [
+        scoredRow({
+          id: 1,
+          forced: true,
+          sourceChatId: chatIds[0],
+          mediaUniqueId: 'm-0',
+          // Провал минуту назад: окно бэкоффа ещё не истекло.
+          lastDeliveryFailureAt: new Date(NOW.getTime() - 60_000),
+        }),
+        ...chatIds
+          .slice(1)
+          .map((chatId, i) =>
+            scoredRow({ id: i + 2, forced: true, sourceChatId: chatId, mediaUniqueId: `m-${i + 1}` })
+          ),
+      ];
+      observedRepo.find.mockResolvedValue(rows);
+      registry.repository.find.mockResolvedValue(chatIds.map((chatId) => source({ chatId })));
+      delivery.deliver.mockResolvedValue({ ok: true, status: ObservedStatus.DELIVERED });
+
+      expect(await service.deliverForced()).toBe(FORCE_PER_CYCLE_CAP);
+      expect(delivery.deliver).toHaveBeenCalledTimes(FORCE_PER_CYCLE_CAP);
+      expect(delivery.deliver).not.toHaveBeenCalledWith(expect.objectContaining({ id: 1 }));
+    });
+
+    it('три медиа-сбоя подряд → REJECTED, строка больше не выбирается', async () => {
+      const { service, observedRepo, delivery } = setup();
+      const rows = [
+        scoredRow({ id: 1, forced: true, deliveryAttempts: null, lastDeliveryFailureAt: null }),
+      ];
+      observedRepo.find.mockImplementation(async () =>
+        forcedPool(rows).slice(0, FORCE_PER_CYCLE_CAP * 5)
+      );
+      delivery.deliver.mockImplementation(async (row: any) => {
+        row.rejectReason = 'media-fetch-failed';
+        return { ok: false, status: ObservedStatus.FAILED, reason: 'media-fetch-failed' };
+      });
+
+      expect(await service.deliverForced()).toBe(0);
+      expect(rows[0]).toMatchObject({
+        status: ObservedStatus.SCORED,
+        deliveryAttempts: 1,
+        rejectReason: null,
+        lastDeliveryFailureAt: NOW,
+      });
+
+      clockNow = new Date(NOW.getTime() + FORCE_BACKOFF_MS + 1);
+      await service.deliverForced();
+      expect(rows[0]).toMatchObject({ status: ObservedStatus.SCORED, deliveryAttempts: 2 });
+
+      clockNow = new Date(NOW.getTime() + 2 * (FORCE_BACKOFF_MS + 1));
+      await service.deliverForced();
+      expect(rows[0]).toMatchObject({
+        status: ObservedStatus.REJECTED,
+        deliveryAttempts: DELIVERY_ATTEMPT_LIMIT,
+        rejectReason: 'media-fetch-failed',
+      });
+
+      // Отклонённая строка выпадает из пула: доставка больше не вызывается.
+      clockNow = new Date(NOW.getTime() + 3 * (FORCE_BACKOFF_MS + 1));
+      expect(await service.deliverForced()).toBe(0);
+      expect(delivery.deliver).toHaveBeenCalledTimes(DELIVERY_ATTEMPT_LIMIT);
+    });
+
+    it('сетевой сбой попытку не тратит и повторяется после бэкоффа', async () => {
+      const { service, observedRepo, delivery } = setup();
+      const rows = [
+        scoredRow({ id: 1, forced: true, deliveryAttempts: null, lastDeliveryFailureAt: null }),
+      ];
+      observedRepo.find.mockImplementation(async () => forcedPool(rows));
+      delivery.deliver.mockImplementation(async (row: any) => {
+        row.rejectReason = 'network';
+        return { ok: false, status: ObservedStatus.FAILED, reason: 'network' };
+      });
+
+      expect(await service.deliverForced()).toBe(0);
+      expect(rows[0]).toMatchObject({
+        status: ObservedStatus.SCORED,
+        deliveryAttempts: null,
+        rejectReason: null,
+        lastDeliveryFailureAt: NOW,
+      });
+
+      // Внутри окна бэкоффа строку не трогаем — и не отклоняем.
+      clockNow = new Date(NOW.getTime() + 20 * 60_000);
+      expect(await service.deliverForced()).toBe(0);
+      expect(delivery.deliver).toHaveBeenCalledTimes(1);
+
+      // Окно истекло — строка снова в работе, сбой не накопился.
+      clockNow = new Date(NOW.getTime() + FORCE_BACKOFF_MS + 1);
+      delivery.deliver.mockResolvedValue({ ok: true, status: ObservedStatus.DELIVERED });
+      expect(await service.deliverForced()).toBe(1);
+      expect(delivery.deliver).toHaveBeenCalledTimes(2);
+      expect((delivery.deliver.mock.calls[1][0] as any).deliveryAttempts).toBeNull();
     });
   });
 

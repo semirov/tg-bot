@@ -16,7 +16,7 @@ jest.mock('imghash', () => ({
 const NOW = new Date('2026-09-19T12:00:00Z');
 
 const flushMicrotasks = async (): Promise<void> => {
-  for (let i = 0; i < 30; i += 1) await Promise.resolve();
+  for (let i = 0; i < 300; i += 1) await Promise.resolve();
 };
 
 const source = (overrides: Record<string, unknown> = {}): any => ({
@@ -89,12 +89,25 @@ const makeConfig = (): any => ({
   memeChanelId: -1001111111111,
 });
 
-const makeGuard = (): any => ({
-  run: jest.fn(async (_op: string, fn: () => Promise<unknown>) => fn()),
-  pace: jest.fn().mockResolvedValue(undefined),
-  isBlocked: jest.fn(() => false),
-  blockedUntil: jest.fn(() => null),
-});
+const makeGuard = (): any => {
+  const state = { blocked: false };
+  return {
+    state,
+    // Как настоящий guard: MTProto-сбой гасится в `undefined`, пауза — без вызова.
+    run: jest.fn(async (_op: string, fn: () => Promise<unknown>) => {
+      if (state.blocked) return undefined;
+      try {
+        return await fn();
+      } catch {
+        return undefined;
+      }
+    }),
+    pace: jest.fn().mockResolvedValue(undefined),
+    isBlocked: jest.fn(() => state.blocked),
+    blockedUntil: jest.fn(() => (state.blocked ? Date.now() + 60_000 : null)),
+  };
+};
+
 
 const makeRegistry = (overrides: Record<string, unknown> = {}): any => ({
   repository: {
@@ -141,17 +154,18 @@ const setup = (overrides: SetupOverrides = {}) => {
   const bot = makeBot();
   const registry = makeRegistry(overrides.source ?? {});
   const dedup = makeDedup();
+  const guard = makeGuard();
   const service = new ParserDeliveryService(
     bot,
     makeConfig(),
-    makeGuard(),
+    guard,
     registry,
     makeParserClient(client),
     dedup,
     observedRepo,
     makeClock()
   );
-  return { service, observedRepo, bot, dedup, client, registry };
+  return { service, observedRepo, bot, dedup, client, registry, guard };
 };
 
 describe('ParserDeliveryService', () => {
@@ -373,13 +387,14 @@ describe('ParserDeliveryService', () => {
     expect(result).toMatchObject({ ok: false, status: ObservedStatus.FAILED });
   });
 
-  it('нет активного клиента → FAILED media-fetch-failed', async () => {
+  it('нет активного клиента → FAILED no-client (транзиент, попытку не тратит)', async () => {
     const setupData = setup({});
     (setupData.service as never as { parserClient: any }).parserClient.client.mockReturnValue(undefined);
 
     const result = await setupData.service.deliver(candidate());
 
-    expect(result).toMatchObject({ ok: false, status: ObservedStatus.FAILED });
+    expect(result).toMatchObject({ ok: false, status: ObservedStatus.FAILED, reason: 'no-client' });
+    expect(setupData.client.getMessages).not.toHaveBeenCalled();
   });
 
   it('пустой буфер → FAILED media-download-empty', async () => {
@@ -388,6 +403,127 @@ describe('ParserDeliveryService', () => {
     const result = await setupData.service.deliver(candidate());
 
     expect(result).toMatchObject({ ok: false, status: ObservedStatus.FAILED });
+  });
+
+  describe('протухший file_reference', () => {
+    const expired = (): Error => new Error('400: FILE_REFERENCE_EXPIRED (caused by GetHistoryRequest)');
+
+    it('перечитывает сообщение один раз и скачивает по свежей ссылке', async () => {
+      const stale = messageWithPhoto();
+      const fresh = messageWithPhoto();
+      const getMessages = jest.fn().mockResolvedValueOnce([stale]).mockResolvedValueOnce([fresh]);
+      const downloadMedia = jest
+        .fn()
+        .mockRejectedValueOnce(expired())
+        .mockResolvedValueOnce(Buffer.from([9, 9, 9]));
+      const { service, bot } = setup({ client: { getMessages, downloadMedia } });
+
+      const result = await service.deliver(candidate());
+
+      expect(result).toMatchObject({ ok: true, status: ObservedStatus.DELIVERED });
+      // Ровно одно перечитывание перед вторым скачиванием.
+      expect(getMessages).toHaveBeenCalledTimes(2);
+      expect(getMessages.mock.calls[1][1]).toEqual({ ids: [42] });
+      expect(downloadMedia).toHaveBeenCalledTimes(2);
+      expect(downloadMedia.mock.calls[0][0]).toBe(stale);
+      expect(downloadMedia.mock.calls[1][0]).toBe(fresh);
+      expect(bot.api.sendPhoto).toHaveBeenCalledTimes(1);
+    });
+
+    it('повтор после перечитывания тоже падает → media-fetch-failed', async () => {
+      const getMessages = jest.fn().mockResolvedValue([messageWithPhoto()]);
+      const downloadMedia = jest.fn().mockRejectedValue(expired());
+      const { service } = setup({ client: { getMessages, downloadMedia } });
+      const row = candidate();
+
+      const result = await service.deliver(row);
+
+      expect(result).toMatchObject({
+        ok: false,
+        status: ObservedStatus.FAILED,
+        reason: 'media-fetch-failed',
+      });
+      expect(getMessages).toHaveBeenCalledTimes(2);
+      expect(downloadMedia).toHaveBeenCalledTimes(2);
+      expect(row.rejectReason).toBe('media-fetch-failed');
+    });
+
+    it('сообщение не резолвится → media-fetch-failed после одного повтора', async () => {
+      const getMessages = jest.fn().mockRejectedValue(new Error('CHANNEL_INVALID'));
+      const { service, client } = setup({ client: { getMessages } });
+
+      const result = await service.deliver(candidate());
+
+      expect(result).toMatchObject({ ok: false, reason: 'media-fetch-failed' });
+      expect(getMessages).toHaveBeenCalledTimes(2);
+      expect(client.downloadMedia).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('флуд-гейт MTProto', () => {
+    it('гейт закрыт до доставки → ни одного вызова Telegram', async () => {
+      const { service, client, guard } = setup();
+      guard.state.blocked = true;
+
+      const result = await service.deliver(candidate());
+
+      expect(result).toMatchObject({ ok: false, reason: 'mtproto-blocked' });
+      expect(client.getMessages).not.toHaveBeenCalled();
+      expect(client.downloadMedia).not.toHaveBeenCalled();
+    });
+
+    it('пир в бэкоффе (вызова не было) → mtproto-blocked без повтора', async () => {
+      const getMessages = jest.fn();
+      const { service, guard } = setup({ client: { getMessages } });
+      guard.run.mockResolvedValue(undefined); // guard не дёргал Telegram: бэкофф пира
+
+      const result = await service.deliver(candidate());
+
+      expect(result).toMatchObject({ ok: false, reason: 'mtproto-blocked' });
+      expect(getMessages).not.toHaveBeenCalled();
+    });
+
+    it('FLOOD_WAIT на скачивании → без перечитывания (попытка не тратится)', async () => {
+      const getMessages = jest.fn().mockResolvedValue([messageWithPhoto()]);
+      const downloadMedia = jest.fn().mockImplementation(async () => {
+        guard.state.blocked = true; // как настоящий guard после FloodWait
+        throw new Error('420: FLOOD_WAIT_60');
+      });
+      const { service, guard } = setup({ client: { getMessages, downloadMedia } });
+
+      const result = await service.deliver(candidate());
+
+      expect(result).toMatchObject({ ok: false, reason: 'flood-wait' });
+      expect(getMessages).toHaveBeenCalledTimes(1);
+      expect(downloadMedia).toHaveBeenCalledTimes(1);
+    });
+
+    it('гейт закрылся между попытками → перечитывания нет', async () => {
+      const getMessages = jest.fn().mockResolvedValue([messageWithPhoto()]);
+      const downloadMedia = jest.fn().mockImplementation(async () => {
+        guard.state.blocked = true; // паузу поставил параллельный цикл
+        throw new Error('400: FILE_REFERENCE_EXPIRED');
+      });
+      const { service, guard } = setup({ client: { getMessages, downloadMedia } });
+
+      const result = await service.deliver(candidate());
+
+      expect(result).toMatchObject({ ok: false, reason: 'mtproto-blocked' });
+      expect(getMessages).toHaveBeenCalledTimes(1);
+      expect(downloadMedia).toHaveBeenCalledTimes(1);
+    });
+
+    it('сетевой сбой транзиентен и не считается медиа-попыткой', async () => {
+      const getMessages = jest.fn().mockResolvedValue([messageWithPhoto()]);
+      const downloadMedia = jest.fn().mockRejectedValue(new Error('read ECONNRESET'));
+      const { service } = setup({ client: { getMessages, downloadMedia } });
+
+      const result = await service.deliver(candidate());
+
+      expect(result).toMatchObject({ ok: false, reason: 'network' });
+      expect(getMessages).toHaveBeenCalledTimes(1);
+      expect(downloadMedia).toHaveBeenCalledTimes(1);
+    });
   });
 
   describe('склейка карточек в предложке', () => {

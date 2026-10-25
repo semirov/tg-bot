@@ -9,6 +9,7 @@ import { BotContext } from '../../bot/interfaces/bot-context.interface';
 import {
   AUTO_DELIVER_PER_CYCLE,
   BACKLOG_TTL_DAYS,
+  DELIVERY_RETRY_BACKOFF_MS,
   DUMP_COOLDOWN_MINUTES,
   DUMP_PER_SOURCE_CAP,
   DUMP_SIZE,
@@ -20,6 +21,7 @@ import {
 } from '../constants/parser.constants';
 import { ObservedPostEntity } from '../entities/observed-post.entity';
 import { SourceChannelEntity } from '../entities/source-channel.entity';
+import { applyDeliveryFailure, isDeliveryBackedOff } from '../domain/parser-delivery-attempts';
 import { dedupBatch } from '../domain/parser-quotas';
 import { computeSourceInterest, rankScore } from '../domain/parser-source-weight';
 import { ParserDeliveryService } from './parser-delivery.service';
@@ -76,8 +78,15 @@ export class ParserSelectorService {
     }
 
     const config = this.settings.current;
+    const now = this.clock.now();
+    // Голова очереди не запирает хвост: строки, проваливавшиеся в последний час,
+    // в выборку не попадают — отдаём следующие по возрасту в этом же цикле.
+    const retryAfter = new Date(now.getTime() - DELIVERY_RETRY_BACKOFF_MS);
     const rows = await this.observedRepository.find({
-      where: { status: ObservedStatus.SCORED, forced: true },
+      where: [
+        { status: ObservedStatus.SCORED, forced: true, lastDeliveryFailureAt: IsNull() },
+        { status: ObservedStatus.SCORED, forced: true, lastDeliveryFailureAt: LessThan(retryAfter) },
+      ],
       order: { createdAt: 'ASC' },
       take: FORCE_PER_CYCLE_CAP * 5,
     });
@@ -85,6 +94,7 @@ export class ParserSelectorService {
 
     const sources = await this.loadSources(rows.map((row) => row.sourceChatId));
     const eligible = rows.filter((row) => {
+      if (isDeliveryBackedOff(row, now)) return false;
       const source = sources.get(row.sourceChatId);
       if (!source || source.excluded) return false;
       if (source.err != null && source.err < config.errMin) return false;
@@ -351,12 +361,18 @@ export class ParserSelectorService {
         delivered += 1;
         lastDelivered = row;
       } else if (result.status === ObservedStatus.FAILED) {
-        if (TERMINAL_FAILS.has(row.rejectReason ?? '')) {
-          row.status = ObservedStatus.REJECTED;
-        } else {
-          // Транзиентный сбой (сеть/flood) — вернуть в пул без причины.
-          row.status = ObservedStatus.SCORED;
-          row.rejectReason = null;
+        // Класс сбоя решает судьбу строки: терминальный — `rejected` сразу,
+        // медиа-сбой — попытка (после DELIVERY_ATTEMPT_LIMIT `rejected`),
+        // сеть/флуд — возврат в пул через бэкофф без траты попытки.
+        const outcome = applyDeliveryFailure(
+          row,
+          result.reason ?? row.rejectReason,
+          this.clock.now()
+        );
+        if (outcome.rejected && outcome.attempts > 0) {
+          this.logger.warn(
+            `Parser selector: пост ${row.id} отклонён после ${outcome.attempts} попыток доставки`
+          );
         }
         await this.observedRepository.save(row);
       }
@@ -495,6 +511,3 @@ export class ParserSelectorService {
     });
   }
 }
-
-/** Ошибки доставки, которые не имеет смысла повторять. */
-const TERMINAL_FAILS = new Set(['media-too-large', 'message-gone', 'source-missing']);

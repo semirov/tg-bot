@@ -342,9 +342,15 @@ Env: `PARSER_ENABLED` (мастер-выключатель), `PARSER_USER_ID` (�
   `getDialogs` паркует пир только до следующего окна — один транзиентный сбой
   не выключает источники на час. Дальше пробный вызов, успех снимает паузу.
 - Bot API 429 обрабатывается retry с `retry_after` (до 3 попыток).
-- Транзиентные сбои доставки (`send-failed`, `media-fetch-failed`) возвращают
-  пост в пул (`rejectReason=null`), терминальные (`media-too-large`,
-  `message-gone`, `source-missing`) → `rejected`, чтобы не циклиться.
+- Сбои доставки делятся на классы: терминальные (`media-too-large`,
+  `message-gone`, `source-missing`) → `rejected` сразу; медиа-сбои
+  (`media-fetch-failed`, `media-download-empty`) копят `deliveryAttempts`
+  (битый `file_reference` сначала перечитывается один раз через `getMessages`,
+  и только потом тратится попытка) и после `DELIVERY_ATTEMPT_LIMIT` (3) →
+  `rejected`; сеть/флуд (`network`, `flood-wait`, `mtproto-blocked`,
+  `no-client`) возвращают пост в пул без траты попытки. Любой провал ставит
+  `lastDeliveryFailureAt`: форс-выборка не берёт такие строки час
+  (`DELIVERY_RETRY_BACKOFF_MS`), поэтому голова очереди не запирает хвост.
 - Конкурентные циклы (`evaluate` */15 и `select` */20 идут внахлёст) не мешают
   друг другу: вердикт пишется **условно** (`update ... where status = <прочитанный>`),
   поэтому поздно пришедшая оценка не откатывает карточку, которую уже забрал
