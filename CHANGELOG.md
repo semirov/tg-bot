@@ -1,3 +1,10 @@
+## [0.42.1](https://github.com/semirov/tg-bot/compare/v0.42.0...v0.42.1) (2026-10-25)
+
+
+### Bug Fixes
+
+* **parser:** TGB-123 - never evict the entity store, heal via bounded getDialogs, per-peer backoff ([90b0758](https://github.com/semirov/tg-bot/commit/90b075853f8bd4f74505067a77e8f4ed76cba273))
+
 # [0.42.0](https://github.com/semirov/tg-bot/compare/v0.41.6...v0.42.0) (2026-10-25)
 
 
