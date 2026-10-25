@@ -1,3 +1,10 @@
+# [0.42.0](https://github.com/semirov/tg-bot/compare/v0.41.6...v0.42.0) (2026-10-25)
+
+
+### Features
+
+* **memory:** TGB-121 - memory watchdog, publish grace, bounded metric labels ([f65eab6](https://github.com/semirov/tg-bot/commit/f65eab65ec59c616f70dbcfccb36fc040a42b6c9))
+
 ## [0.41.6](https://github.com/semirov/tg-bot/compare/v0.41.5...v0.41.6) (2026-10-25)
 
 
