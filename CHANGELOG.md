@@ -1,3 +1,10 @@
+## [0.42.3](https://github.com/semirov/tg-bot/compare/v0.42.2...v0.42.3) (2026-10-29)
+
+
+### Bug Fixes
+
+* **parser:** TGB-125 - collection MTProto budget + rotating sweep/stats slices (daily 24h FLOOD_WAIT) ([3182eed](https://github.com/semirov/tg-bot/commit/3182eedcbf2ac15439255c7103879d0a20921341))
+
 ## [0.42.2](https://github.com/semirov/tg-bot/compare/v0.42.1...v0.42.2) (2026-10-25)
 
 
