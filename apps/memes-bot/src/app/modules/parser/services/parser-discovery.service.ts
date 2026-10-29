@@ -86,26 +86,31 @@ export class ParserDiscoveryService {
     }
   }
 
+  /** Флаг последнего `checkCandidate`: проверка отложена, а не провалена. */
+  private checkDeferred = false;
+
   /** Прогон discovery (cron): web-check пачки кандидатов. */
-  public async runWebCheck(): Promise<number> {
+  public async runWebCheck(): Promise<{ checked: number; deferred: number }> {
     const pending = await this.candidateRepository.find({
       where: { verdict: CandidateVerdict.PENDING },
       order: { mentions: 'DESC', id: 'ASC' },
       take: DISCOVERY_WEB_CHECK_PER_RUN,
     });
-    if (!pending.length) return 0;
-
     let checked = 0;
+    let deferred = 0;
     for (const candidate of pending) {
       try {
         await this.checkCandidate(candidate);
-        checked += 1;
+        // Отложенная проверка (пустой бюджет/пауза) — не проверка: иначе лог
+        // врёт про 10 проверок, когда ни одного вызова в Telegram не было.
+        if (this.checkDeferred) deferred += 1;
+        else checked += 1;
       } catch (error) {
         this.logger.warn(`Parser discovery: web-check ${candidate.key} ошибка: ${error}`);
       }
       await this.guard.pace(2000);
     }
-    return checked;
+    return { checked, deferred };
   }
 
   /** Кап повторных web-check: дальше — REJECTED checks-exhausted. */
@@ -114,6 +119,17 @@ export class ParserDiscoveryService {
   /** Полная проверка кандидата: username → web-preview → подписчики → AI → гейт. */
   public async checkCandidate(candidate: SourceCandidateEntity): Promise<SourceCandidateEntity> {
     const config = this.settings.current;
+    this.checkDeferred = false;
+
+    // TGB-125: пустая полоса metadata (или пауза MTProto) — это НЕ провал
+    // проверки: вызова в Telegram не будет. Кандидат остаётся PENDING без
+    // attempts++/смены вердикта и вернётся следующим прогоном, иначе хороший
+    // канал уходил бы в `checks-exhausted` из-за чужого бюджета.
+    if (this.guard.isBlocked() || !this.guard.hasBudget('metadata')) {
+      this.checkDeferred = true;
+      this.logger.debug(`Parser discovery: проверка ${candidate.key} отложена (бюджет metadata/пауза)`);
+      return candidate;
+    }
 
     if (!candidate.username) {
       const username = await this.resolveUsername(candidate);
@@ -151,11 +167,22 @@ export class ParserDiscoveryService {
       await this.candidateRepository.save(candidate);
       return candidate;
     }
+    let called = false;
     const full = await this.guard.run(
       'getFullChannel',
-      () => this.invokeGetFullChannel(username),
+      () => {
+        called = true;
+        return this.invokeGetFullChannel(username);
+      },
       username
     );
+    // Вызова не было (токен кончился между getEntity и getFullChannel, пауза,
+    // бэкофф): это не провал проверки — попытку не тратим.
+    if (!called) {
+      this.checkDeferred = true;
+      this.logger.debug(`Parser discovery: проверка ${candidate.key} отложена (бюджет metadata)`);
+      return candidate;
+    }
     // Инфраструктурная неудача — не вердикт: остаём в PENDING до следующего прогона
     // (с капом повторных проверок).
     if (full == null) {

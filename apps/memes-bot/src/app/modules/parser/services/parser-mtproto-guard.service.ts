@@ -11,10 +11,12 @@ import {
   ENTITY_REFRESH_COOLDOWN_MS,
   ENTITY_REFRESH_DIALOG_LIMIT,
   FLOOD_JITTER_MS,
+  MTPROTO_BUDGET_LOG_INTERVAL_MS,
 } from '../constants/parser.constants';
 import { mtprotoFloodGate } from '../../../shared/mtproto-flood-gate';
 import { ParserClientService } from './parser-client.service';
 import { canonicalPeerKey, peerCacheKeys, peerLabel } from '../domain/parser-peer-key';
+import { MtprotoBucket, ParserMtprotoBudget, budgetBucketFor } from './parser-mtproto-budget';
 
 /** Терминальные ошибки MTProto: ретраить бессмысленно, аккаунт в опасности. */
 export class TerminalMtprotoError extends Error {
@@ -117,6 +119,12 @@ export class ParserMtprotoGuard {
   /** Перезаполнение стора в полёте: параллельные промахи ждут один вызов. */
   private entityRefreshInFlight?: Promise<EntityRefreshOutcome>;
 
+  /** Бюджет вызовов сбора (TGB-125): доставка/скачивание его не тратят. */
+  private readonly budget = new ParserMtprotoBudget();
+
+  /** Когда последний раз логировали исчерпание полосы (анти-спам, раз в минуту). */
+  private readonly budgetLoggedAt = new Map<MtprotoBucket, number>();
+
   constructor(
     @Inject(BOT) private readonly bot: Bot<BotContext>,
     private readonly config: BaseConfigService,
@@ -132,6 +140,16 @@ export class ParserMtprotoGuard {
   /** Дедлайн паузы (epoch ms) или `null`, если паузы нет. */
   public blockedUntil(): number | null {
     return mtprotoFloodGate.until();
+  }
+
+  /** Есть ли в полосе хотя бы один вызов (следующий `run` пройдёт). */
+  public hasBudget(bucket: MtprotoBucket): boolean {
+    return this.budget.remaining(bucket) >= 1;
+  }
+
+  /** Сколько целых вызовов осталось в полосе (для логов и среза работ). */
+  public remaining(bucket: MtprotoBucket): number {
+    return this.budget.remaining(bucket);
   }
 
   /**
@@ -150,6 +168,7 @@ export class ParserMtprotoGuard {
     entity?: string | number
   ): Promise<T | undefined> {
     const key = backoffKey(operation, entity);
+    const bucket = budgetBucketFor(operation);
     this.prunePeerState();
     if (this.isBlocked()) return undefined;
 
@@ -165,6 +184,9 @@ export class ParserMtprotoGuard {
       // Пауза могла включиться внутри refresh-а (FLOOD_WAIT от getDialogs):
       // повтор после промаха уже не должен трогать Telegram.
       if (this.isBlocked()) return undefined;
+      // Бюджет полосы: пусто — Telegram не дёргаем (как при паузе), токен
+      // списывается на КАЖДЫЙ реальный вызов, включая повтор после промаха пира.
+      if (bucket && !this.budget.tryTake(bucket)) return this.deferForBudget(bucket);
       try {
         const result = await fn();
         this.entityBackoff.delete(key);
@@ -223,6 +245,16 @@ export class ParserMtprotoGuard {
   async pace(baseMs: number, jitterMs = 500): Promise<void> {
     const jitter = Math.floor(this.random.next() * jitterMs);
     await this.sleep(baseMs + jitter);
+  }
+
+  /** Бюджет полосы исчерпан: вызова нет (как при паузе gate), лог — раз в минуту на полосу. */
+  private deferForBudget(bucket: MtprotoBucket): undefined {
+    const now = Date.now();
+    if (now - (this.budgetLoggedAt.get(bucket) ?? 0) >= MTPROTO_BUDGET_LOG_INTERVAL_MS) {
+      this.budgetLoggedAt.set(bucket, now);
+      this.logger.warn(`Parser MTProto: collection budget exhausted (${bucket}), call deferred`);
+    }
+    return undefined;
   }
 
   /** Дедлайн FloodWait: одна строка в лог на каждое новое ожидание. */

@@ -7,7 +7,7 @@ import { Api, TelegramClient } from 'telegram';
 import { TotalList } from 'telegram/Helpers';
 import { CLOCK, Clock } from '../../../shared/clock';
 import { BaseConfigService } from '../../config/base-config.service';
-import { SCAN_WINDOW_HOURS, SourceCategory, SourceStatus } from '../constants/parser.constants';
+import { SCAN_WINDOW_HOURS, STATS_ERROR_REASON, SourceCategory, SourceStatus } from '../constants/parser.constants';
 import { ObservedPostEntity } from '../entities/observed-post.entity';
 import { SourceChannelEntity, StoredBaseline } from '../entities/source-channel.entity';
 import { computeBaseline, ChannelBaseline } from '../domain/parser-scoring';
@@ -356,38 +356,41 @@ export class ParserRegistryService {
     return this.sourceRepository.save(source);
   }
 
-  /**
-   * Пересчитывает базлайн источника из собранных постов и (раз в сутки)
-   * обновляет подписчики/ERR через channels.getFullChannel.
-   */
-  public async refreshSourceStats(
-    source: SourceChannelEntity,
-    client: TelegramClient
-  ): Promise<SourceChannelEntity | null> {
+  /** Базлайн источника + (раз в сутки) подписчики/ERR через channels.getFullChannel. */
+  public async refreshSourceStats(source: SourceChannelEntity, client: TelegramClient): Promise<SourceChannelEntity | null> {
     const now = this.clock.now();
     const stale = !source.statsUpdatedAt || now.getTime() - source.statsUpdatedAt.getTime() > 86_400_000;
 
     const baseline = await this.computeBaselineFor(source);
-    if (baseline) {
-      source.baseline = baseline;
-    }
+    if (baseline) source.baseline = baseline;
 
     if (stale) {
       const peer = source.username ?? bigInt(source.chatId); // marked id
-      if (peer != null) {
-        const full = await this.guard.run(
-          'getFullChannel',
-          () => client.invoke(new Api.channels.GetFullChannel({ channel: peer as never })),
-          source.chatId
-        );
-        const participants = Number((full as { fullChat?: { participantsCount?: number } })?.fullChat
-          ?.participantsCount ?? 0);
+      let called = false;
+      const full = await this.guard.run(
+        'getFullChannel',
+        () => {
+          called = true;
+          return client.invoke(new Api.channels.GetFullChannel({ channel: peer as never }));
+        },
+        source.chatId
+      );
+      // Метку результата двигаем только по реальному ответу (короткое замыкание
+      // guard-а — пауза/бюджет — источник не «съедает»).
+      if (full != null) {
+        const participants = Number((full as { fullChat?: { participantsCount?: number } })?.fullChat?.participantsCount ?? 0);
         if (participants > 0) {
           source.subscribers = participants;
           source.err = baseline && participants > 0 ? baseline.vmed / participants : source.err;
         }
+        source.statsUpdatedAt = now;
+        if (source.lastError === STATS_ERROR_REASON) source.lastError = null;
+      } else if (called) {
+        // Вызов был и упал: фиксируем ошибку — ротация отложит источник по ней,
+        // иначе он навсегда остался бы первым (NULLS FIRST).
+        source.lastErrorAt = now;
+        source.lastError = STATS_ERROR_REASON;
       }
-      source.statsUpdatedAt = now;
     }
 
     return this.sourceRepository.save(source);

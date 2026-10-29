@@ -1,3 +1,4 @@
+import { Logger } from '@nestjs/common';
 import { ParserService } from './parser.service';
 
 jest.mock('axios', () => ({
@@ -45,7 +46,7 @@ const setup = (overrides: { enabled?: boolean; activeClient?: unknown } = {}) =>
     ageBacklog: jest.fn().mockResolvedValue(0),
     dumpMore: jest.fn().mockResolvedValue(3),
   };
-  const discovery = { runWebCheck: jest.fn().mockResolvedValue(0) };
+  const discovery = { runWebCheck: jest.fn().mockResolvedValue({ checked: 0, deferred: 0 }) };
   const moderation = { registerCallbacks: jest.fn() };
   const client = { addEventHandler: jest.fn() };
   const clientBase = {
@@ -59,6 +60,12 @@ const setup = (overrides: { enabled?: boolean; activeClient?: unknown } = {}) =>
   const parserClient = { client: jest.fn(() => client) };
   const bot = makeBot();
   const config = { userRequestMemeChannel: -1004444444444 };
+  const guard = {
+    isBlocked: jest.fn(() => false),
+    hasBudget: jest.fn(() => true),
+    remaining: jest.fn(() => 99),
+    pace: jest.fn().mockResolvedValue(undefined),
+  };
 
   const service = new ParserService(
     settings,
@@ -71,7 +78,8 @@ const setup = (overrides: { enabled?: boolean; activeClient?: unknown } = {}) =>
     parserClient as never,
     clientBase as never,
     bot as never,
-    config as never
+    config as never,
+    guard as never
   );
   return {
     service,
@@ -86,6 +94,7 @@ const setup = (overrides: { enabled?: boolean; activeClient?: unknown } = {}) =>
     clientBase,
     bot,
     parserClient,
+    guard,
   };
 };
 
@@ -497,12 +506,33 @@ describe('ParserService', () => {
     expect(discovery.runWebCheck).not.toHaveBeenCalled();
   });
 
-  it('onStats обновляет статистику и снимает cooldown', async () => {
+  it('onStatsHourly обновляет статистику источников (без захода в вес/cooldown)', async () => {
+    const { service, registry } = setup();
+
+    await service.onStatsHourly();
+
+    expect(registry.refreshSourceStats).toHaveBeenCalledTimes(1);
+    expect(registry.refreshInterest).not.toHaveBeenCalled();
+    expect(registry.refreshCooldowns).not.toHaveBeenCalled();
+  });
+
+  it('onDiscovery логирует проверенные и отложенные кандидаты', async () => {
+    const { service, discovery } = setup();
+    discovery.runWebCheck.mockResolvedValue({ checked: 7, deferred: 3 });
+    const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+
+    await service.onDiscovery();
+
+    expect(logSpy).toHaveBeenCalledWith('Parser discovery: checked=7 deferred=3');
+  });
+
+  it('onStats (суточный) снимает cooldown и пересчитывает вес, статистику не трогает', async () => {
     const { service, registry } = setup();
 
     await service.onStats();
 
-    expect(registry.refreshSourceStats).toHaveBeenCalledTimes(1);
+    expect(registry.refreshSourceStats).not.toHaveBeenCalled();
+    expect(registry.listCollectible).not.toHaveBeenCalled();
     expect(registry.refreshInterest).toHaveBeenCalledTimes(1);
     expect(registry.refreshCooldowns).toHaveBeenCalledTimes(1);
     expect(registry.refreshInterest.mock.invocationCallOrder[0]).toBeLessThan(
@@ -514,7 +544,7 @@ describe('ParserService', () => {
     const { service, registry, parserClient } = setup();
     parserClient.client.mockReturnValue(undefined);
 
-    await service.onStats();
+    await service.onStatsHourly();
 
     expect(registry.listCollectible).not.toHaveBeenCalled();
   });
@@ -523,7 +553,126 @@ describe('ParserService', () => {
     const { service, registry } = setup();
     registry.refreshSourceStats.mockRejectedValue(new Error('parse fail'));
 
-    await expect(service.onStats()).resolves.toBeUndefined();
-    expect(registry.refreshCooldowns).toHaveBeenCalled();
+    await expect(service.onStatsHourly()).resolves.toBeUndefined();
+    expect(registry.refreshSourceStats).toHaveBeenCalledTimes(1);
+  });
+
+  it('кроны: hourly-статистика в 20 минут часа, суточный роллап в 05:00 (Europe/Moscow)', () => {
+    // Nest-декоратор `@Cron` кладёт опции на саму функцию метода (`descriptor.value`).
+    const cronOf = (method: keyof ParserService): { cronTime?: string; timeZone?: string } | undefined =>
+      Reflect.getMetadata(
+        'SCHEDULE_CRON_OPTIONS',
+        (ParserService.prototype as never as Record<string, unknown>)[method as string]
+      );
+
+    expect(cronOf('onStatsHourly')).toMatchObject({
+      cronTime: '20 * * * *',
+      timeZone: 'Europe/Moscow',
+    });
+    expect(cronOf('onStats')).toMatchObject({
+      cronTime: '0 5 * * *',
+      timeZone: 'Europe/Moscow',
+    });
+    expect(cronOf('onSweep')).toMatchObject({ cronTime: '*/30 * * * *' });
+  });
+
+  describe('onStatsHourly: ротация и бюджет (TGB-125)', () => {
+    const NOW = new Date('2026-09-19T12:00:00Z');
+    const day = 86_400_000;
+    const statsSource = (id: number, statsUpdatedAt: Date | null): any => ({
+      id,
+      chatId: `-100${id}`,
+      statsUpdatedAt,
+    });
+
+    it('AC4: выбирает ≤10 самых давних по statsUpdatedAt (null первыми, tie-break id)', async () => {
+      const sources = [
+        ...Array.from({ length: 30 }, (_, i) => statsSource(i + 1, null)),
+        ...Array.from({ length: 50 }, (_, i) => statsSource(31 + i, new Date(NOW.getTime() - (80 - (31 + i)) * day))),
+      ];
+      const { service, registry } = setup();
+      registry.listCollectible.mockResolvedValue(sources);
+      const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+
+      await service.onStatsHourly();
+
+      const called = registry.refreshSourceStats.mock.calls.map(([source]: any[]) => source.id);
+      expect(called).toHaveLength(10);
+      expect(called).toEqual(Array.from({ length: 10 }, (_, i) => i + 1));
+      expect(logSpy).toHaveBeenCalledWith(
+        'Parser stats: selected=10 updated=0 skippedBudget=0 skippedBlocked=0'
+      );
+    });
+
+    it('AC4: пустая полоса metadata → останавливается и считает skippedBudget (не blocked)', async () => {
+      const { service, registry, guard } = setup();
+      registry.listCollectible.mockResolvedValue(
+        Array.from({ length: 10 }, (_, i) => statsSource(i + 1, null))
+      );
+      let left = 3;
+      guard.hasBudget.mockImplementation(() => left > 0);
+      registry.refreshSourceStats.mockImplementation(async (source: any) => {
+        left -= 1;
+        source.statsUpdatedAt = NOW;
+        return source;
+      });
+      const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+
+      await service.onStatsHourly();
+
+      expect(registry.refreshSourceStats).toHaveBeenCalledTimes(3);
+      expect(guard.hasBudget).toHaveBeenCalledWith('metadata');
+      expect(guard.pace).toHaveBeenCalledWith(3000);
+      expect(logSpy).toHaveBeenCalledWith(
+        'Parser stats: selected=10 updated=3 skippedBudget=7 skippedBlocked=0'
+      );
+    });
+
+    it('AC4: короткое замыкание guard-а не двигает statsUpdatedAt → updated=0', async () => {
+      const { service, registry } = setup();
+      registry.listCollectible.mockResolvedValue([statsSource(1, null)]);
+      // refreshSourceStats вернул источник, но метку не сдвинул (вызова не было).
+      registry.refreshSourceStats.mockImplementation(async (source: any) => source);
+      const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+
+      await service.onStatsHourly();
+
+      expect(logSpy).toHaveBeenCalledWith(
+        'Parser stats: selected=1 updated=0 skippedBudget=0 skippedBlocked=0'
+      );
+    });
+
+    it('источник с недавней ошибкой getFullChannel не берётся (иначе вечно первый в ротации)', async () => {
+      const { service, registry } = setup();
+      const recent = statsSource(1, null);
+      recent.lastErrorAt = new Date(Date.now() - 3_600_000); // час назад
+      const old = statsSource(2, null);
+      old.lastErrorAt = new Date(Date.now() - 2 * day); // двое суток назад
+      registry.listCollectible.mockResolvedValue([recent, old]);
+      jest.spyOn(Logger.prototype, 'debug').mockImplementation(() => undefined);
+      const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+
+      await service.onStatsHourly();
+
+      const called = registry.refreshSourceStats.mock.calls.map(([source]: any[]) => source.id);
+      expect(called).toEqual([2]);
+      expect(logSpy).toHaveBeenCalledWith(
+        'Parser stats: selected=1 updated=0 skippedBudget=0 skippedBlocked=0'
+      );
+    });
+
+    it('AC4: MTProto на паузе → статистика не трогает Telegram', async () => {
+      const { service, registry, guard } = setup();
+      registry.listCollectible.mockResolvedValue([statsSource(1, null), statsSource(2, null)]);
+      guard.isBlocked.mockReturnValue(true);
+      const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+
+      await service.onStatsHourly();
+
+      expect(registry.refreshSourceStats).not.toHaveBeenCalled();
+      expect(logSpy).toHaveBeenCalledWith(
+        'Parser stats: selected=2 updated=0 skippedBudget=0 skippedBlocked=2'
+      );
+    });
   });
 });

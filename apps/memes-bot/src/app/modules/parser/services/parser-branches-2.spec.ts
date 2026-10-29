@@ -110,6 +110,8 @@ const makeGuard = (): any => ({
   isBlocked: jest.fn(() => false),
   blockedUntil: jest.fn(() => null),
   isPeerBroken: jest.fn(() => false),
+  hasBudget: jest.fn(() => true),
+  remaining: jest.fn(() => 99),
 });
 
 const makeRegistryMock = (): any => ({
@@ -484,10 +486,11 @@ describe('parser branches round 2', () => {
       { registerCallbacks: jest.fn() } as never, makeParserClient({}),
       { activeClient: undefined } as never,
       { callbackQuery: jest.fn(), on: jest.fn(), api: {} } as never,
-      makeConfig()
+      makeConfig(),
+      { isBlocked: jest.fn(() => false), hasBudget: jest.fn(() => true), pace: jest.fn() } as never
     );
 
-    await (service as never as { onStats(): Promise<void> }).onStats();
+    await (service as never as { onStatsHourly(): Promise<void> }).onStatsHourly();
     expect(registry.listCollectible).not.toHaveBeenCalled();
   });
 

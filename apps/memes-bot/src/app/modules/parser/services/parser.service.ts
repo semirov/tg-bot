@@ -12,10 +12,17 @@ import { ParserEvaluatorService } from './parser-evaluator.service';
 import { ParserSelectorService } from './parser-selector.service';
 import { ParserDiscoveryService } from './parser-discovery.service';
 import { ParserModerationService } from './parser-moderation.service';
+import { ParserMtprotoGuard } from './parser-mtproto-guard.service';
 import { BOT } from '../../bot/providers/bot.provider';
 import { Bot } from 'grammy';
 import { BotContext } from '../../bot/interfaces/bot-context.interface';
 import { BaseConfigService } from '../../config/base-config.service';
+import {
+  STATS_ERROR_BACKOFF_MS,
+  STATS_GAP_MS,
+  STATS_SOURCES_PER_RUN,
+} from '../constants/parser.constants';
+import { compareStatsOrder } from '../domain/parser-rotation';
 
 /**
  * Оркестратор парсера: регистрация callback-обработчиков, подключение
@@ -28,7 +35,7 @@ export class ParserService implements OnModuleInit {
   private liveHandlerAttached = false;
   private liveAttachTimer?: NodeJS.Timeout;
   private lastAttachedClient?: unknown;
-  private busy = { sweep: false, evaluate: false, select: false, discovery: false, stats: false };
+  private busy = { sweep: false, evaluate: false, select: false, discovery: false, stats: false, rollup: false };
 
   constructor(
     private readonly settings: ParserSettingsService,
@@ -41,7 +48,8 @@ export class ParserService implements OnModuleInit {
     private readonly parserClient: ParserClientService,
     private readonly clientBase: ClientBaseService,
     @Inject(BOT) private readonly bot: Bot<BotContext>,
-    private readonly config: BaseConfigService
+    private readonly config: BaseConfigService,
+    private readonly guard: ParserMtprotoGuard
   ) {}
 
   public onModuleInit(): void {
@@ -199,15 +207,27 @@ export class ParserService implements OnModuleInit {
     if (!this.enabled || this.busy.discovery) return;
     this.busy.discovery = true;
     try {
-      await this.runJob('discovery', () => this.discovery.runWebCheck());
+      await this.runJob('discovery', async () => {
+        const { checked, deferred } = await this.discovery.runWebCheck();
+        // Отложенные (пустой бюджет metadata/пауза) — не проверки: лог не должен
+        // рапортовать 10 проверок, когда часть кандидатов отложена.
+        this.logger.log(`Parser discovery: checked=${checked} deferred=${deferred}`);
+      });
     } finally {
       this.busy.discovery = false;
     }
   }
 
-  /** Статистика источников (базлайны, подписчики, ERR, вес/cooldown), раз в сутки. */
-  @Cron('0 5 * * *', { timeZone: 'Europe/Moscow' })
-  public async onStats(): Promise<void> {
+  /**
+   * Прогон статистики источников — ежечасно, ротационной порцией (TGB-125):
+   * не больше `STATS_SOURCES_PER_RUN` (20) самых давних `statsUpdatedAt`
+   * (NULLS FIRST), пауза `STATS_GAP_MS` между вызовами, стоп на пустой полосе
+   * `metadata` (20/час) или паузе MTProto. Полный проход всех источников
+   * `channels.GetFullChannel` без бюджета и был одним из источников суточного
+   * FloodWait.
+   */
+  @Cron('20 * * * *', { timeZone: 'Europe/Moscow' })
+  public async onStatsHourly(): Promise<void> {
     if (!this.enabled || this.busy.stats) return;
     this.busy.stats = true;
     try {
@@ -215,21 +235,85 @@ export class ParserService implements OnModuleInit {
         const client = this.parserClient.client();
         if (!client) return;
 
-        const sources = await this.registry.listCollectible();
-        for (const source of sources) {
+        const all = await this.registry.listCollectible();
+        // Источник, чей `getFullChannel` падал в последние сутки, не ставим
+        // первым в очередь: `statsUpdatedAt` у него не двигается, и без
+        // бэкоффа он жёг бы токен каждый час (NULLS FIRST навсегда).
+        const nowMs = Date.now();
+        const sources = all.filter((source) => !this.inStatsErrorBackoff(source, nowMs));
+        if (sources.length !== all.length) {
+          this.logger.debug(`Parser stats: отложено из-за недавней ошибки: ${all.length - sources.length}`);
+        }
+        const selected = sources.sort(compareStatsOrder).slice(0, STATS_SOURCES_PER_RUN);
+        let updated = 0;
+        let skippedBudget = 0;
+        let skippedBlocked = 0;
+
+        for (const [index, source] of selected.entries()) {
+          // Пауза MTProto и пустая полоса metadata — разные причины останова:
+          // остаток порции остаётся в голове ротации и уйдёт следующим прогоном.
+          if (this.guard.isBlocked()) {
+            skippedBlocked = selected.length - index;
+            break;
+          }
+          if (!this.guard.hasBudget('metadata')) {
+            skippedBudget = selected.length - index;
+            break;
+          }
+          const before = this.statsUpdatedAtMs(source);
           try {
-            await this.registry.refreshSourceStats(source, client);
+            const result = await this.registry.refreshSourceStats(source, client);
+            // Счётчик — по реально сдвинутой метке: короткое замыкание guard-а
+            // оставляет её прежней (см. `refreshSourceStats`).
+            if (result != null && this.statsUpdatedAtMs(result) !== before) updated += 1;
           } catch (error) {
             this.logger.warn(`Parser stats: источник ${source.chatId}: ${error}`);
           }
+          await this.guard.pace(STATS_GAP_MS);
         }
+
+        this.logger.log(
+          `Parser stats: selected=${selected.length} updated=${updated} skippedBudget=${skippedBudget} skippedBlocked=${skippedBlocked}`
+        );
+      });
+    } finally {
+      this.busy.stats = false;
+    }
+  }
+
+  /**
+   * Суточный пересчёт интереса: вес источников и снятие пауз. Только БД,
+   * ни одного MTProto-вызова — поэтому без порции и бюджета (TGB-125).
+   */
+  @Cron('0 5 * * *', { timeZone: 'Europe/Moscow' })
+  public async onStats(): Promise<void> {
+    if (!this.enabled || this.busy.rollup) return;
+    this.busy.rollup = true;
+    try {
+      await this.runJob('stats-rollup', async () => {
         await this.registry.refreshInterest();
         const released = await this.registry.refreshCooldowns();
         if (released) this.logger.log(`Parser stats: вернулось из паузы источников: ${released}`);
       });
     } finally {
-      this.busy.stats = false;
+      this.busy.rollup = false;
     }
+  }
+
+  /** Источник недавно падал в `getFullChannel` — часовая порция его не берёт. */
+  private inStatsErrorBackoff(
+    source: { lastErrorAt?: Date | string | null },
+    nowMs: number
+  ): boolean {
+    const last = source.lastErrorAt;
+    if (last == null) return false;
+    return nowMs - new Date(last).getTime() < STATS_ERROR_BACKOFF_MS;
+  }
+
+  /** Метка `statsUpdatedAt` в мс (или `null`) — для счёта реальных обновлений. */
+  private statsUpdatedAtMs(source: { statsUpdatedAt?: Date | string | null }): number | null {
+    const value = source?.statsUpdatedAt;
+    return value == null ? null : new Date(value).getTime();
   }
 
   /**

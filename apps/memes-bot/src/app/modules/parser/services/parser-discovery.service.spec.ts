@@ -1,3 +1,4 @@
+import { Logger } from '@nestjs/common';
 import * as bigInt from 'big-integer';
 import { CandidateOrigin, CandidateVerdict } from '../constants/parser.constants';
 import { ParserDiscoveryService } from './parser-discovery.service';
@@ -74,6 +75,7 @@ const makeGuard = (): any => ({
   pace: jest.fn().mockResolvedValue(undefined),
   isBlocked: jest.fn(() => false),
   blockedUntil: jest.fn(() => null),
+  hasBudget: jest.fn(() => true),
 });
 
 const makeSettings = (overrides: Record<string, unknown> = {}): any => ({
@@ -93,17 +95,18 @@ const setup = (overrides: { client?: Record<string, unknown>; settings?: Record<
   const registry = makeRegistry();
   const ai = makeAi();
   const client = overrides.client ?? {};
+  const guard = makeGuard();
   const service = new ParserDiscoveryService(
     candidateRepo,
     sourceRepo,
     makeParserClient(client),
-    makeGuard(),
+    guard,
     registry,
     makeSettings(overrides.settings ?? {}),
     ai,
     makeClock()
   );
-  return { service, candidateRepo, sourceRepo, registry, ai, client };
+  return { service, candidateRepo, sourceRepo, registry, ai, client, guard };
 };
 
 describe('ParserDiscoveryService', () => {
@@ -211,6 +214,59 @@ describe('ParserDiscoveryService', () => {
 
       expect(result.verdict).toBe(CandidateVerdict.REJECTED);
       expect(result.reason).toContain('err<');
+    });
+
+    it('TGB-125: пустая полоса metadata → проверка отложена без attempts++ и без смены вердикта', async () => {
+      const { service, candidateRepo, guard, client } = setup({ client: { invoke: jest.fn() } });
+      guard.hasBudget.mockReturnValue(false);
+      (fetchTmePreview as jest.Mock).mockResolvedValue(preview([3000, 2000, 4000]));
+      const row = candidate({ chatId: '-1008888888888', attempts: 3 });
+
+      const result = await service.checkCandidate(row);
+
+      expect(result.attempts).toBe(3);
+      expect(result.verdict).toBe(CandidateVerdict.PENDING);
+      expect(result.reason).toBeNull();
+      expect(candidateRepo.save).not.toHaveBeenCalled();
+      expect(client.invoke).not.toHaveBeenCalled();
+      expect(fetchTmePreview).not.toHaveBeenCalled();
+    });
+
+    it('TGB-125: токен кончился между getEntity и getFullChannel → отложено, попытка не тратится', async () => {
+      const { service, candidateRepo, guard, client } = setup({
+        client: { invoke: jest.fn(), getEntity: jest.fn().mockResolvedValue({ id: bigInt('777'), username: 'linked' }) },
+      });
+      // Бюджет кончается ровно между getEntity и getFullChannel: проверка
+      // сверху + getEntity проходят, getFullChannel откладывается guard-ом.
+      let budgetCalls = 0;
+      guard.hasBudget.mockImplementation(() => {
+        budgetCalls += 1;
+        return budgetCalls <= 2;
+      });
+      guard.run.mockImplementation(async (op: string, fn: () => Promise<unknown>) =>
+        op !== 'getHistory' && !guard.hasBudget('metadata') ? undefined : fn()
+      );
+      (fetchTmePreview as jest.Mock).mockResolvedValue(preview([3000, 2000, 4000]));
+      const row = candidate({ username: null, chatId: '-1008888888888', attempts: 1 });
+
+      const result = await service.checkCandidate(row);
+
+      expect(result.attempts).toBe(1);
+      expect(result.verdict).toBe(CandidateVerdict.PENDING);
+      expect(candidateRepo.save).not.toHaveBeenCalled();
+      expect(client.invoke).not.toHaveBeenCalled();
+    });
+
+    it('TGB-125: пауза MTProto → проверка отложена, попытка не тратится', async () => {
+      const { service, candidateRepo, guard } = setup({ client: { invoke: jest.fn() } });
+      guard.isBlocked.mockReturnValue(true);
+      const row = candidate({ chatId: '-1008888888888', attempts: 4 });
+
+      const result = await service.checkCandidate(row);
+
+      expect(result.attempts).toBe(4);
+      expect(result.verdict).toBe(CandidateVerdict.PENDING);
+      expect(candidateRepo.save).not.toHaveBeenCalled();
     });
 
     it('web-preview пуст → причина', async () => {
@@ -374,9 +430,9 @@ describe('ParserDiscoveryService', () => {
   });
 
   describe('runWebCheck', () => {
-    it('нет кандидатов → 0', async () => {
+    it('нет кандидатов → 0 проверено, 0 отложено', async () => {
       const { service } = setup();
-      expect(await service.runWebCheck()).toBe(0);
+      expect(await service.runWebCheck()).toEqual({ checked: 0, deferred: 0 });
     });
 
     it('проверяет пачку кандидатов', async () => {
@@ -394,10 +450,27 @@ describe('ParserDiscoveryService', () => {
       );
       (fetchTmePreview as jest.Mock).mockResolvedValue(preview([3000, 2000, 4000]));
 
-      const checked = await service.runWebCheck();
+      const result = await service.runWebCheck();
 
-      expect(checked).toBe(2);
+      expect(result).toEqual({ checked: 2, deferred: 0 });
       expect(client.invoke).toHaveBeenCalledTimes(2);
+    });
+
+    it('пустой бюджет metadata → отложенные не считаются проверенными', async () => {
+      const { service, candidateRepo, guard } = setup({
+        client: { invoke: jest.fn() },
+      });
+      candidateRepo.find.mockResolvedValue([
+        candidate({ chatId: '-1001' }),
+        candidate({ id: 2, key: 'u:other', username: 'other', chatId: '-1002' }),
+      ]);
+      guard.hasBudget.mockReturnValue(false);
+      jest.spyOn(Logger.prototype, 'debug').mockImplementation(() => undefined);
+
+      const result = await service.runWebCheck();
+
+      expect(result).toEqual({ checked: 0, deferred: 2 });
+      expect(candidateRepo.save).not.toHaveBeenCalled();
     });
 
     it('ошибка проверки кандидата не роняет прогон', async () => {
@@ -405,7 +478,7 @@ describe('ParserDiscoveryService', () => {
       candidateRepo.find.mockResolvedValue([candidate()]);
       (fetchTmePreview as jest.Mock).mockRejectedValue(new Error('boom'));
 
-      expect(await service.runWebCheck()).toBe(0);
+      expect(await service.runWebCheck()).toEqual({ checked: 0, deferred: 0 });
     });
   });
 

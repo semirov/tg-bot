@@ -8,8 +8,12 @@ import {
   ENTITY_BACKOFF_CAP_MS,
   ENTITY_BROKEN_RETRY_MS,
   ENTITY_REFRESH_COOLDOWN_MS,
+  MTPROTO_HISTORY_BURST,
+  MTPROTO_METADATA_BURST,
+  STATS_SOURCES_PER_RUN,
 } from '../constants/parser.constants';
 import { mtprotoFloodGate } from '../../../shared/mtproto-flood-gate';
+import { ParserMtprotoBudget } from './parser-mtproto-budget';
 
 const NOW = new Date('2026-10-25T00:00:00Z').getTime();
 
@@ -256,6 +260,12 @@ describe('ParserMtprotoGuard', () => {
     it('refresh стора: один getDialogs на окно, второй промах внутри окна его не повторяет', async () => {
       const parserClient = makeEntityClient(chatId);
       guard = new ParserMtprotoGuard(bot, makeConfig(), makeRandom(), parserClient);
+      // Бюджет полосы не предмет этого теста: каждый промах тратит по два
+      // токена (вызов + повтор), иначе порция «кончится» посреди перерезолва.
+      (guard as never as { budget: ParserMtprotoBudget }).budget = new ParserMtprotoBudget({
+        history: { capacity: 100, refillPerHour: 0 },
+        metadata: { capacity: 100, refillPerHour: 0 },
+      });
 
       const first = jest.fn().mockRejectedValueOnce(channelInvalid()).mockResolvedValueOnce('ok');
       await expect(guard.run('getHistory', first, chatId)).resolves.toBe('ok');
@@ -445,6 +455,11 @@ describe('ParserMtprotoGuard', () => {
 
     it('состояние по пирам ограничено: username-флуд не растит карты без границы', async () => {
       guard = new ParserMtprotoGuard(bot, makeConfig(), makeRandom());
+      // Бюджет сбора не должен мешать проверке потолка состояния: 5001 вызов подряд.
+      (guard as never as { budget: ParserMtprotoBudget }).budget = new ParserMtprotoBudget({
+        history: { capacity: 100_000, refillPerHour: 0 },
+        metadata: { capacity: 100_000, refillPerHour: 0 },
+      });
 
       const fn = jest.fn().mockRejectedValue(channelInvalid());
       for (let id = 0; id < 5001; id += 1) {
@@ -692,5 +707,116 @@ describe('ParserMtprotoGuard', () => {
     sleepSpy.mockResolvedValue(undefined);
     await guard.pace(1500);
     expect(sleepSpy).toHaveBeenCalledWith(1500);
+  });
+
+  describe('бюджет вызовов сбора (TGB-125)', () => {
+    const budgetWarns = (): string[] =>
+      warnSpy.mock.calls
+        .map(([line]) => String(line))
+        .filter((line) => line.includes('collection budget exhausted'));
+
+    it('AC1: пустая полоса history → fn не вызывается, вызов отложен; после пополнения — идёт', async () => {
+      const fn = jest.fn().mockResolvedValue('ok');
+      for (let i = 0; i < MTPROTO_HISTORY_BURST; i += 1) {
+        await expect(guard.run('getHistory', fn)).resolves.toBe('ok');
+      }
+      expect(guard.hasBudget('history')).toBe(false);
+      expect(guard.remaining('history')).toBe(0);
+
+      const deferred = jest.fn().mockResolvedValue('late');
+      await expect(guard.run('getHistory', deferred)).resolves.toBeUndefined();
+      expect(deferred).not.toHaveBeenCalled();
+      expect(budgetWarns()).toEqual([
+        'Parser MTProto: collection budget exhausted (history), call deferred',
+      ]);
+
+      // 20 вызовов в час → 3 минуты = ровно один токен.
+      jest.advanceTimersByTime(3 * 60_000);
+      expect(guard.hasBudget('history')).toBe(true);
+      await expect(guard.run('getHistory', deferred)).resolves.toBe('late');
+      expect(deferred).toHaveBeenCalledTimes(1);
+    });
+
+    it('лог исчерпания — не чаще раза в минуту на полосу', async () => {
+      for (let i = 0; i < MTPROTO_HISTORY_BURST; i += 1) {
+        await guard.run('getHistory', jest.fn().mockResolvedValue('ok'));
+      }
+
+      await guard.run('getHistory', jest.fn());
+      await guard.run('getHistory', jest.fn());
+      expect(budgetWarns()).toHaveLength(1);
+
+      jest.advanceTimersByTime(61_000); // 0.33 токена — всё ещё пусто
+      await guard.run('getHistory', jest.fn());
+      expect(budgetWarns()).toHaveLength(2);
+    });
+
+    it('первичный базлайн (getHistory:seed) тоже тратит полосу history', async () => {
+      const seed = jest.fn().mockResolvedValue('ok');
+      for (let i = 0; i < MTPROTO_HISTORY_BURST; i += 1) {
+        await expect(guard.run('getHistory:seed', seed)).resolves.toBe('ok');
+      }
+      expect(guard.hasBudget('history')).toBe(false);
+
+      const deferred = jest.fn().mockResolvedValue('ok');
+      await expect(guard.run('getHistory:seed', deferred)).resolves.toBeUndefined();
+      expect(deferred).not.toHaveBeenCalled();
+    });
+
+    it('burst metadata покрывает часовую порцию статистики с запасом для discovery', async () => {
+      const ok = jest.fn().mockResolvedValue('ok');
+      for (let i = 0; i < STATS_SOURCES_PER_RUN; i += 1) {
+        await expect(guard.run('getFullChannel', ok)).resolves.toBe('ok');
+      }
+      expect(guard.remaining('metadata')).toBe(MTPROTO_METADATA_BURST - STATS_SOURCES_PER_RUN);
+      expect(guard.hasBudget('metadata')).toBe(true);
+    });
+
+    it('полосы раздельные: metadata не тратит history и наоборот', async () => {
+      const ok = jest.fn().mockResolvedValue('ok');
+      const metadataBefore = guard.remaining('metadata');
+
+      await guard.run('getFullChannel', ok);
+      await guard.run('getEntity', ok);
+      await guard.run('getDialogs', ok);
+      expect(guard.remaining('metadata')).toBe(metadataBefore - 3);
+      expect(guard.remaining('history')).toBe(MTPROTO_HISTORY_BURST);
+
+      await guard.run('getMessages:ids', ok);
+      expect(guard.remaining('history')).toBe(MTPROTO_HISTORY_BURST - 1);
+      expect(guard.remaining('metadata')).toBe(metadataBefore - 3);
+      expect(metadataBefore).toBe(MTPROTO_METADATA_BURST);
+    });
+
+    it('пустая полоса history не блокирует доставку, скачивание и оценку', async () => {
+      const ok = jest.fn().mockResolvedValue('ok');
+      for (let i = 0; i < MTPROTO_HISTORY_BURST; i += 1) await guard.run('getHistory', ok);
+      expect(guard.hasBudget('history')).toBe(false);
+
+      for (const operation of ['getMessages:deliver', 'downloadMedia', 'downloadThumb', 'getMessages:eval']) {
+        await expect(guard.run(operation, ok)).resolves.toBe('ok');
+      }
+    });
+
+    it('пауза FloodWait бюджет не тратит (вызова после неё нет)', async () => {
+      await guard.run('getHistory', jest.fn().mockRejectedValue(floodError(100)));
+      expect(guard.isBlocked()).toBe(true);
+      expect(guard.remaining('history')).toBe(MTPROTO_HISTORY_BURST - 1);
+
+      await guard.run('getHistory', jest.fn());
+      expect(guard.remaining('history')).toBe(MTPROTO_HISTORY_BURST - 1);
+    });
+
+    it('повтор после промаха пира тратит второй токен полосы', async () => {
+      guard = new ParserMtprotoGuard(bot, makeConfig(), makeRandom(), makeEntityClient('-1007770000001'));
+      const fn = jest
+        .fn()
+        .mockRejectedValueOnce(channelInvalid())
+        .mockResolvedValueOnce('resolved');
+
+      await expect(guard.run('getHistory', fn, '-1007770000001')).resolves.toBe('resolved');
+      expect(fn).toHaveBeenCalledTimes(2);
+      expect(guard.remaining('history')).toBe(MTPROTO_HISTORY_BURST - 2);
+    });
   });
 });

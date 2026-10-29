@@ -77,7 +77,9 @@ Discovery ─▶ Registry ─▶ Collector (live + history sweep)
   растут) и обновляет пересечения.
 - **Delivery** — юзербот read-only качает байты, бот публикует карточку.
 - **Discovery** — кросс-ссылки из постов → проверка `t.me/s` + ERR → **авто-добавление**
-  (web-only), без ручных карточек кандидатов.
+  (web-only), без ручных карточек кандидатов. Пустая полоса `metadata` или пауза
+  MTProto откладывают проверку кандидата (без `attempts++` и без смены вердикта):
+  отложенные считаются отдельно (`deferred`), а не как провал.
 
 ---
 
@@ -311,11 +313,21 @@ Env: `PARSER_ENABLED` (мастер-выключатель), `PARSER_USER_ID` (�
 
 | Задача | Расписание | Что делает |
 |---|---|---|
-| sweep | `*/30` | history sweep по источникам |
+| sweep | `*/30` | history sweep **ротационной порцией**: ≤10 источников за прогон (квота тира 5 `active` + 5 `web_only`; свободные слоты забирает другой тир), внутри тира — самые давние `lastSweepAt` (NULL первыми). Каденс источника: `active` ≈ 7–8 ч, `web_only` ≈ 3–4 суток |
 | evaluate | `*/15` | форс + pre/final оценка + актуализация пула (`refreshScored`) + пауза при бэклоге ≥ 2000 |
 | select | `*/20` | ранжированная авто-выдача (дневной разгон ≤ `dailyLimit`/сутки, форс вне бюджета) + форс-порция + старение бэклога |
-| discovery | `7 */3` | web-check новых каналов |
-| stats | `0 5` | базлайны, подписчики, ERR, `refreshInterest`, `refreshCooldowns` |
+| discovery | `7 */3` | web-check новых каналов: лог `Parser discovery: checked=N deferred=M` (отложенные пустым бюджетом/паузой — не проверки) |
+| stats (`job=stats`) | `20 * * * *` | **ротационная порция** ≤10 источников (самые давние `statsUpdatedAt`, NULL первыми): базлайны, подписчики, ERR — ≈10/час, ≤240/сутки, полный круг ≈3.7 суток |
+| stats-rollup (`job=stats-rollup`) | `0 5` | пересчёт веса (`refreshInterest`) и снятие пауз (`refreshCooldowns`), только БД |
+
+Почему порции, а не весь реестр: 895 источников «в лоб» — это ~180–250
+`messages.getHistory`/`getFullChannel` за один прогон, после чего Telegram
+выдаёт FloodWait на ~24 ч (прод: `FLOOD_WAIT 85187s`). Темп задаёт бюджет
+(§14): sweep — burst 12 и 20 history-вызовов/час (10 за тик, 5+5 по тирам),
+stats — 10 `getFullChannel`/час, при этом burst metadata = 20 (равен часовому
+пополнению): порция забирает 10 сразу, ещё 10 в том же часу остаются discovery
+и починке стора сущностей. Поэтому полный круг реестра занимает дни, но конвейер
+живёт круглосуточно.
 
 День дневного бюджета считается в **Europe/Moscow** (`startOfToday` через
 `date-fns-tz`) — так же, как объявлены cron-задачи, независимо от TZ процесса.
@@ -329,6 +341,52 @@ Env: `PARSER_ENABLED` (мастер-выключатель), `PARSER_USER_ID` (�
 
 - Юзербот только читает; все MTProto-вызовы идут через `ParserMtprotoGuard`
   (FloodWait-конверт, jitter, терминальные ошибки → остановка + алерт).
+- **Бюджет вызовов сбора (token-bucket, `ParserMtprotoBudget`).** Две полосы:
+  `history` (`getHistory`, `getHistory:seed`, `getMessages:ids` — альбомы свипа) —
+  burst **12**, пополнение **20/час** (10 за тик `*/30` = 5 active + 5 web_only:
+  каденс источника ≈ 7–8 ч для `active` и ≈ 3–4 суток для `web_only`);
+  `metadata` (`getFullChannel`, `getEntity`, `getDialogs`) —
+  burst **20** (= часовое пополнение: часовая порция статистики берёт 10 и ещё
+  10 до refill остаётся discovery/починке стора — осознанный компромисс, иначе
+  burst 5 упирался бы уже на первой порции). Полоса пуста — вызова нет
+  (`run` → `undefined`, как при паузе), лог
+  `collection budget exhausted (<bucket>), call deferred` не чаще раза в минуту на полосу. Доставка (`getMessages:deliver`, `downloadMedia`,
+  `downloadThumb`) и оценка (`getMessages:eval`) идут **вне бюджета** — выдача
+  и оценка не голодают из-за сбора. Бюджет в памяти процесса: рестарт начинает
+  с полного burst, не более.
+- **Свип — ротация, а не весь реестр.** Порция `SWEEP_SOURCES_PER_RUN = 10`
+  с квотой тира `SWEEP_TIER_QUOTA = 5`: до 5 due `active` + до 5 due `web_only`,
+  свободные слоты тира забирает другой тир (общий кап 10); внутри тира —
+  `lastSweepAt` ASC (NULL первыми, tie-break `id` ASC), вызовы идут `active`
+  первыми, затем `web_only`; пропускаются свипнутые менее `SWEEP_ACTIVE_MIN_INTERVAL_MS` (4 ч) для `active`
+  и `SWEEP_WEB_ONLY_MIN_INTERVAL_MS` (24 ч) для `web_only`; пауза между
+  history-вызовами `SWEEP_GAP_MS` (4 с + jitter). Мёртвые пиры (`isPeerBroken`)
+  в выборку **не попадают** — слот уходит живому источнику.
+- **Окно чтения истории покрывает паузу между свипами.** Первый свип источника
+  читает `SWEEP_FIRST_WINDOW_MS` (26 ч), дальше — с `lastSweepAt − 1 ч`
+  перекрытия, но не глубже `MAX_SWEEP_LOOKBACK_MS` (7 дней, масштаб
+  `POOL_TTL_DAYS`): при каденсе `web_only` ≈ 3–4 суток фиксированные 26 ч теряли
+  бы историю. `lastSweepAt` — «последняя попытка истории»: двигается, когда
+  вызов **был** (успех, пустая выдача или ошибка — иначе вечно падающий источник
+  застрял бы в голове LRU и жёг слот с токеном); если вызова не было (пауза,
+  пустой бюджет, бэкофф пира) — не двигается. Упор в лимит `SWEEP_HISTORY_LIMIT`
+  (50) ставит курсор на дату **самого старого** прочитанного поста, чтобы
+  глубокий бэклог дочитывался следующим тиком. Перечитывание альбома
+  (`getMessages:ids`), отложенное бюджетом, не теряется молча — считается в логе.
+  Лог прогона: `Parser sweep: selected=N skippedInvalid=N skippedInterval=N
+  skippedBroken=N skippedBudget=N skippedBlocked=N albumsDeferred=N collected=M`
+  (`skippedInvalid` — свой канал / строка без пира, `skippedBroken` — мёртвый пир,
+  `skippedBudget` — пустая полоса, `skippedBlocked` — пауза FloodWait).
+- **Статистика — тоже порция.** Ежечасно `20 * * * *`: `STATS_SOURCES_PER_RUN = 10`
+  источников в порядке `statsUpdatedAt` ASC (NULL первыми), пауза `STATS_GAP_MS` (3 с);
+  это ≈10 `getFullChannel`/час (≤240/сутки, полный круг 895 источников ≈ 3.7 суток).
+  Прогон останавливается на пустой полосе `metadata` или на паузе MTProto.
+  `statsUpdatedAt` двигается **только** по реальному `getFullChannel` с
+  результатом: короткое замыкание guard-а (пауза/бюджет/бэкофф) оставляет
+  метку прежней, и источник попадает в следующий прогон. Упавший вызов пишет
+  `lastErrorAt`, и такие источники не берутся `STATS_ERROR_BACKOFF_MS` (24 ч) —
+  иначе вечно падающий источник навсегда оставался бы первым (NULLS FIRST).
+  Лог: `Parser stats: selected=N updated=M skippedBudget=N skippedBlocked=N`.
 - Промах пира (`CHANNEL_INVALID` / нет input entity) **не** удаляет строки
   `session._entities` — только in-memory `_entityCache`. Стор чинится новым
   резолвом: `getDialogs` (≤200 диалогов = два чанка по 100, не чаще раза в

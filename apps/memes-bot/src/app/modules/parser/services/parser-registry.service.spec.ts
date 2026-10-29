@@ -671,6 +671,74 @@ describe('ParserRegistryService', () => {
       expect(updated?.subscribers).toBe(5000);
       expect(updated?.err).toBe(0.3);
     });
+
+    it('TGB-125: короткое замыкание guard-а не двигает statsUpdatedAt (источник вернётся в ротацию)', async () => {
+      observedRepo.find.mockResolvedValue([]);
+      const guard = makeGuard();
+      guard.run.mockResolvedValue(undefined);
+      const sourceRepo = makeSourceRepo();
+      const { service: guarded } = build({ sourceRepo, observedRepo, guard });
+      const invoke = jest.fn();
+
+      const updated = await guarded.refreshSourceStats(source({ statsUpdatedAt: null }), {
+        invoke,
+      } as never);
+
+      expect(invoke).not.toHaveBeenCalled();
+      expect(updated?.statsUpdatedAt).toBeNull();
+    });
+
+    it('TGB-125: упавший getFullChannel пишет lastErrorAt, метку результата не двигает', async () => {
+      observedRepo.find.mockResolvedValue([]);
+      const guard = makeGuard();
+      guard.run.mockImplementation(async (_op: string, fn: () => Promise<unknown>) => {
+        try {
+          await fn();
+        } catch {
+          return undefined; // guard глотает не-entity ошибку
+        }
+        return undefined;
+      });
+      const { service: guarded } = build({ observedRepo, guard });
+      const invoke = jest.fn().mockRejectedValue(new Error('CHANNEL_PRIVATE'));
+
+      const updated = await guarded.refreshSourceStats(source(), { invoke } as never);
+
+      expect(invoke).toHaveBeenCalledTimes(1);
+      expect(updated?.statsUpdatedAt).toBeNull();
+      expect(updated?.lastErrorAt).toEqual(NOW);
+      expect(updated?.lastError).toBe('getFullChannel-failed');
+    });
+
+    it('TGB-125: успешный вызов снимает метку ошибки статистики', async () => {
+      observedRepo.find.mockResolvedValue([]);
+      const guard = makeGuard();
+      const invoke = jest.fn().mockResolvedValue({ fullChat: { participantsCount: 10 } });
+      const { service: guarded } = build({ observedRepo, guard });
+
+      const updated = await guarded.refreshSourceStats(
+        source({ lastError: 'getFullChannel-failed', lastErrorAt: daysAgo(1) }),
+        { invoke } as never
+      );
+
+      expect(updated?.lastError).toBeNull();
+      expect(updated?.statsUpdatedAt).toEqual(NOW);
+      expect(updated?.subscribers).toBe(10);
+    });
+
+    it('TGB-125: устаревшая метка остаётся прежней, если вызова не было', async () => {
+      observedRepo.find.mockResolvedValue([]);
+      const guard = makeGuard();
+      guard.run.mockResolvedValue(undefined);
+      const { service: guarded } = build({ observedRepo, guard });
+      const old = daysAgo(3);
+
+      const updated = await guarded.refreshSourceStats(source({ statsUpdatedAt: old }), {
+        invoke: jest.fn(),
+      } as never);
+
+      expect(updated?.statsUpdatedAt).toBe(old);
+    });
   });
 
   describe('seedBaselineFromHistory', () => {
