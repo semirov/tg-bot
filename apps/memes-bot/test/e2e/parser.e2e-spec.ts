@@ -70,12 +70,29 @@ const BASELINE = {
   updatedAt: new Date().toISOString(),
 };
 
+/** gramjs-фото для стаба: `media` для скачивания + `photo` для pre-check размера. */
+function photoMedia(id: number, size = 1024): { photo: Api.Photo; media: Api.MessageMediaPhoto } {
+  const photo = new Api.Photo({
+    id: bigInt(String(id)),
+    accessHash: bigInt('1'),
+    fileReference: Buffer.alloc(0),
+    date: 1000,
+    sizes: [new Api.PhotoSize({ type: 'x', w: 100, h: 100, size })],
+    dcId: 2,
+  });
+  return { photo, media: new Api.MessageMediaPhoto({ photo }) };
+}
+
+/** Байты, которые стаб `iterDownload` отдаёт для фото с данным id. */
+const MEDIA_BYTES = new Map<string, Buffer>();
+
 jest.setTimeout(120_000);
 
 describe('Parser e2e (параллельный конвейер)', () => {
   let harness: Awaited<ReturnType<typeof createE2EHarness>>;
   let client: {
     getMessages: jest.Mock;
+    iterDownload: jest.Mock;
     downloadMedia: jest.Mock;
     invoke: jest.Mock;
     getEntity: jest.Mock;
@@ -86,6 +103,13 @@ describe('Parser e2e (параллельный конвейер)', () => {
     const clientBase = harness.moduleRef.get(ClientBaseService, { strict: false });
     client = {
       getMessages: jest.fn().mockResolvedValue([]),
+      // Bounded-скачивание: тот же контракт, что и `client.iterDownload` gramjs.
+      iterDownload: jest.fn(async function* (params: {
+        file?: { photo?: { id?: { toString(): string } | number } };
+      }) {
+        const mediaId = params.file?.photo?.id?.toString() ?? '0';
+        yield MEDIA_BYTES.get(mediaId) ?? Buffer.from([1, 2, 3, 4]);
+      }),
       downloadMedia: jest.fn().mockResolvedValue(Buffer.from([1, 2, 3])),
       invoke: jest.fn().mockResolvedValue({ fullChat: { participantsCount: 10000 } }),
       getEntity: jest.fn().mockResolvedValue({ id: bigInt('8888888888'), username: 'memes_source' }),
@@ -101,6 +125,7 @@ describe('Parser e2e (параллельный конвейер)', () => {
   });
 
   beforeEach(async () => {
+    MEDIA_BYTES.clear();
     harness.clearCalls();
     await harness.resetDb();
     // resetDb вычищает настройки — обновляем кэш настроек парсера.
@@ -145,6 +170,7 @@ describe('Parser e2e (параллельный конвейер)', () => {
         reactions: {
           results: [{ reaction: new Api.ReactionEmoji({ emoticon: '🔥' }), count: 40 }],
         },
+        ...photoMedia(42),
       } as never,
     ]);
 
@@ -166,7 +192,6 @@ describe('Parser e2e (параллельный конвейер)', () => {
 
     const selector = harness.moduleRef.get(ParserSelectorService, { strict: false });
     const delivered = await selector.dumpMore();
-
     expect(delivered).toBe(1);
 
     const sendPhoto = findCall(harness.calls, 'sendPhoto');
@@ -278,14 +303,12 @@ describe('Parser e2e (параллельный конвейер)', () => {
     }
 
     client.getMessages.mockResolvedValue([
-      { id: 100 } as never,
-      { id: 101 } as never,
-      { id: 102 } as never,
+      { id: 100, ...photoMedia(100) } as never,
+      { id: 101, ...photoMedia(101) } as never,
+      { id: 102, ...photoMedia(102) } as never,
     ]);
     // Разное медиа на каждый пост — иначе сработает склейка дублей.
-    client.downloadMedia.mockImplementation((message: { id?: number }) =>
-      Promise.resolve(Buffer.from(`img-${message?.id ?? 0}`))
-    );
+    for (const id of [100, 101, 102]) MEDIA_BYTES.set(String(id), Buffer.from(`img-${id}`));
 
     const selector = harness.moduleRef.get(ParserSelectorService, { strict: false });
     (selector as unknown as { lastDumpAt: number }).lastDumpAt = 0;
@@ -327,7 +350,7 @@ describe('Parser e2e (параллельный конвейер)', () => {
       })
     );
 
-    client.getMessages.mockResolvedValue([{ id: 9 } as never]);
+    client.getMessages.mockResolvedValue([{ id: 9, ...photoMedia(9) } as never]);
 
     const selector = harness.moduleRef.get(ParserSelectorService, { strict: false });
     (selector as unknown as { lastDumpAt: number }).lastDumpAt = 0;
