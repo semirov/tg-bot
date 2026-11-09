@@ -183,7 +183,7 @@ const mediaMessage = (overrides: Record<string, unknown> = {}): any => {
     accessHash: bigInt('1'),
     fileReference: Buffer.from([]),
     date: 1000,
-    sizes: [],
+    sizes: [new Api.PhotoSize({ type: 'm', w: 1, h: 1, size: 1 })],
     dcId: 2,
   });
   return {
@@ -192,6 +192,7 @@ const mediaMessage = (overrides: Record<string, unknown> = {}): any => {
     message: 'caption',
     peerId: new Api.PeerChannel({ channelId: bigInt('8888888888') }),
     photo,
+    media: new Api.MessageMediaPhoto({ photo }),
     ...overrides,
   } as any;
 };
@@ -218,8 +219,20 @@ describe('parser branches round 2', () => {
     };
     const bot: any = { api: { sendVideo: jest.fn(), deleteMessage: jest.fn(), editMessageCaption: jest.fn() } };
     const client = {
-      getMessages: jest.fn().mockResolvedValue([{ id: 42, video, views: 4000 } as never]),
+      getMessages: jest
+        .fn()
+        .mockResolvedValue([
+          {
+            id: 42,
+            video,
+            media: new Api.MessageMediaDocument({ document: video }),
+            views: 4000,
+          } as never,
+        ]),
       downloadMedia: jest.fn().mockResolvedValue(Buffer.from([1, 2])),
+      iterDownload: jest.fn(async function* () {
+        yield Buffer.from([1, 2]);
+      }),
     };
     const observedRepo = makeObservedRepo();
     const service = new ParserDeliveryService(
@@ -243,6 +256,9 @@ describe('parser branches round 2', () => {
     const client = {
       getMessages: jest.fn().mockResolvedValue([mediaMessage()]),
       downloadMedia: jest.fn().mockResolvedValue(Buffer.from([1])),
+      iterDownload: jest.fn(async function* () {
+        yield Buffer.from([1]);
+      }),
     };
     const service = new ParserDeliveryService(
       bot, makeConfig(), makeGuard(), makeRegistryMock(), makeParserClient(client), dedup as never, makeObservedRepo(), clock

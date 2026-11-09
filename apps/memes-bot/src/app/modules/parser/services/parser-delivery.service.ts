@@ -37,6 +37,21 @@ interface MediaPayload {
   error?: string;
 }
 
+/** Итог bounded-скачивания: буфер, признак превышения лимита или класс сбоя. */
+interface BoundedDownload {
+  buffer?: Buffer;
+  tooLarge?: boolean;
+  /** Сколько байт успели принять до останова (для лога). */
+  bytes?: number;
+  error?: string;
+}
+
+/**
+ * Чанк bounded-скачивания. `upload.getFile` требует кратности 4096;
+ * 128 КБ — компромисс между числом MTProto-вызовов и пиком памяти.
+ */
+const DOWNLOAD_CHUNK_BYTES = 128 * 1024;
+
 /**
  * Доставка отобранных кандидатов в предложку: юзербот отдаёт байты медиа,
  * бот публикует карточку «Парсер» с инлайн-клавиатурой модерации.
@@ -284,18 +299,34 @@ export class ParserDeliveryService {
     if (!message) return { error: 'media-fetch-failed' };
 
     const kind = candidate.mediaKind === 'video' || message.video ? 'video' : 'photo';
-    const download = await this.guarded('downloadMedia', () => client.downloadMedia(message));
-    if (download.error) return { error: download.error };
-    const buffer = download.value;
-    if (!(buffer instanceof Buffer) || buffer.length === 0) {
+    const cap = kind === 'video' ? MAX_VIDEO_BYTES : MAX_PHOTO_BYTES;
+
+    // `iterDownload` принимает только TL-локацию (`MessageMediaPhoto/Document`):
+    // `getFileInfo` не разворачивает `Api.Message` и падает с «Cannot cast Message».
+    // Веб-превью (коллектор берёт из них `message.photo/video`) разворачиваем сами.
+    const media = this.resolveDownloadMedia(message.media);
+    if (!media) {
       return { error: 'media-download-empty' };
     }
 
-    if (kind === 'photo' && buffer.length > MAX_PHOTO_BYTES) {
+    // Размер из метаданных проверяем ДО скачивания: `downloadMedia` без
+    // `outputFile` материализует файл в RAM целиком и убивает процесс по RSS.
+    const declared = this.declaredMediaSize(message, kind);
+    if (declared != null && declared > cap) {
+      this.logMediaTooLarge(kind, declared, candidate, source);
       return { error: 'media-too-large' };
     }
-    if (kind === 'video' && buffer.length > MAX_VIDEO_BYTES) {
+
+    const download = await this.downloadBounded(client, media, cap);
+    if (download.tooLarge) {
+      // Метаданные соврали (или размера нет): поток оборвали по факту.
+      this.logMediaTooLarge(kind, download.bytes ?? cap, candidate, source);
       return { error: 'media-too-large' };
+    }
+    if (download.error) return { error: download.error };
+    const buffer = download.buffer;
+    if (!(buffer instanceof Buffer) || buffer.length === 0) {
+      return { error: 'media-download-empty' };
     }
 
     if (kind === 'video') {
@@ -304,6 +335,136 @@ export class ParserDeliveryService {
       return thumbBuffer ? { videoBuffer: buffer, thumbBuffer } : { videoBuffer: buffer };
     }
     return { photoBuffer: buffer };
+  }
+
+  /**
+   * Приводит медиа сообщения к локации для `iterDownload`: `getFileInfo`
+   * принимает только `MessageMediaPhoto/Document` (сырые `Photo`/`Document` и
+   * `Api.Message` он не разворачивает). Веб-превью разворачиваем и оборачиваем
+   * обратно — так же, как это делает `downloadMedia`. Фото с пустым `sizes`
+   * отбрасываем: `getFileInfo` берёт `sizes[last].type` и падает на `[]`.
+   */
+  private resolveDownloadMedia(media: Api.TypeMessageMedia | undefined): Api.TypeMessageMedia | null {
+    if (media instanceof Api.MessageMediaPhoto) {
+      return this.hasPhotoSizes(media.photo) ? media : null;
+    }
+    if (media instanceof Api.MessageMediaDocument) {
+      return media.document instanceof Api.Document ? media : null;
+    }
+    if (media instanceof Api.MessageMediaWebPage && media.webpage instanceof Api.WebPage) {
+      if (media.webpage.document instanceof Api.Document) {
+        return new Api.MessageMediaDocument({ document: media.webpage.document });
+      }
+      if (this.hasPhotoSizes(media.webpage.photo)) {
+        return new Api.MessageMediaPhoto({ photo: media.webpage.photo as Api.Photo });
+      }
+    }
+    return null;
+  }
+
+  /** `getFileInfo` требует хотя бы один размер у фото. */
+  private hasPhotoSizes(photo: unknown): boolean {
+    return (
+      photo instanceof Api.Photo && Array.isArray(photo.sizes) && photo.sizes.length > 0
+    );
+  }
+
+  /**
+   * Размер медиа из метаданных сообщения ДО скачивания. Видео/документ —
+   * `document.size`; фото — крупнейший `PhotoSize.size` (у
+   * `PhotoSizeProgressive` размер лежит массивом, берём максимум).
+   * `null` — размер неизвестен: решение принимает bounded-скачивание.
+   */
+  private declaredMediaSize(message: Api.Message, kind: 'photo' | 'video'): number | null {
+    if (kind === 'video') {
+      return this.byteSize(message.document?.size) ?? this.byteSize(message.video?.size);
+    }
+    const photo = message.photo as Api.Photo | undefined;
+    if (!photo?.sizes?.length) return null;
+    let max: number | null = null;
+    for (const size of photo.sizes) {
+      const value = this.photoSizeBytes(size);
+      if (value != null && (max == null || value > max)) max = value;
+    }
+    return max;
+  }
+
+  /** Байты одного размера фото; у progressive-варианта — максимум из массива. */
+  private photoSizeBytes(size: Api.TypePhotoSize): number | null {
+    const variant = size as { size?: unknown; sizes?: unknown };
+    if (Array.isArray(variant.sizes)) {
+      const values = variant.sizes.filter(
+        (value): value is number => typeof value === 'number' && Number.isFinite(value)
+      );
+      return values.length ? Math.max(...values) : null;
+    }
+    return this.byteSize(variant.size);
+  }
+
+  /** TL `long` приходит `BigInteger`-объектом или числом — в безопасное число. */
+  private byteSize(value: unknown): number | null {
+    if (typeof value === 'number') {
+      return Number.isFinite(value) && value >= 0 ? value : null;
+    }
+    if (typeof value === 'bigint') {
+      return value >= BigInt(0) && value <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(value) : null;
+    }
+    const convertible = value as { toJSNumber?: unknown } | null;
+    if (convertible && typeof convertible === 'object' && typeof convertible.toJSNumber === 'function') {
+      const bytes = (convertible as { toJSNumber: () => number }).toJSNumber();
+      return Number.isFinite(bytes) && bytes >= 0 ? bytes : null;
+    }
+    return null;
+  }
+
+  /**
+   * Скачивание с жёстким потолком памяти: `iterDownload` отдаёт чанки по
+   * `DOWNLOAD_CHUNK_BYTES`, лимит — `cap + один чанк`, поэтому даже огромный
+   * файл занимает не больше `cap + чанк`; при превышении поток обрывается.
+   * `client.downloadMedia` для основного медиа не используется: он копит файл
+   * в `BinaryWriter` целиком.
+   */
+  private async downloadBounded(
+    client: TelegramClient,
+    media: Api.TypeMessageMedia,
+    cap: number
+  ): Promise<BoundedDownload> {
+    // `+1` чанк нужен, чтобы заметить превышение, когда cap кратен размеру чанка.
+    const limit = Math.ceil(cap / DOWNLOAD_CHUNK_BYTES) + 1;
+    let received = 0;
+    let tooLarge = false;
+    const download = await this.guarded('downloadMedia', async () => {
+      const chunks: Buffer[] = [];
+      for await (const chunk of client.iterDownload({
+        file: media,
+        requestSize: DOWNLOAD_CHUNK_BYTES,
+        limit,
+      })) {
+        const part = chunk as Buffer;
+        chunks.push(part);
+        received += part.length;
+        if (received > cap) {
+          tooLarge = true;
+          break;
+        }
+      }
+      return tooLarge ? null : Buffer.concat(chunks);
+    });
+    if (download.error) return { error: download.error };
+    if (tooLarge || download.value == null) return { tooLarge: true, bytes: received };
+    return { buffer: download.value };
+  }
+
+  /** Одна строка на превышение лимита: видно в `docker logs` без дампа байтов. */
+  private logMediaTooLarge(
+    kind: 'photo' | 'video',
+    bytes: number,
+    candidate: ObservedPostEntity,
+    source: SourceChannelEntity
+  ): void {
+    this.logger.warn(
+      `Parser delivery: media-too-large (${kind}, ${bytes} bytes, chat=${source.chatId}, msg=${candidate.sourceMessageId})`
+    );
   }
 
   /**

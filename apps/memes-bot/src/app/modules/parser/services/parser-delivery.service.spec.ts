@@ -1,7 +1,12 @@
 import * as bigInt from 'big-integer';
 import { Logger } from '@nestjs/common';
 import { Api } from 'telegram';
-import { ObservedStatus, QUEUE_MERGE_SIMILARITY, VIDEO_MERGE_SIMILARITY } from '../constants/parser.constants';
+import {
+  MAX_VIDEO_BYTES,
+  ObservedStatus,
+  QUEUE_MERGE_SIMILARITY,
+  VIDEO_MERGE_SIMILARITY,
+} from '../constants/parser.constants';
 import { ParserDeliveryService } from './parser-delivery.service';
 
 jest.mock('axios', () => ({
@@ -46,16 +51,24 @@ const candidate = (overrides: Record<string, unknown> = {}): any => ({
   ...overrides,
 });
 
-const messageWithPhoto = (): any => {
+const messageWithPhoto = (
+  sizes: Api.TypePhotoSize[] = [new Api.PhotoSize({ type: 'm', w: 320, h: 320, size: 1024 })]
+): any => {
   const photo = new Api.Photo({
     id: bigInt('555000'),
     accessHash: bigInt('1'),
     fileReference: Buffer.from([]),
     date: 1000,
-    sizes: [],
+    sizes,
     dcId: 2,
   });
-  return { id: 42, photo, video: undefined, views: 4000 } as unknown as Api.Message;
+  return {
+    id: 42,
+    photo,
+    video: undefined,
+    media: new Api.MessageMediaPhoto({ photo }),
+    views: 4000,
+  } as unknown as Api.Message;
 };
 
 const videoDocument = (): any =>
@@ -71,8 +84,34 @@ const videoDocument = (): any =>
     thumbs: [new Api.PhotoSize({ type: 'm', w: 1, h: 1, size: 1 })],
   });
 
-const messageWithVideo = (overrides: Record<string, unknown> = {}): any =>
-  ({ id: 42, photo: undefined, video: videoDocument(), views: 4000, ...overrides }) as unknown as Api.Message;
+const messageWithVideo = (overrides: Record<string, unknown> = {}): any => {
+  const video = videoDocument();
+  return {
+    id: 42,
+    photo: undefined,
+    media: new Api.MessageMediaDocument({ document: video }),
+    video,
+    views: 4000,
+    ...overrides,
+  } as unknown as Api.Message;
+};
+
+/** Чанк тестового `iterDownload` — как у gramjs в проде (128 КБ). */
+const STREAM_CHUNK_BYTES = 128 * 1024;
+
+/** Фейковый `iterDownload`: отдаёт буфер чанками по 128 КБ, как это делает gramjs. */
+const streamChunks = async function* (data: Buffer): AsyncGenerator<Buffer> {
+  for (let offset = 0; offset < data.length; offset += STREAM_CHUNK_BYTES) {
+    yield data.subarray(offset, Math.min(offset + STREAM_CHUNK_BYTES, data.length));
+  }
+};
+
+/** Поток, падающий на первом `next()` (ошибка MTProto до первого чанка). */
+const failingStream = (error: Error) =>
+  async function* (): AsyncGenerator<Buffer> {
+    if (error) throw error;
+    yield Buffer.alloc(0);
+  };
 
 const makeBot = (): any => ({
   api: {
@@ -148,7 +187,10 @@ const setup = (overrides: SetupOverrides = {}) => {
   };
   const client: Record<string, unknown> = {
     getMessages: jest.fn().mockResolvedValue(overrides.messages ?? [messageWithPhoto()]),
-    downloadMedia: jest.fn().mockResolvedValue(overrides.download ?? Buffer.from([1, 2, 3])),
+    iterDownload: jest.fn(() =>
+      streamChunks((overrides.download as Buffer) ?? Buffer.from([1, 2, 3]))
+    ),
+    downloadMedia: jest.fn().mockResolvedValue(Buffer.from([1, 2, 3])),
     ...overrides.client,
   };
   const bot = makeBot();
@@ -215,7 +257,15 @@ describe('ParserDeliveryService', () => {
     const video = videoDocument();
     (video as { thumbs?: unknown[] }).thumbs = [];
     const { service, observedRepo, dedup } = setup({
-      messages: [{ id: 42, photo: undefined, video, views: 4000 } as unknown as Api.Message],
+      messages: [
+        {
+          id: 42,
+          photo: undefined,
+          media: new Api.MessageMediaDocument({ document: video }),
+          video,
+          views: 4000,
+        } as unknown as Api.Message,
+      ],
     });
 
     const result = await service.deliver(candidate({ mediaKind: 'video' }));
@@ -267,12 +317,12 @@ describe('ParserDeliveryService', () => {
     expect(dedup.checkDuplicateSameLength).toHaveBeenCalled();
   });
 
-  it('медиа слишком большое → FAILED media-too-large', async () => {
+  it('медиа слишком большое (размер неизвестен, буфер больше лимита) → FAILED media-too-large', async () => {
     const { service, bot } = setup({ download: Buffer.alloc(11 * 1024 * 1024, 1) });
 
     const result = await service.deliver(candidate());
 
-    expect(result).toMatchObject({ ok: false, status: ObservedStatus.FAILED });
+    expect(result).toMatchObject({ ok: false, status: ObservedStatus.FAILED, reason: 'media-too-large' });
     expect(bot.api.sendPhoto).not.toHaveBeenCalled();
   });
 
@@ -284,8 +334,266 @@ describe('ParserDeliveryService', () => {
 
     const result = await service.deliver(candidate({ mediaKind: 'video' }));
 
-    expect(result).toMatchObject({ ok: false, status: ObservedStatus.FAILED });
+    expect(result).toMatchObject({ ok: false, status: ObservedStatus.FAILED, reason: 'media-too-large' });
     expect(bot.api.sendVideo).not.toHaveBeenCalled();
+  });
+
+  describe('размер медиа из метаданных (TGB-128)', () => {
+    it('объявленное видео > 45 МБ → ни одного скачивания, media-too-large', async () => {
+      const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+      const video = videoDocument();
+      video.size = bigInt(String(46 * 1024 * 1024));
+      const { service, client, bot } = setup({
+        messages: [
+          {
+            id: 42,
+            photo: undefined,
+            media: new Api.MessageMediaDocument({ document: video }),
+            video,
+            views: 4000,
+          } as unknown as Api.Message,
+        ],
+      });
+
+      const result = await service.deliver(candidate({ mediaKind: 'video' }));
+
+      expect(result).toMatchObject({
+        ok: false,
+        status: ObservedStatus.FAILED,
+        reason: 'media-too-large',
+      });
+      expect(client.downloadMedia).not.toHaveBeenCalled();
+      expect(client.iterDownload).not.toHaveBeenCalled();
+      expect(bot.api.sendVideo).not.toHaveBeenCalled();
+      const sizeLogs = warnSpy.mock.calls.filter(([line]) =>
+        String(line).includes('media-too-large (')
+      );
+      expect(sizeLogs).toHaveLength(1);
+      expect(sizeLogs[0][0]).toContain(
+        `media-too-large (video, ${46 * 1024 * 1024} bytes, chat=-1008888888888, msg=42)`
+      );
+      warnSpy.mockRestore();
+    });
+
+    it('объявленное фото > 10 МБ → ни одного скачивания, media-too-large', async () => {
+      const sizes = [
+        new Api.PhotoSize({ type: 'm', w: 320, h: 320, size: 1024 }),
+        new Api.PhotoSize({ type: 'w', w: 1280, h: 1280, size: 11 * 1024 * 1024 }),
+      ];
+      const { service, client, bot } = setup({ messages: [messageWithPhoto(sizes)] });
+
+      const result = await service.deliver(candidate());
+
+      expect(result).toMatchObject({
+        ok: false,
+        status: ObservedStatus.FAILED,
+        reason: 'media-too-large',
+      });
+      expect(client.downloadMedia).not.toHaveBeenCalled();
+      expect(client.iterDownload).not.toHaveBeenCalled();
+      expect(bot.api.sendPhoto).not.toHaveBeenCalled();
+    });
+
+    it('размер неизвестен, поток больше лимита → обрыв на cap + один чанк', async () => {
+      const consumed = { chunks: 0, bytes: 0 };
+      const endless = async function* (): AsyncGenerator<Buffer> {
+        const chunk = Buffer.alloc(STREAM_CHUNK_BYTES, 1);
+        for (;;) {
+          consumed.chunks += 1;
+          consumed.bytes += chunk.length;
+          yield chunk;
+        }
+      };
+      const iterDownload = jest.fn((_params: Record<string, unknown>) => endless());
+      const { service, bot } = setup({ client: { iterDownload } });
+
+      const result = await service.deliver(candidate());
+
+      expect(result).toMatchObject({
+        ok: false,
+        status: ObservedStatus.FAILED,
+        reason: 'media-too-large',
+      });
+      expect(iterDownload).toHaveBeenCalledTimes(1);
+      expect(iterDownload.mock.calls[0][0]).toMatchObject({
+        requestSize: STREAM_CHUNK_BYTES,
+        limit: 10 * 1024 * 1024 / STREAM_CHUNK_BYTES + 1,
+      });
+      // 80 чанков = ровно лимит фото, 81-й показывает превышение и обрывает поток.
+      expect(consumed.chunks).toBe(81);
+      expect(consumed.bytes).toBeLessThanOrEqual(10 * 1024 * 1024 + STREAM_CHUNK_BYTES);
+      expect(bot.api.sendPhoto).not.toHaveBeenCalled();
+    });
+
+    it('объявленное видео <= лимита → bounded-буфер склеен из чанков и доставлен', async () => {
+      const source = Buffer.alloc(3 * STREAM_CHUNK_BYTES - 100, 7);
+      const { service, client, bot } = setup({
+        messages: [messageWithVideo()],
+        download: source,
+      });
+
+      const result = await service.deliver(candidate({ mediaKind: 'video' }));
+
+      expect(result).toMatchObject({ ok: true, status: ObservedStatus.DELIVERED });
+      expect(client.iterDownload).toHaveBeenCalledTimes(1);
+      expect((client.iterDownload as jest.Mock).mock.calls[0][0]).toMatchObject({
+        requestSize: STREAM_CHUNK_BYTES,
+        limit: 45 * 1024 * 1024 / STREAM_CHUNK_BYTES + 1,
+      });
+      // Три чанка склеены ровно в исходный поток, без потерь и дублей.
+      const sent = bot.api.sendVideo.mock.calls[0][1] as { fileData?: Buffer };
+      expect(Buffer.compare(sent.fileData ?? Buffer.alloc(0), source)).toBe(0);
+    });
+
+    it('объявленный размер ровно равен лимиту → доставляем, не отклоняем', async () => {
+      const video = videoDocument();
+      video.size = bigInt(String(MAX_VIDEO_BYTES));
+      const { service, bot } = setup({
+        messages: [
+          {
+            id: 42,
+            photo: undefined,
+            media: new Api.MessageMediaDocument({ document: video }),
+            video,
+            views: 4000,
+          } as unknown as Api.Message,
+        ],
+      });
+
+      const result = await service.deliver(candidate({ mediaKind: 'video' }));
+
+      expect(result).toMatchObject({ ok: true, status: ObservedStatus.DELIVERED });
+      expect(bot.api.sendVideo).toHaveBeenCalled();
+    });
+
+    it('фото с пустым photo.sizes → media-download-empty (getFileInfo падает на [])', async () => {
+      const { service, client } = setup({ messages: [messageWithPhoto([])] });
+
+      const result = await service.deliver(candidate());
+
+      expect(result).toMatchObject({
+        ok: false,
+        status: ObservedStatus.FAILED,
+        reason: 'media-download-empty',
+      });
+      expect(client.iterDownload).not.toHaveBeenCalled();
+    });
+
+    it('веб-превью с фото → разворачиваем webpage.photo и доставляем', async () => {
+      const photo = new Api.Photo({
+        id: bigInt('890'),
+        accessHash: bigInt('1'),
+        fileReference: Buffer.from([]),
+        date: 1000,
+        sizes: [new Api.PhotoSize({ type: 'm', w: 320, h: 320, size: 2048 })],
+        dcId: 2,
+      });
+      const message = {
+        id: 42,
+        photo,
+        video: undefined,
+        views: 4000,
+        media: new Api.MessageMediaWebPage({
+          webpage: new Api.WebPage({
+            id: bigInt('1'),
+            url: 'https://example.com',
+            displayUrl: 'example.com',
+            hash: 0,
+            photo,
+          }),
+        }),
+      } as unknown as Api.Message;
+      const { service, client, bot } = setup({ messages: [message] });
+
+      const result = await service.deliver(candidate());
+
+      expect(result).toMatchObject({ ok: true, status: ObservedStatus.DELIVERED });
+      const file = (client.iterDownload as jest.Mock).mock.calls[0][0].file;
+      expect(file).toBeInstanceOf(Api.MessageMediaPhoto);
+      expect((file as Api.MessageMediaPhoto).photo).toBe(photo);
+      expect(bot.api.sendPhoto).toHaveBeenCalled();
+    });
+
+    it('веб-превью с видео → разворачиваем webpage.document и доставляем', async () => {
+      const video = videoDocument();
+      const message = {
+        id: 42,
+        photo: undefined,
+        video,
+        views: 4000,
+        media: new Api.MessageMediaWebPage({
+          webpage: new Api.WebPage({
+            id: bigInt('2'),
+            url: 'https://example.com/v',
+            displayUrl: 'example.com/v',
+            hash: 0,
+            document: video,
+          }),
+        }),
+      } as unknown as Api.Message;
+      const { service, client, bot } = setup({ messages: [message] });
+
+      const result = await service.deliver(candidate({ mediaKind: 'video' }));
+
+      expect(result).toMatchObject({ ok: true, status: ObservedStatus.DELIVERED });
+      const file = (client.iterDownload as jest.Mock).mock.calls[0][0].file;
+      expect(file).toBeInstanceOf(Api.MessageMediaDocument);
+      expect((file as Api.MessageMediaDocument).document).toBe(video);
+      expect(bot.api.sendVideo).toHaveBeenCalled();
+    });
+
+    it('сообщение без поддерживаемого медиа → media-download-empty без MTProto-скачивания', async () => {
+      const { service, client } = setup({
+        messages: [{ id: 42, views: 4000 } as unknown as Api.Message],
+      });
+
+      const result = await service.deliver(candidate());
+
+      expect(result).toMatchObject({
+        ok: false,
+        status: ObservedStatus.FAILED,
+        reason: 'media-download-empty',
+      });
+      expect(client.iterDownload).not.toHaveBeenCalled();
+    });
+
+    it('declaredMediaSize: BigInteger, число, progressive-фото и неизвестный размер', () => {
+      const service = setup().service as never as {
+        declaredMediaSize: (m: unknown, k: 'photo' | 'video') => number | null;
+      };
+
+      const video = videoDocument();
+      expect(service.declaredMediaSize({ document: video, video }, 'video')).toBe(1000);
+      expect(service.declaredMediaSize({ document: { size: 2048 }, video: undefined }, 'video')).toBe(2048);
+      expect(service.declaredMediaSize({ document: { size: BigInt(4096) }, video: undefined }, 'video')).toBe(4096);
+      expect(service.declaredMediaSize({ document: { size: BigInt(-1) }, video: undefined }, 'video')).toBeNull();
+      expect(service.declaredMediaSize({ document: { size: Number.NaN }, video: undefined }, 'video')).toBeNull();
+      expect(service.declaredMediaSize({ document: undefined, video: undefined }, 'video')).toBeNull();
+      expect(service.declaredMediaSize({ document: { size: 'x' }, video: undefined }, 'video')).toBeNull();
+
+      const progressive = new Api.PhotoSizeProgressive({
+        type: 'w',
+        w: 1280,
+        h: 1280,
+        sizes: [1024, 2048, 4 * 1024 * 1024],
+      });
+      expect(service.declaredMediaSize({ photo: { sizes: [progressive] } }, 'photo')).toBe(
+        4 * 1024 * 1024
+      );
+      expect(service.declaredMediaSize({ photo: { sizes: [] } }, 'photo')).toBeNull();
+      expect(
+        service.declaredMediaSize(
+          { photo: { sizes: [new Api.PhotoStrippedSize({ type: 'i', bytes: Buffer.from([]) })] } },
+          'photo'
+        )
+      ).toBeNull();
+      expect(
+        service.declaredMediaSize(
+          { photo: { sizes: [new Api.PhotoSizeProgressive({ type: 'w', w: 1, h: 1, sizes: [] })] } },
+          'photo'
+        )
+      ).toBeNull();
+    });
   });
 
   it('sendPhoto падает → FAILED send-failed', async () => {
@@ -412,11 +720,11 @@ describe('ParserDeliveryService', () => {
       const stale = messageWithPhoto();
       const fresh = messageWithPhoto();
       const getMessages = jest.fn().mockResolvedValueOnce([stale]).mockResolvedValueOnce([fresh]);
-      const downloadMedia = jest
+      const iterDownload = jest
         .fn()
-        .mockRejectedValueOnce(expired())
-        .mockResolvedValueOnce(Buffer.from([9, 9, 9]));
-      const { service, bot } = setup({ client: { getMessages, downloadMedia } });
+        .mockImplementationOnce(failingStream(expired()))
+        .mockImplementationOnce(() => streamChunks(Buffer.from([9, 9, 9])));
+      const { service, bot } = setup({ client: { getMessages, iterDownload } });
 
       const result = await service.deliver(candidate());
 
@@ -424,16 +732,17 @@ describe('ParserDeliveryService', () => {
       // Ровно одно перечитывание перед вторым скачиванием.
       expect(getMessages).toHaveBeenCalledTimes(2);
       expect(getMessages.mock.calls[1][1]).toEqual({ ids: [42] });
-      expect(downloadMedia).toHaveBeenCalledTimes(2);
-      expect(downloadMedia.mock.calls[0][0]).toBe(stale);
-      expect(downloadMedia.mock.calls[1][0]).toBe(fresh);
+      expect(iterDownload).toHaveBeenCalledTimes(2);
+      // `iterDownload` получает TL-локацию: `getFileInfo` не разворачивает Message.
+      expect(iterDownload.mock.calls[0][0].file).toBe((stale as any).media);
+      expect(iterDownload.mock.calls[1][0].file).toBe((fresh as any).media);
       expect(bot.api.sendPhoto).toHaveBeenCalledTimes(1);
     });
 
     it('повтор после перечитывания тоже падает → media-fetch-failed', async () => {
       const getMessages = jest.fn().mockResolvedValue([messageWithPhoto()]);
-      const downloadMedia = jest.fn().mockRejectedValue(expired());
-      const { service } = setup({ client: { getMessages, downloadMedia } });
+      const iterDownload = jest.fn(failingStream(expired()));
+      const { service } = setup({ client: { getMessages, iterDownload } });
       const row = candidate();
 
       const result = await service.deliver(row);
@@ -444,7 +753,7 @@ describe('ParserDeliveryService', () => {
         reason: 'media-fetch-failed',
       });
       expect(getMessages).toHaveBeenCalledTimes(2);
-      expect(downloadMedia).toHaveBeenCalledTimes(2);
+      expect(iterDownload).toHaveBeenCalledTimes(2);
       expect(row.rejectReason).toBe('media-fetch-failed');
     });
 
@@ -457,6 +766,7 @@ describe('ParserDeliveryService', () => {
       expect(result).toMatchObject({ ok: false, reason: 'media-fetch-failed' });
       expect(getMessages).toHaveBeenCalledTimes(2);
       expect(client.downloadMedia).not.toHaveBeenCalled();
+      expect(client.iterDownload).not.toHaveBeenCalled();
     });
   });
 
@@ -470,6 +780,7 @@ describe('ParserDeliveryService', () => {
       expect(result).toMatchObject({ ok: false, reason: 'mtproto-blocked' });
       expect(client.getMessages).not.toHaveBeenCalled();
       expect(client.downloadMedia).not.toHaveBeenCalled();
+      expect(client.iterDownload).not.toHaveBeenCalled();
     });
 
     it('пир в бэкоффе (вызова не было) → mtproto-blocked без повтора', async () => {
@@ -485,44 +796,50 @@ describe('ParserDeliveryService', () => {
 
     it('FLOOD_WAIT на скачивании → без перечитывания (попытка не тратится)', async () => {
       const getMessages = jest.fn().mockResolvedValue([messageWithPhoto()]);
-      const downloadMedia = jest.fn().mockImplementation(async () => {
-        guard.state.blocked = true; // как настоящий guard после FloodWait
-        throw new Error('420: FLOOD_WAIT_60');
+      const iterDownload = jest.fn(async function* () {
+        if (!guard.state.blocked) {
+          guard.state.blocked = true; // как настоящий guard после FloodWait
+          throw new Error('420: FLOOD_WAIT_60');
+        }
+        yield Buffer.alloc(0);
       });
-      const { service, guard } = setup({ client: { getMessages, downloadMedia } });
+      const { service, guard } = setup({ client: { getMessages, iterDownload } });
 
       const result = await service.deliver(candidate());
 
       expect(result).toMatchObject({ ok: false, reason: 'flood-wait' });
       expect(getMessages).toHaveBeenCalledTimes(1);
-      expect(downloadMedia).toHaveBeenCalledTimes(1);
+      expect(iterDownload).toHaveBeenCalledTimes(1);
     });
 
     it('гейт закрылся между попытками → перечитывания нет', async () => {
       const getMessages = jest.fn().mockResolvedValue([messageWithPhoto()]);
-      const downloadMedia = jest.fn().mockImplementation(async () => {
-        guard.state.blocked = true; // паузу поставил параллельный цикл
-        throw new Error('400: FILE_REFERENCE_EXPIRED');
+      const iterDownload = jest.fn(async function* () {
+        if (!guard.state.blocked) {
+          guard.state.blocked = true; // паузу поставил параллельный цикл
+          throw new Error('400: FILE_REFERENCE_EXPIRED');
+        }
+        yield Buffer.alloc(0);
       });
-      const { service, guard } = setup({ client: { getMessages, downloadMedia } });
+      const { service, guard } = setup({ client: { getMessages, iterDownload } });
 
       const result = await service.deliver(candidate());
 
       expect(result).toMatchObject({ ok: false, reason: 'mtproto-blocked' });
       expect(getMessages).toHaveBeenCalledTimes(1);
-      expect(downloadMedia).toHaveBeenCalledTimes(1);
+      expect(iterDownload).toHaveBeenCalledTimes(1);
     });
 
     it('сетевой сбой транзиентен и не считается медиа-попыткой', async () => {
       const getMessages = jest.fn().mockResolvedValue([messageWithPhoto()]);
-      const downloadMedia = jest.fn().mockRejectedValue(new Error('read ECONNRESET'));
-      const { service } = setup({ client: { getMessages, downloadMedia } });
+      const iterDownload = jest.fn(failingStream(new Error('read ECONNRESET')));
+      const { service } = setup({ client: { getMessages, iterDownload } });
 
       const result = await service.deliver(candidate());
 
       expect(result).toMatchObject({ ok: false, reason: 'network' });
       expect(getMessages).toHaveBeenCalledTimes(1);
-      expect(downloadMedia).toHaveBeenCalledTimes(1);
+      expect(iterDownload).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -882,9 +1199,8 @@ describe('ParserDeliveryService', () => {
 
   it('видео с обложкой без байтов → без хеша', async () => {
     const { service, client, dedup } = setup({ messages: [messageWithVideo()] });
-    (client.downloadMedia as jest.Mock)
-      .mockResolvedValueOnce(Buffer.from([1, 2, 3]))
-      .mockResolvedValueOnce(null);
+    // Основное видео идёт bounded-путём; `downloadMedia` здесь — только обложка.
+    (client.downloadMedia as jest.Mock).mockResolvedValue(null);
 
     const result = await service.deliver(candidate({ mediaKind: 'video' }));
 
