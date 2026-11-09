@@ -1,3 +1,10 @@
+## [0.42.4](https://github.com/semirov/tg-bot/compare/v0.42.3...v0.42.4) (2026-11-09)
+
+
+### Bug Fixes
+
+* **parser:** TGB-128 pre-check media size and bound the download to the cap ([a697332](https://github.com/semirov/tg-bot/commit/a6973325171b5103533caac9c8ae8613d8dddfb1))
+
 ## [0.42.3](https://github.com/semirov/tg-bot/compare/v0.42.2...v0.42.3) (2026-10-29)
 
 
